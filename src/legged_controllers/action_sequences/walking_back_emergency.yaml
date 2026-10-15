@@ -1,0 +1,8 @@
+sequence:
+  base_vel_ramp_sec: 0.0
+  csv_entry_blend_sec: 0.35
+  csv_exit_blend_sec: 0.0
+  phases:
+    - name: walking_back_emergency
+      mode: full_csv
+      csv: csv/L0_sit.csv

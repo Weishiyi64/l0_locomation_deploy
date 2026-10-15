@@ -1,0 +1,16 @@
+# KVMS Battery Monitor Configuration
+
+battery:
+  # CAN配置
+  can_device: "can_battery"       # 电池所在CAN总线
+  query_interval: 60.0            # 查询间隔 (秒)
+  communication_timeout: 120.0    # 通讯超时 (秒)，应大于查询间隔
+
+  # 日志配置
+  enable_logging: false           # 是否发布电池状态数据
+
+  # SOC阈值
+  soc:
+    warning: 20.0                 # % - SOC低于此值每1分钟警告
+    error: 10.0                   # % - SOC低于此值每30秒错误警告
+    emergency: 5.0                # % - SOC低于此值每1秒紧急警告并发送emergency_stop

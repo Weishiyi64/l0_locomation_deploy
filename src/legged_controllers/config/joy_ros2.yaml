@@ -1,0 +1,192 @@
+# 轴/按键索引与 joy.yaml 中 axis_definitions、button_definitions 一致。
+# 注意：ROS2 --params-file 不支持 YAML 锚点/别名（& / *），此处必须写死整型。
+# LS_lr=0 LS_ud=1 RS_lr=2 RS_ud=3 LT_axis=5 RT_axis=4 A=0 B=1 X=4 Y=3 LB=6 RB=7
+# BACK=10 START=11 LS_button=13 RS_button=14 LT_button=8 RT_button=9
+# deadman_inactive=99：超出手柄按钮数，等效无死区（见 joy_teleop 行为说明）
+# LeggedController 侧：单按 A 只做 kp_minus；动作序列由 emotion / keyboard 触发，不再由 /joy 手动推进。
+joy_teleop:
+  ros__parameters:
+    _jm_LS_lr: 0
+    _jm_LS_ud: 1
+    _jm_RS_lr: 2
+    _jm_RS_ud: 3
+    _jm_LT_axis: 5
+    _jm_RT_axis: 4
+    _jm_A: 0
+    _jm_B: 1
+    _jm_X: 3
+    _jm_Y: 4
+    _jm_LB: 6
+    _jm_RB: 7
+    _jm_BACK: 10
+    _jm_START: 11
+    _jm_LS_button: 13
+    _jm_RS_button: 14
+    _jm_LT_button: 8
+    _jm_RT_button: 9
+    _jm_deadman_inactive: 99
+
+    # 1) walk -> cmd_vel (Twist)，无 LB 死区
+    walk:
+      type: topic
+      interface_type: geometry_msgs/msg/Twist
+      topic_name: cmd_vel
+      deadman_buttons: [99]
+      axis_mappings:
+        angular-z:
+          axis: 2
+          scale: 1.0
+          offset: 0.0
+        linear-x:
+          axis: 1
+          scale: 1.0
+          offset: 0.0
+        linear-y:
+          axis: 0
+          scale: 1.0
+          offset: 0.0
+
+    # 2) reset_controller — 触发键 8（LT_button）
+    reset_controller:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: reset_controller
+      deadman_buttons: [6]
+      axis_mappings:
+        data:
+          button: 8
+          scale: 1.0
+          offset: 0.0
+          threshold: 0.5
+
+    # 3) emergency_stop
+    emergency_stop:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: emergency_stop
+      deadman_buttons: [7]
+      axis_mappings:
+        data:
+          button: 7
+          scale: 1.0
+          offset: 0.0
+
+    # 4) speed_multiplier
+    speed_multiplier:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: speed_multiplier
+      deadman_buttons: [5]
+      axis_mappings:
+        data:
+          button: 5
+          scale: 1.0
+          offset: 0.0
+
+    # 5) set_walk
+    set_walk:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: set_walk
+      deadman_buttons: [1]
+      axis_mappings:
+        data:
+          button: 4
+          scale: 1.0
+          offset: 0.0
+
+    # 6) kp_add
+    kp_add:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: kp_add
+      deadman_buttons: [1]
+      axis_mappings:
+        data:
+          button: 1
+          scale: 2.0
+          offset: 0.0
+
+    # 7) kp_minus
+    kp_minus:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: kp_minus
+      deadman_buttons: [0]
+      axis_mappings:
+        data:
+          button: 0
+          scale: 2.0
+          offset: 0.0
+
+    # 8) toggle_calibration_mode
+    toggle_calibration_mode:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: toggle_calibration_mode
+      deadman_buttons: [13]
+      axis_mappings:
+        data:
+          button: 14
+          scale: 1.0
+          offset: 0.0
+
+    # 9) calibrate_left_arm
+    calibrate_left_arm:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: calibrate_left_arm
+      deadman_buttons: [8]
+      axis_mappings:
+        data:
+          button: 6
+          scale: 1.0
+          offset: 0.0
+
+    # 10) calibrate_right_arm
+    calibrate_right_arm:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: calibrate_right_arm
+      deadman_buttons: [9]
+      axis_mappings:
+        data:
+          button: 7
+          scale: 1.0
+          offset: 0.0
+
+    # 11) calibrate_left_leg
+    calibrate_left_leg:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: calibrate_left_leg
+      deadman_buttons: [0]
+      axis_mappings:
+        data:
+          button: 3
+          scale: 1.0
+          offset: 0.0
+
+    # 12) calibrate_right_leg
+    calibrate_right_leg:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: calibrate_right_leg
+      deadman_buttons: [1]
+      axis_mappings:
+        data:
+          button: 4
+          scale: 1.0
+          offset: 0.0
+
+    # 13) calibrate_waist
+    calibrate_waist:
+      type: topic
+      interface_type: std_msgs/msg/Float32
+      topic_name: calibrate_waist
+      deadman_buttons: [11]
+      axis_mappings:
+        data:
+          button: 10
+          scale: 1.0
+          offset: 0.0

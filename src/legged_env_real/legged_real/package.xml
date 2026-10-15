@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+    <name>legged_real</name>
+    <version>0.0.0</version>
+    <description>Real robot hardware layer: LeggedReal implements IHardwareLayer, handles ankle transmission kinematics and CAN communication via actuator_bridge.</description>
+    <maintainer email="2466087629@qq.com">ShiboMu</maintainer>
+
+    <license>MIT</license>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+
+    <depend>rclcpp</depend>
+    <depend>legged_controllers</depend>
+    <depend>legged_msgs</depend>
+    <depend>actuator_bridge</depend>
+    <depend>can_msgs</depend>
+    <depend>socketcan_wrapper</depend>
+    <depend>tf2_ros</depend>
+    <depend>tf2_geometry_msgs</depend>
+
+    <export>
+        <build_type>ament_cmake</build_type>
+    </export>
+</package>

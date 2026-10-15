@@ -1,0 +1,5 @@
+LeggedController:
+  set_realtime_priority: true
+  thread_scheduling_method: "SCHED_FIFO"
+  thread_priority: 98
+  skip_control_on_overrun: true

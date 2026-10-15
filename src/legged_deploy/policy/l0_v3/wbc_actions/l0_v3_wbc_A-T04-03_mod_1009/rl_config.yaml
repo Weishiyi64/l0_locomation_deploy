@@ -1,0 +1,158 @@
+RobotCfg:
+  policy_type: rl_imitation
+  policy_name: policy
+  motion_name: motion
+  pub_imitationref_joint_states: false
+  joint_order_isaac: &id001
+  - left_hip_pitch_joint
+  - left_hip_roll_joint
+  - left_hip_yaw_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_hip_pitch_joint
+  - right_hip_roll_joint
+  - right_hip_yaw_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - left_shoulder_pitch_joint
+  - left_shoulder_roll_joint
+  - left_elbow_roll_joint
+  - right_shoulder_pitch_joint
+  - right_shoulder_roll_joint
+  - right_elbow_roll_joint
+  - neck_yaw_joint
+  - neck_pitch_joint
+  - neck_roll_joint
+  joint_order_mj: *id001
+  kps:
+  - 11.843525280630205
+  - 11.843525280630205
+  - 11.843525280630205
+  - 11.843525280630205
+  - 21.476259175542776
+  - 5.448969111112345
+  - 11.843525280630205
+  - 11.843525280630205
+  - 11.843525280630205
+  - 11.843525280630205
+  - 21.476259175542776
+  - 5.448969111112345
+  - 0.690872308036762
+  - 0.690872308036762
+  - 0.690872308036762
+  - 0.690872308036762
+  - 0.690872308036762
+  - 0.690872308036762
+  - 5.448969111112345
+  - 5.448969111112345
+  - 5.448969111112345
+  kds:
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 4.1016633684096
+  - 1.0406764425760417
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 1.8849555920999999
+  - 4.1016633684096
+  - 1.0406764425760417
+  - 0.1099557428725
+  - 0.1099557428725
+  - 0.1099557428725
+  - 0.1099557428725
+  - 0.1099557428725
+  - 0.1099557428725
+  - 0.867230368813368
+  - 0.867230368813368
+  - 0.867230368813368
+  default_joint_angles:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  action_scale:
+  - 0.7598999738693237
+  - 0.5698999762535095
+  - 0.2639000117778778
+  - 0.7598999738693237
+  - 0.28519999980926514
+  - 0.550599992275238
+  - 0.7598999738693237
+  - 0.5698999762535095
+  - 0.2639000117778778
+  - 0.7598999738693237
+  - 0.28519999980926514
+  - 0.550599992275238
+  - 1.9902000427246094
+  - 1.9902000427246094
+  - 1.9902000427246094
+  - 1.9902000427246094
+  - 1.9902000427246094
+  - 1.9902000427246094
+  - 0.550599992275238
+  - 0.550599992275238
+  - 0.550599992275238
+  policy_frequency: 50
+  lowlevel_frequency: 500
+  num_actions: 21
+  num_single_obs: 80
+  frame_stack:
+  - 0
+  - -1
+  - -2
+  - -3
+  - -4
+  - -8
+  - -16
+  clip_obs: 2500000.0
+  clip_actions: 1000000.0
+  command_config:
+    items:
+    - type: root_pos
+      dim: 3
+    - type: root_quat
+      dim: 4
+    - type: contact_mask
+      dim: 1
+  observation_config:
+    items:
+    - type: command
+      dim: 8
+      scale: 1.0
+    - type: anchor_ori
+      dim: 6
+      scale: 1.0
+    - type: base_ang_vel
+      dim: 3
+      scale: 1.0
+    - type: joint_pos
+      dim: 21
+      scale: 1.0
+    - type: joint_vel
+      dim: 21
+      scale: 1.0
+    - type: actions
+      dim: 21
+      scale: 1.0

@@ -1,0 +1,80 @@
+emotion_sequences:
+  # 平静
+  E01:
+    - action_sequences/L0_peace_a.yaml
+    - action_sequences/L0_peace_b.yaml
+    - action_sequences/L0_peace_3.yaml
+    - action_sequences/L0_peace_4.yaml
+  # 兴奋
+  E02:
+    - action_sequences/L0_emotion_excited_a.yaml
+    - action_sequences/L0_emotion_excited_b.yaml
+    - action_sequences/L0_emotion_hand_1.yaml
+    - action_sequences/L0_emotion_hand_13.yaml
+    - action_sequences/L0_emotion_hand_20.yaml
+  # 悲伤
+  E03:
+    - action_sequences/L0_emotion_sad_a.yaml
+    - action_sequences/L0_emotion_sad_b.yaml
+    - action_sequences/L0_emotion_sad_c.yaml
+    - action_sequences/L0_emotion_sad_tired.yaml
+  # 愤怒
+  E04:
+    - action_sequences/L0_emotion_angry_b.yaml
+    - action_sequences/L0_emotion_hand_2.yaml
+    - action_sequences/L0_emotion_NoWay.yaml
+  # 恐惧
+  E05:
+    - action_sequences/L0_emotion_fear_a.yaml
+    - action_sequences/L0_emotion_fear_b.yaml
+    - action_sequences/L0_emotion_46_fear.yaml
+    - action_sequences/L0_emotion_fear_BackOff.yaml
+  # 好奇
+  E06:
+    - action_sequences/L0_7_strange.yaml
+    - action_sequences/L0_21_strange.yaml
+    - action_sequences/L0_whatisit.yaml
+    - action_sequences/L0_whoami.yaml
+  # 满足
+  E07:
+    - action_sequences/L0_satisfied.yaml
+    - action_sequences/L0_satisfied_1.yaml
+    - action_sequences/L0_nice.yaml
+    - action_sequences/L0_IwantIt.yaml
+  # 撒娇
+  E08:
+    - action_sequences/L0_act_cute_a.yaml
+    - action_sequences/L0_act_cute_b.yaml
+  # 吃饱了
+  E10:
+    - action_sequences/L0_enougheat.yaml
+  # 去睡觉
+  E11:
+    - action_sequences/L0_gotobed.yaml
+  # 这是什么
+  E12:
+    - action_sequences/L0_whatisit.yaml
+  # 我想要
+  E13:
+    - action_sequences/L0_IwantIt.yaml
+  # 哪里疼
+  E14:
+    - action_sequences/L0_hurtwhere.yaml
+  # 走开
+  E15:
+    - action_sequences/L0_GoAway.yaml
+  # L0_20
+  E16:
+    - action_sequences/L0_20.yaml
+  # 瑜伽
+  E17:
+    - action_sequences/L0_new_yoga.yaml
+  # 亮相
+  E18:
+    - action_sequences/L0_liangxiang.yaml
+  # 扭扭舞
+  E19:
+    - action_sequences/L0_niuniuwu.yaml
+  # 生气跺脚
+  E20:
+    - action_sequences/L0_shengqiduojiao.yaml

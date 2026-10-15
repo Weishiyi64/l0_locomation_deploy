@@ -1,0 +1,12 @@
+sequence:
+  base_vel_ramp_sec: 0.0
+  csv_entry_blend_sec: 0.35
+  csv_exit_blend_sec: 0.35
+  imitation_policy: l0_v3_mimic_ImHurt
+  phases:
+    - name: L0_ImHurt
+      mode: rl_imitation
+      velocity:
+        vx: 0.0
+        vy: 0.0
+        wz: 0.0

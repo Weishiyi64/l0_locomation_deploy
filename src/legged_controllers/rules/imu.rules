@@ -1,0 +1,1 @@
+KERNEL=="ttyACM*", ATTRS{idVendor}=="5953", ATTRS{idProduct}=="5543", MODE:="0777", SYMLINK+="yesense_imu"

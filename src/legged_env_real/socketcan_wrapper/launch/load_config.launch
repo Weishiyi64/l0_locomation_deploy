@@ -1,0 +1,3 @@
+<launch>
+    <rosparam file="$(find socketcan_wrapper)/config/socketcan_config.yaml" command="load"/>
+</launch>

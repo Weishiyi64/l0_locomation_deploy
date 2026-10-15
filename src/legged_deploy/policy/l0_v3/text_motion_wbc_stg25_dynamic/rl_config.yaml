@@ -1,0 +1,58 @@
+# Fixed stg25 MimicLite policy with a runtime C++ motion reference.
+# policy.onnx is architecture-independent; policy.trt is generated once on Jetson.
+RobotCfg:
+  policy_type: "rl_imitation"
+  policy_name: "policy"
+  policy_output_name: "action"
+  motion_name: ""
+  native_dynamic_reference: true
+  pub_imitationref_joint_states: false
+
+  joint_order_isaac: &joint_order
+    [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
+     left_knee_joint, left_ankle_pitch_joint, left_ankle_roll_joint,
+     right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint,
+     right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+     left_shoulder_pitch_joint, left_shoulder_roll_joint, left_elbow_roll_joint,
+     right_shoulder_pitch_joint, right_shoulder_roll_joint, right_elbow_roll_joint,
+     neck_yaw_joint, neck_pitch_joint, neck_roll_joint]
+  joint_order_mj: *joint_order
+
+  kps: [11.8435, 11.8435, 11.8435, 11.8435, 21.4763, 5.4490,
+        11.8435, 11.8435, 11.8435, 11.8435, 21.4763, 5.4490,
+        0.6909, 0.6909, 0.6909, 0.6909, 0.6909, 0.6909,
+        5.4490, 5.4490, 5.4490]
+  kds: [1.8850, 1.8850, 1.8850, 1.8850, 4.1017, 1.0407,
+        1.8850, 1.8850, 1.8850, 1.8850, 4.1017, 1.0407,
+        0.1100, 0.1100, 0.1100, 0.1100, 0.1100, 0.1100,
+        0.8672, 0.8672, 0.8672]
+  default_joint_angles: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0]
+  action_scale: [0.7599, 0.5699, 0.2639, 0.7599, 0.2852, 0.5506,
+                 0.7599, 0.5699, 0.2639, 0.7599, 0.2852, 0.5506,
+                 1.9902, 1.9902, 1.9902, 1.9902, 1.9902, 1.9902,
+                 0.5506, 0.5506, 0.5506]
+
+  policy_frequency: 50
+  lowlevel_frequency: 500
+  num_actions: 21
+  # The C++ native builder stores a 69-D state history, then assembles the
+  # model's signal-major 399-D input explicitly.
+  num_single_obs: 69
+  frame_stack: [0, -1, -2, -3, -4, -8, -16]
+  clip_obs: 2500000.0
+  clip_actions: 1000000.0
+
+  command_config:
+    index: [-8, -4, -2, 0, 1, 2, 3, 4]
+    items:
+      - {type: "root_pos_local", dim: 3}
+      - {type: "root_ori_6d", dim: 6}
+      - {type: "joint_pos", dim: 21}
+
+  # Used only for configuration dimension validation in native mode.
+  observation_config:
+    items:
+      - {type: "placeholder", dim: 69, scale: 0.0}

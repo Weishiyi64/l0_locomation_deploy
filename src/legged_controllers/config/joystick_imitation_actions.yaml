@@ -1,0 +1,179 @@
+joystick_imitation_actions:
+  # D-pad values follow the current /joy mapping:
+  # DPad_lr axis 6: left=+1, right=-1
+  # DPad_ud axis 7: up=+1, down=-1
+  axis_threshold: 0.5
+  actions:
+    # - name: l0_v3_mimic_hugme
+    #   label: LT+Up
+    #   enabled: true
+    #   policy: "l0_v3_mimic_Hugme"
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: up
+
+    
+
+    # - name: l0_v3_mimic_imhurt
+    #   label: LT+Down
+    #   enabled: true
+    #   policy: "l0_v3_mimic_ImHurt"
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: down
+    
+    # #单脚下跪后向后倒，倒下后停止进emergencystop
+    # - name: l0_v3_mimic_imhurt
+    #   label: LT+Down
+    #   enabled: true
+    #   policy: "l0_v3_mimic_LieDown_new_terminal_hold_ckpt10000"
+    #   on_finish: emergency_stop
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: down
+
+  #   #1009
+      #单脚下跪后向后倒，倒下后停止进emergencystop
+    - name: l0_v3_mimic_liedown_new
+      label: LT+Down
+      enabled: true
+      policy: "l0_v3_mimic_LieDown9_24_terminal_hold_ckpt9500"
+      on_finish: emergency_stop
+      combo:
+        buttons: [LT_button]
+        dpad: down
+
+    # Double-leg kneel then lie down; terminal hold is followed by EmergencyStop.
+    - name: l0_v3_mimic_liedown9_24
+      label: LT+Left
+      enabled: true
+      policy: "l0_v3_mimic_LieDown9_24_10_9_flat1010"
+      on_finish: emergency_stop
+      combo:
+        buttons: [LT_button]
+        dpad: left
+
+    #双腿下蹲后倒下的手柄按键，倒下后停止进emergencystop，加落地冲量惩罚
+    - name: l0_v3_mimic_liedown2_5000
+      label: LT+Right
+      enabled: true
+      policy: "l0_v3_mimic_LieDown_2_929_ckpt10000"
+      on_finish: emergency_stop
+      combo:
+        buttons: [LT_button]
+        dpad: right
+    
+  #       #双腿下蹲后倒下的手柄按键，倒下后停止进emergencystop
+  #   - name: l0_v3_mimic_liedown2_10000
+  #     label: LT+Up
+  #     enabled: true
+  #     policy: "l0_v3_mimic_LieDown_2_929_ckpt10000"
+  #     on_finish: emergency_stop
+  #     combo:
+  #       buttons: [LT_button]
+  #       dpad: Up
+  # #1009
+
+    #wbc部署
+    # WBC whole-body standing action: rub the belly, then return to AMP walking.
+    # - name: l0_v3_wbc_belly_rub
+    #   label: RT+Down
+    #   enabled: true
+    #   policy: "l0_v3_wbc_belly_rub_amp_stand_v1"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [RT_button]
+    #     dpad: down
+
+    #     # WBC whole-body standing action: rub the belly, then return to AMP walking摸前胸wbc.
+    # - name: l0_v3_wbc_chest_touch
+    #   label: RT+Right
+    #   enabled: true
+    #   policy: "l0_v3_wbc_chest_touch_ckpt10000_v1"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [RT_button]
+    #     dpad: right
+
+#1009
+    #wbc1009-A-T01-00
+    - name: "wbc_actions/l0_v3_wbc_A-T01-00_mod_1009"
+      label: RT+Up
+      enabled: true
+      policy: "wbc_actions/l0_v3_wbc_A-T01-00_mod_1009"
+      on_finish: return_rl
+      combo:
+        buttons: [RT_button]
+        dpad: up
+
+    #wbc1009-A-T01-01
+    - name: "wbc_actions/l0_v3_wbc_A-T01-01_mod_1009"
+      label: RT+Right
+      enabled: true
+      policy: "wbc_actions/l0_v3_wbc_A-T01-01_mod_1009"
+      on_finish: return_rl
+      combo:
+        buttons: [RT_button]
+        dpad: right
+    
+    #wbc1009-A-A02
+    - name: "wbc_actions/l0_v3_wbc_A-A02_mod_1009"
+      label: RT+Down
+      enabled: true
+      policy: "wbc_actions/l0_v3_wbc_A-A02_mod_1009"
+      on_finish: return_rl
+      combo:
+        buttons: [RT_button]
+        dpad: down
+
+    #wbc1009-A-C03
+    - name: "wbc_actions/l0_v3_wbc_A-C03_mod_1009"
+      label: RT+Left
+      enabled: true
+      policy: "wbc_actions/l0_v3_wbc_A-C03_mod_1009"
+      on_finish: return_rl
+      combo:
+        buttons: [RT_button]
+        dpad: left
+
+    # #l0_v3_wbc_A-S07
+    # - name: "wbc_actions/l0_v3_wbc_A-S07_mod_1009"
+    #   label: LT+Up
+    #   enabled: true
+    #   policy: "wbc_actions/l0_v3_wbc_A-S07_mod_1009"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: up
+
+    # #l0_v3_wbc_A-T03-01
+    # - name: "wbc_actions/l0_v3_wbc_A-T03-01_mod_1009"
+    #   label: LT+Right
+    #   enabled: true
+    #   policy: "wbc_actions/l0_v3_wbc_A-T03-01_mod_1009"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: right
+
+
+    # # l0_v3_wbc_A-T04-03
+    # - name: "wbc_actions/l0_v3_wbc_A-T04-03_mod_1009"
+    #   label: LT+Down
+    #   enabled: true
+    #   policy: "wbc_actions/l0_v3_wbc_A-T04-03_mod_1009"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: down
+
+    # #l0_v3_wbc_A-T05-05
+    # - name: "wbc_actions/l0_v3_wbc_A-T05-05_mod_1009"
+    #   label: LT+Left
+    #   enabled: true
+    #   policy: "wbc_actions/l0_v3_wbc_A-T05-05_mod_1009"
+    #   on_finish: return_rl
+    #   combo:
+    #     buttons: [LT_button]
+    #     dpad: left
+

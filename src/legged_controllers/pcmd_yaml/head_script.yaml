@@ -1,0 +1,92 @@
+# Head script timeline (angles in degrees).
+# Loaded by LeggedController when launch passes head_script_config (e.g. sim2real.launch.py / sequential_launch_real.sh).
+# Total duration is inferred from segments (max t_end). Sign: pitch 低头+ 抬头-; yaw 左+ 右-; roll 右偏+ 左偏-.
+# Per segment: use constant (yaw/pitch/roll), or lerp (x_from, x_to), or sin (x_sin_amplitude_deg, x_sin_frequency_hz).
+
+head_script:
+  # Script-mode motor gains (yaw, pitch, roll): used when head is not under valid /eye_target (script-only,
+  # or topic+hybrid fallback). Scalar = same for all three joints.
+  kp: [3.5, 4.0, 3.0]
+  kd: [2.0, 1.0, 0.6]
+  tau_ff: [0.0, 0.0, 0.0]
+  segments:
+    # 0–2s: 垂头30°静止 (低头+)
+    - t_start: 0.0
+      t_end: 2.0
+      pitch: 30.0
+
+    # 2–3s: 头部猛地向上顿一下 (抬头-) — split into sub-segments
+    - t_start: 2.0
+      t_end: 2.2
+      pitch_from: 30.0
+      pitch_to: -15.0
+    - t_start: 2.2
+      t_end: 2.5
+      pitch_from: -15.0
+      pitch_to: 0.0
+    - t_start: 2.5
+      t_end: 3.0
+      pitch: 0.0
+
+    # 3–5s: 头部缓慢向左倾斜,转向沙发 (yaw 左+, roll 右偏+)
+    - t_start: 3.0
+      t_end: 5.0
+      yaw_from: 0.0
+      yaw_to: 20.0
+      pitch: 0.0
+      roll_from: 0.0
+      roll_to: 30.0
+
+    # 5–6s: 头部回正,伴随轻微前后晃动
+    - t_start: 5.0
+      t_end: 6.0
+      yaw_from: 20.0
+      yaw_to: 0.0
+      roll_from: 30.0
+      roll_to: 0.0
+      pitch_sin_amplitude_deg: 2.864
+      pitch_sin_frequency_hz: 2.0
+
+    # 6–9s: 头部随走路节奏上下点动 (低头+ 抬头-)
+    - t_start: 6.0
+      t_end: 9.0
+      pitch_sin_amplitude_deg: 4.58
+      pitch_sin_frequency_hz: 1.2
+      yaw: 0.0
+      roll: 0.0
+
+    # 9–11s: 走到脚边,抬头视角向上45° (抬头-)
+    - t_start: 9.0
+      t_end: 11.0
+      pitch_from: 0.0
+      pitch_to: -45.0
+      yaw: 0.0
+      roll: 0.0
+
+    # 11–13s: 感受摸头,顺势低头20°,缓慢左右磨蹭
+    - t_start: 11.0
+      t_end: 13.0
+      pitch_from: -45.0
+      pitch_to: 20.0
+      yaw_sin_amplitude_deg: 8.59
+      yaw_sin_frequency_hz: 0.4
+      roll: 0.0
+
+    # 13–15s: 抬头看向妈妈(抬头-),停顿保持
+    - t_start: 13.0
+      t_end: 13.5
+      pitch_from: 20.0
+      pitch_to: -20.0
+      yaw: 0.0
+      roll: 0.0
+    - t_start: 13.5
+      t_end: 15.0
+      pitch: -20.0
+      yaw: 0.0
+      roll: 0.0
+    - t_start: 15.0
+      t_end: 17.0
+      pitch_from: -20.0
+      pitch_to : 30.0
+      yaw: 0.0
+      roll: 0.0

@@ -1,0 +1,57 @@
+# Deployment configuration for LieDown_2_929 checkpoint 5000.
+# Generated from policy.onnx metadata; keep this file with policy.onnx and motion.onnx.
+RobotCfg:
+  policy_type: "rl_imitation"
+  policy_name: "policy"
+  motion_name: "motion"
+  pub_imitationref_joint_states: false
+
+  joint_order_isaac: &joint_order
+    - left_hip_pitch_joint
+    - left_hip_roll_joint
+    - left_hip_yaw_joint
+    - left_knee_joint
+    - left_ankle_pitch_joint
+    - left_ankle_roll_joint
+    - right_hip_pitch_joint
+    - right_hip_roll_joint
+    - right_hip_yaw_joint
+    - right_knee_joint
+    - right_ankle_pitch_joint
+    - right_ankle_roll_joint
+    - left_shoulder_pitch_joint
+    - left_shoulder_roll_joint
+    - left_elbow_roll_joint
+    - right_shoulder_pitch_joint
+    - right_shoulder_roll_joint
+    - right_elbow_roll_joint
+    - neck_yaw_joint
+    - neck_pitch_joint
+    - neck_roll_joint
+  joint_order_mj: *joint_order
+
+  kps: [11.844, 11.844, 11.844, 11.844, 21.476, 5.449, 11.844, 11.844, 11.844, 11.844, 21.476, 5.449, 0.691, 0.691, 0.691, 0.691, 0.691, 0.691, 5.449, 5.449, 5.449]
+  kds: [1.885, 1.885, 1.885, 1.885, 4.102, 1.041, 1.885, 1.885, 1.885, 1.885, 4.102, 1.041, 0.110, 0.110, 0.110, 0.110, 0.110, 0.110, 0.867, 0.867, 0.867]
+  default_joint_angles: [0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000]
+  action_scale: [0.760, 0.570, 0.264, 0.760, 0.285, 0.551, 0.760, 0.570, 0.264, 0.760, 0.285, 0.551, 1.990, 1.990, 1.990, 1.990, 1.990, 1.990, 0.551, 0.551, 0.551]
+
+  policy_frequency: 50
+  lowlevel_frequency: 500
+  num_actions: 21
+  num_single_obs: 114
+  frame_stack: 1
+  clip_obs: 2500000.0
+  clip_actions: 1000000.0
+
+  command_config:
+    items:
+      - {type: "joint_pos", dim: 21}
+      - {type: "joint_vel", dim: 21}
+  observation_config:
+    items:
+      - {type: "command", dim: 42, scale: 1.0}
+      - {type: "anchor_ori", dim: 6, scale: 1.0}
+      - {type: "base_ang_vel", dim: 3, scale: 1.0}
+      - {type: "joint_pos", dim: 21, scale: 1.0}
+      - {type: "joint_vel", dim: 21, scale: 1.0}
+      - {type: "actions", dim: 21, scale: 1.0}

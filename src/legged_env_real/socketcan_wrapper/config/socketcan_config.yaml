@@ -1,0 +1,11 @@
+SocketCANWrapper:
+  # 实时调度配置
+  set_realtime_priority: true
+  thread_scheduling_method: "SCHED_FIFO"
+  thread_priority: 99
+
+  # 接收缓冲区大小（字节）
+  socket_rcvbuf_size: 1048576  # 1MB
+
+  # 是否启用错误帧过滤
+  enable_error_frame_filter: true
