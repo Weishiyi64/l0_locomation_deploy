@@ -1,4 +1,4 @@
-# L0 V3 AMP / Mimic / WBC / 文本动作部署说明
+# l0_locomotion_deploy：L0 V3 AMP / Mimic / WBC / 文本动作部署说明
 
 这是一套已经完成真机实验的 L0 V3 一体化部署代码，包含：
 
@@ -8,6 +8,11 @@
 - 电脑输入中文文本，生成动作 JSON，并通过 ROS 2 发送给 Jetson；
 - Jetson 使用固定的 stg25 WBC TensorRT 引擎执行文本动作；
 - 文本 JSON 在后台解析和准备，不阻塞实时控制循环。
+
+当前 GitHub 仓库名为 `l0_locomotion_deploy`，本文统一使用以下部署路径：
+
+- Jetson 真机：`/home/nvidia/l0_locomotion_deploy`；
+- x86_64 本地电脑：`/home/luvbotic/l0_locomotion_deploy`。
 
 > 真机首次运行新动作时必须使用吊架，并安排人员随时准备急停。触发 Mimic、WBC 或文本动作前，机器人必须已经稳定处于 AMP，摇杆回中。
 
@@ -31,7 +36,7 @@ Mimic、WBC 和文本动作共用 imitation/WBC 控制通道，同一时刻只�
 在机器人 Jetson 上执行：
 
 ```bash
-cd /home/nvidia/atom_ros2_deploy_baseline_mimic_wbc_texttomotion1015
+cd /home/nvidia/l0_locomotion_deploy
 
 source /opt/ros/humble/setup.bash
 source install/setup.bash
@@ -82,9 +87,9 @@ B + Y：重新进入 AMP
 
 | 手柄操作 | Mimic 策略 | 结束状态 |
 |---|---|---|
-| `LT + 十字键下` | `l0_v3_mimic_LieDown9_24_terminal_hold_ckpt9500` | EmergencyStop |
+| `LT + 十字键下` | `l0_v2_mimic_dunxia_dunzhe_dunqi` | EmergencyStop |
 | `LT + 十字键左` | `l0_v3_mimic_LieDown9_24_10_9_flat1010` | EmergencyStop |
-| `LT + 十字键右` | `l0_v3_mimic_LieDown_2_929_ckpt10000` | EmergencyStop |
+| `LT + 十字键右` | `l0_v3_mimic_LieDown_2_liedown2_1015_2` | EmergencyStop |
 | `LT + 十字键上` | 当前未绑定 | 无动作 |
 
 这些都是 LieDown 类动作，配置为：
@@ -151,7 +156,7 @@ export ROS_LOCALHOST_ONLY=0
 机器人控制器启动并进入 AMP 后，在 Jetson 新终端执行：
 
 ```bash
-cd /home/nvidia/atom_ros2_deploy_baseline_mimic_wbc_texttomotion1015
+cd /home/nvidia/l0_locomotion_deploy
 
 source /opt/ros/humble/setup.bash
 source install/setup.bash
@@ -168,7 +173,7 @@ ros2 topic echo /text_motion/status std_msgs/msg/String
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/nvidia/atom_ros2_deploy_baseline_mimic_wbc_texttomotion1015/install/setup.bash
+source /home/nvidia/l0_locomotion_deploy/install/setup.bash
 
 export ROS_DOMAIN_ID=88
 export ROS_LOCALHOST_ONLY=0
@@ -190,7 +195,7 @@ Subscription count: 1
 在本地电脑新终端执行：
 
 ```bash
-cd /home/luvbot/Downloads/atom_ros2_deploy_baseline_texttomotion
+cd /home/luvbotic/l0_locomotion_deploy
 
 source /opt/ros/humble/setup.bash
 source install/setup.bash
@@ -218,7 +223,7 @@ ros2 topic info /text_motion/json
 下面是之前真机实验使用的完整命令：
 
 ```bash
-cd /home/luvbot/Downloads/atom_ros2_deploy_baseline_texttomotion
+cd /home/luvbotic/l0_locomotion_deploy
 
 source /opt/ros/humble/setup.bash
 source install/setup.bash
@@ -230,7 +235,7 @@ export ROS_LOCALHOST_ONLY=0
 ACTION="左手以大幅度快速抱肚子；右手腹部摆动两次。"
 
 # ===== 重新推理并直接发送 =====
-/home/luvbot/miniconda3/envs/deploy/bin/python infer.py \
+/home/luvbotic/miniconda3/envs/unitree_rl_mjlab/bin/python infer.py \
   "$ACTION" \
   --model text_to_motion_cpu_fixed.onnx \
   --device cpu \
