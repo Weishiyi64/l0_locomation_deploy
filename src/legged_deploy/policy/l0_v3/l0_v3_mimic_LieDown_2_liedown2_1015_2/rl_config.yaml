@@ -1,6 +1,8 @@
-# Deployment configuration for the LieDown9_24 flat-terrain action.
-# Source artifacts: onnx_7500/policy_7500.onnx and motion_7500.onnx.
-# The policy and motion ONNX files form one immutable deployment package.
+# Deployment configuration for l0_v3_mimic_LieDown_2_liedown2_1015_2.
+# Regenerated from this directory's policy.onnx metadata and policy/motion ONNX I/O.
+# Policy source: /home/luvbotic/下载/liedown2_1015/new/policy.onnx.
+# Motion source: l0_v3_mimic_LieDown_2_liedown2_1015/motion.onnx.
+# Keep this file with policy.onnx and motion.onnx.
 RobotCfg:
   policy_type: "rl_imitation"
   policy_name: "policy"

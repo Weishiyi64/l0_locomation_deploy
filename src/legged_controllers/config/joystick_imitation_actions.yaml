@@ -37,7 +37,7 @@ joystick_imitation_actions:
     - name: l0_v3_mimic_liedown_new
       label: LT+Down
       enabled: true
-      policy: "l0_v3_mimic_LieDown9_24_terminal_hold_ckpt9500"
+      policy: "l0_v2_mimic_dunxia_dunzhe_dunqi"
       on_finish: emergency_stop
       combo:
         buttons: [LT_button]
@@ -54,10 +54,10 @@ joystick_imitation_actions:
         dpad: left
 
     #双腿下蹲后倒下的手柄按键，倒下后停止进emergencystop，加落地冲量惩罚
-    - name: l0_v3_mimic_liedown2_5000
+    - name: l0_v3_mimic_liedown2
       label: LT+Right
       enabled: true
-      policy: "l0_v3_mimic_LieDown_2_929_ckpt10000"
+      policy: "l0_v3_mimic_LieDown_2_liedown2_1015_2"
       on_finish: emergency_stop
       combo:
         buttons: [LT_button]
