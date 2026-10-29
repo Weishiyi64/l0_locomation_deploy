@@ -1,0 +1,350 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>texttomotion/generate_wbc_json.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>texttomotion/generate_wbc_json.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Board NPU generation -&gt; complete JSON -&gt; existing controller/WBC lifecycle.&quot;&quot;&quot;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> import argparse</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import hashlib</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> import json</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> import math</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import os</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> from pathlib import Path</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import queue</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import sys</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import tempfile</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import threading</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> import time</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import uuid</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> </span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> import numpy as np</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> import yaml</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> from motion_adapter import SOURCE_SHA256, generate, load_limits, open_pipeline</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> def bundle_contract(path, base_action):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     path = Path(path).resolve()</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     graph = json.loads(path.read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     if graph.get(&quot;format&quot;) != &quot;wbc_lora_graph_v1&quot;:</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>         raise ValueError(&quot;Expected the same shared WBC manifest used by LoRA&quot;)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     action = next(a for a in graph[&quot;actions&quot;] if a[&quot;action_id&quot;] == base_action)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     if action.get(&quot;parameter_source&quot;) != &quot;base&quot;:</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>         raise ValueError(&quot;Text WBC requires a complete Base parameter pack, not an action adapter&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     config = (path.parent / action[&quot;config&quot;]).resolve()</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     if not config.is_relative_to(path.parent) or hashlib.sha256(config.read_bytes()).hexdigest() != action[&quot;config_sha256&quot;]:</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         raise ValueError(&quot;Invalid Base config path/hash&quot;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     names = yaml.safe_load(config.read_text())[&quot;RobotCfg&quot;][&quot;joint_order_mj&quot;]</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     if len(names) != 21 or len(set(names)) != 21:</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>         raise ValueError(&quot;Base config must use the 21-joint WBC ABI&quot;)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     return graph, names</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> </span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> </span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> def full_limits(mapping, names):</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     motors = yaml.safe_load(Path(mapping).read_text())[&quot;motors&quot;]</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     result = []</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     for name in names:</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>         matched = [m for m in motors if m[&quot;joint_name&quot;] == name]</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         if len(matched) != 1 or matched[0][&quot;enabled&quot;] is not True:</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>             raise ValueError(&quot;Missing/duplicate/disabled mapping joint: &quot; + name)</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         lo, hi = float(matched[0][&quot;joint_lower&quot;]), float(matched[0][&quot;joint_upper&quot;])</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>         if not np.isfinite([lo, hi]).all() or lo &gt;= hi:</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>             raise ValueError(&quot;Invalid mapping limits&quot;)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>         result.append((lo, hi))</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     return np.asarray(result, dtype=np.float64)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a> </span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> </span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> def check_snapshot(snapshot, names, limits):</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     if snapshot[&quot;joint_names&quot;] != names:</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         raise ValueError(&quot;Snapshot joint order differs from WBC Base&quot;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     joints = np.asarray(snapshot[&quot;joint_positions&quot;], dtype=np.float64)</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     position = np.asarray(snapshot[&quot;base_position&quot;], dtype=np.float64)</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     orientation = np.asarray(snapshot[&quot;base_quaternion_wxyz&quot;], dtype=np.float64)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     if joints.shape != (21,) or position.shape != (3,) or orientation.shape != (4,) or \</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>             not all(np.isfinite(x).all() for x in (joints, position, orientation)):</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         raise ValueError(&quot;Invalid full-body snapshot dimensions/values&quot;)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     if np.any(joints &lt; limits[:, 0] - 1e-6) or np.any(joints &gt; limits[:, 1] + 1e-6):</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         raise ValueError(&quot;Captured joint pose exceeds robot limits&quot;)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     # Ordinary WBC accepts a finite observation position, including z=0 when</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     # odometry is absent. Its reference model supplies the target root pose.</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     norm_squared = float(orientation @ orientation)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     if norm_squared &lt;= 1e-12 or abs(norm_squared - 1) &gt; 0.1:</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         raise ValueError(&quot;Invalid IMU quaternion under the standard WBC observation contract&quot;)</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     # Same roll/pitch-only reference convention as prepare_json_batch. The</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     # existing WBC yaw anchor restores the robot&#x27;s actual heading at prepare.</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     w, x, y, z = orientation / np.linalg.norm(orientation)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     roll = np.arctan2(2 * (w*x + y*z), 1 - 2 * (x*x + y*y))</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     pitch = np.arcsin(np.clip(2 * (w*y - z*x), -1, 1))</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     cr, sr, cp, sp = np.cos(roll/2), np.sin(roll/2), np.cos(pitch/2), np.sin(pitch/2)</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     result = dict(snapshot)</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     result[&quot;joint_positions&quot;] = np.clip(joints, limits[:, 0], limits[:, 1]).tolist()</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     result[&quot;base_position&quot;] = position.tolist()</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     result[&quot;base_quaternion_wxyz&quot;] = [float(cr*cp), float(sr*cp), float(cr*sp), float(-sr*sp)]</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     return result</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> </span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> def make_document(trajectory, snapshot, graph):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     if trajectory is None:</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>         return None</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     return {</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         &quot;request_id&quot;: trajectory[&quot;request_id&quot;], &quot;format&quot;: &quot;gmr_upper_body_joint_trajectory_v1&quot;,</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>         &quot;robot&quot;: &quot;l0_v5&quot;, &quot;angle_unit&quot;: &quot;rad&quot;, &quot;fps&quot;: 50,</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>         &quot;coordinate_contract&quot;: &quot;robot_anatomical_v1&quot;, &quot;joint_names&quot;: trajectory[&quot;joint_names&quot;],</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         &quot;frame_count&quot;: trajectory[&quot;frame_count&quot;],</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         &quot;frames&quot;: [{&quot;frame_index&quot;: i, &quot;time&quot;: i / 50, &quot;joint_positions&quot;: row}</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>                    for i, row in enumerate(trajectory[&quot;positions&quot;])],</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         &quot;source_zip_sha256&quot;: SOURCE_SHA256,</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>         &quot;wbc_base_checkpoint_sha256&quot;: graph[&quot;base_checkpoint_sha256&quot;],</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         &quot;wbc_normalization_sha256&quot;: graph[&quot;normalization_sha256&quot;],</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         &quot;wbc_start_state&quot;: snapshot,</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         &quot;root_reference_source&quot;: snapshot.get(&quot;root_reference_source&quot;, &quot;snapshot&quot;),</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>         &quot;wbc_base_action&quot;: snapshot.get(&quot;wbc_base_action&quot;, &quot;&quot;),</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>         &quot;model_diagnostics&quot;: dict(trajectory[&quot;model_diagnostics&quot;], token_ids=trajectory[&quot;token_ids&quot;],</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>                                   material_ids=trajectory[&quot;material_ids&quot;], backend=trajectory[&quot;backend&quot;],</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>                                   inference_ms=trajectory[&quot;inference_ms&quot;]),</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>         &quot;generation_request&quot;: trajectory[&quot;generation_request&quot;],</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         &quot;safety_adjustments&quot;: trajectory[&quot;limit_adjustments&quot;],</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         &quot;expires_at_ms&quot;: int(time.time() * 1000) + 5000,</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     }</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a> </span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a> </span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a> class RosTransaction:</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     def __init__(self, names, root_height, base_action=&quot;A-C04_mod&quot;):</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>         import rclpy</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         from rclpy.executors import SingleThreadedExecutor</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>         from rclpy.qos import QoSProfile, ReliabilityPolicy</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         from rclpy.signals import SignalHandlerOptions</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         from std_msgs.msg import String</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>         from luvbot_control_interfaces.msg import PolicyObservation</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>         self.rclpy, self.String = rclpy, String</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         rclpy.init(args=[], signal_handler_options=SignalHandlerOptions.NO)</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         self.node = rclpy.create_node(&quot;text_wbc_transaction_&quot; + uuid.uuid4().hex[:8])</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         self.names, self.root_height, self.base_action = names, root_height, base_action</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         self.lock = threading.Lock()</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>         self.snapshot = None</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>         self.invalidated = False</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         self.events = queue.Queue()</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>         self.json_pub = self.node.create_publisher(String, &quot;/text_motion/json&quot;, 1)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         self.brain_pub = self.node.create_publisher(String, &quot;/algorithm/brain/wbc_action_cmd&quot;, 10)</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>         self.cancel_pub = self.node.create_publisher(String, &quot;/text_motion/cancel&quot;, 10)</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         for topic, source in [(&quot;/text_motion/wbc_status&quot;, &quot;worker&quot;),</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>                               (&quot;/system/state_machine/wbc_action_fdb&quot;, &quot;controller&quot;)]:</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>             self.node.create_subscription(String, topic, lambda msg, src=source: self.on_status(src, msg), 20)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>         self.node.create_subscription(PolicyObservation, &quot;/control/policy/observation&quot;, self.on_observation,</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>                                      QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>         self.executor = SingleThreadedExecutor()</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         self.node.create_timer(0.05, self.check_observation_timeout)</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         self.executor.add_node(self.node)</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>         self.thread = threading.Thread(target=self.executor.spin, daemon=False)</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         self.thread.start()</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a> </span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     def on_status(self, source, message):</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         try:</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>             self.events.put((source, json.loads(message.data)))</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>         except ValueError:</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>             pass</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a> </span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     def on_observation(self, message):</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>         age = (self.node.get_clock().now().nanoseconds - stamp) * 1e-9</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         valid = message.inference_enabled and 0 &lt;= age &lt;= 0.2 and \</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>             len(message.joints.name) == len(message.joints.position) and \</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>             len(set(message.joints.name)) == len(message.joints.name)</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>         snapshot = None</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>         if valid:</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>             try:</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>                 by_name = dict(zip(message.joints.name, message.joints.position))</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>                 position = message.base_pose.position</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>                 height = position.z</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>                 if height &lt;= 0.05 and self.root_height is not None:</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>                     height = self.root_height</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>                 q = message.imu.orientation</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>                 snapshot = {&quot;joint_names&quot;: self.names, &quot;joint_positions&quot;: [by_name[n] for n in self.names],</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>                             &quot;base_position&quot;: [position.x, position.y, height],</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>                             &quot;base_quaternion_wxyz&quot;: [q.w, q.x, q.y, q.z],</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>                             &quot;captured_stamp_ns&quot;: stamp, &quot;root_height_override&quot;: self.root_height,</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>                             &quot;root_reference_source&quot;: &quot;wbc_base_action&quot; if self.root_height is None else &quot;snapshot&quot;,</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>                             &quot;wbc_base_action&quot;: self.base_action}</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>             except KeyError:</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>                 pass</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>         with self.lock:</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>             if snapshot is None:</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>                 self.invalidated = True</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>             self.snapshot = None if snapshot is None else (snapshot, time.monotonic())</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a> </span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     def current_snapshot(self):</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>         with self.lock:</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>             if self.snapshot is None or time.monotonic() - self.snapshot[1] &gt; 0.2:</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>                 raise RuntimeError(&quot;No fresh enabled policy observation&quot;)</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>             return self.snapshot[0]</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a> </span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     def check_observation_timeout(self):</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>         with self.lock:</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>             if self.snapshot is None or time.monotonic() - self.snapshot[1] &gt; 0.2:</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>                 self.invalidated = True</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a> </span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     def reset_observation_gate(self):</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>         with self.lock:</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>             self.invalidated = False</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a> </span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     def check_observation_gate(self):</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>         with self.lock:</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>             if self.invalidated:</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>                 raise RuntimeError(&quot;Observation gate closed during generation; late result discarded&quot;)</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> </span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>     def wait_endpoints(self, timeout=10):</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>         deadline = time.monotonic() + timeout</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>         while time.monotonic() &lt; deadline:</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>             if self.json_pub.get_subscription_count() &gt; 0 and self.brain_pub.get_subscription_count() &gt; 0 and \</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>                     self.node.count_publishers(&quot;/text_motion/wbc_status&quot;) == 1 and \</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>                     self.node.count_publishers(&quot;/system/state_machine/wbc_action_fdb&quot;) == 1:</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>                 try:</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>                     return self.current_snapshot()</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>                 except RuntimeError:</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>                     pass</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>             time.sleep(0.05)</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>         raise RuntimeError(&quot;Text JSON worker, controller feedback and live observation must all be available&quot;)</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a> </span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     def publish(self, publisher, payload):</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>         message = self.String()</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>         message.data = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, allow_nan=False)</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>         publisher.publish(message)</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a> </span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     def execute(self, document, timeout):</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>         identifier = document[&quot;request_id&quot;]</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>         self.publish(self.json_pub, document)</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>         ready_deadline = time.monotonic() + 7</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>         deadline = time.monotonic() + timeout</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>         commanded = False</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>         timestamp = 0</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>         while time.monotonic() &lt; deadline:</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>             try:</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>                 source, event = self.events.get(timeout=0.1)</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>             except queue.Empty:</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>                 if not commanded and time.monotonic() &gt; ready_deadline:</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>                     raise RuntimeError(&quot;Complete JSON admission timed out&quot;)</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>                 continue</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>             if event.get(&quot;request_id&quot;, event.get(&quot;action_id&quot;)) != identifier:</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>                 continue</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>             print(json.dumps(dict(event, source=source), ensure_ascii=False), flush=True)</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>             state = event.get(&quot;state&quot;, event.get(&quot;status&quot;))</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>             if source == &quot;worker&quot; and state == &quot;ready&quot; and not commanded:</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>                 self.check_observation_gate()</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>                 self.current_snapshot()</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>                 timestamp = int(time.time() * 1000)</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>                 self.publish(self.brain_pub, {&quot;timestamp_ms&quot;: timestamp, &quot;action_id&quot;: identifier})</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>                 commanded = True</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>             elif source == &quot;controller&quot; and event.get(&quot;timestamp_ms&quot;) == timestamp:</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>                 if state in (&quot;completed&quot;, &quot;cancelled&quot;):</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>                     return state</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>                 if state in (&quot;rejected&quot;, &quot;failed&quot;):</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>                     raise RuntimeError(&quot;Controller terminal state: &quot; + state)</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>             elif source == &quot;worker&quot; and state == &quot;duplicate&quot; and commanded:</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>                 continue</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>             elif source == &quot;worker&quot; and state == &quot;cancelled&quot; and commanded:</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>                 continue  # Wait for the controller&#x27;s actual WBC -&gt; AMP terminal feedback.</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>             elif source == &quot;worker&quot; and state in (&quot;rejected&quot;, &quot;cancelled&quot;, &quot;duplicate&quot;):</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>                 raise RuntimeError(&quot;JSON admission failed: &quot; + state + &quot;: &quot; + event.get(&quot;detail&quot;, &quot;&quot;))</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>         raise RuntimeError(&quot;WBC completion timed out&quot;)</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a> </span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>     def cancel(self, identifier):</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>         self.publish(self.cancel_pub, identifier)</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>         from rclpy.duration import Duration</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>         self.cancel_pub.wait_for_all_acked(Duration(seconds=2))</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a> </span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>     def close(self):</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>         self.executor.shutdown()</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>         self.thread.join()</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>         self.node.destroy_node()</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>         self.rclpy.shutdown()</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a> </span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a> </span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a> def main():</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>     parser.add_argument(&quot;--model&quot;, type=Path, required=True)</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>     parser.add_argument(&quot;--bundle&quot;, type=Path, required=True)</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     parser.add_argument(&quot;--base-action&quot;, default=&quot;A-C04_mod&quot;)</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>     parser.add_argument(&quot;--mapping&quot;, type=Path, required=True)</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>     parser.add_argument(&quot;--text&quot;, default=&quot;&quot;)</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>     parser.add_argument(&quot;--tokens&quot;, nargs=3, type=int)</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>     parser.add_argument(&quot;--seed&quot;, type=int)</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>     parser.add_argument(&quot;--speed&quot;, type=float, default=1.2)</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>     parser.add_argument(&quot;--return-frames&quot;, type=int, choices=(-1, 30, 60, 90), default=-1)</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>     parser.add_argument(&quot;--no-return&quot;, action=&quot;store_true&quot;)</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>     parser.add_argument(&quot;--limit-policy&quot;, choices=(&quot;reject&quot;, &quot;clip&quot;), default=&quot;reject&quot;)</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>     parser.add_argument(&quot;--backend&quot;, choices=(&quot;lite2&quot;, &quot;onnx-reference&quot;), default=&quot;lite2&quot;)</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>     parser.add_argument(&quot;--snapshot&quot;, type=Path, help=&quot;Offline generation only: explicit full-body snapshot JSON&quot;)</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>     parser.add_argument(&quot;--root-height&quot;, type=float, help=&quot;Optional explicit reference height; default reuses the WBC Base reference&quot;)</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>     parser.add_argument(&quot;--execute&quot;, action=&quot;store_true&quot;, help=&quot;After writing JSON, request the standard WBC controller lifecycle&quot;)</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>     parser.add_argument(&quot;--timeout&quot;, type=float, default=130)</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>     parser.add_argument(&quot;--output&quot;, type=Path, required=True)</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>     args = parser.parse_args()</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>     if args.output.exists():</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>         parser.error(&quot;output already exists; choose a new JSON path&quot;)</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>     if args.execute and (args.snapshot is not None or args.backend != &quot;lite2&quot;):</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>         parser.error(&quot;execution requires fresh ROS observations and board Lite2 inference&quot;)</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>     if not math.isfinite(args.timeout) or args.timeout &lt;= 0:</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>         parser.error(&quot;timeout must be finite and positive&quot;)</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>     if args.root_height is not None and (not math.isfinite(args.root_height) or not 0.05 &lt; args.root_height &lt; 2):</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>         parser.error(&quot;root-height must be finite and between 0.05 and 2 metres&quot;)</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>     graph, names = bundle_contract(args.bundle, args.base_action)</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>     limits = full_limits(args.mapping, names)</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>     identifier = &quot;T_&quot; + uuid.uuid4().hex[:28]</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>     transaction = None</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>     submitted = False</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>     try:</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>         if args.snapshot:</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>             initial = check_snapshot(json.loads(args.snapshot.read_text()), names, limits)</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>         else:</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>             transaction = RosTransaction(names, args.root_height, args.base_action)</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>             initial = check_snapshot(transaction.wait_endpoints(), names, limits)</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>             transaction.reset_observation_gate()</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>         request = {&quot;request_id&quot;: identifier, &quot;mode&quot;: &quot;web&quot; if args.tokens is not None else &quot;text&quot;,</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>                    &quot;text&quot;: args.text, &quot;token_ids&quot;: args.tokens, &quot;seed&quot;: args.seed, &quot;speed&quot;: args.speed,</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>                    &quot;return_home&quot;: not args.no_return, &quot;return_frames&quot;: args.return_frames,</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>                    &quot;limit_policy&quot;: args.limit_policy}</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>         print(json.dumps({&quot;request_id&quot;: identifier, &quot;state&quot;: &quot;generating&quot;, &quot;backend&quot;: args.backend,</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>                           &quot;python_executable&quot;: sys.executable, &quot;python_version&quot;: sys.version.split()[0],</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>                           &quot;rknn_runtime_library&quot;: os.environ.get(&quot;RKNN_RUNTIME_LIB&quot;)}), flush=True)</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>         with open_pipeline(args.model, args.backend) as pipeline:</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>             trajectory = generate(pipeline, request, initial[&quot;joint_positions&quot;][12:], load_limits(args.mapping))</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>         if transaction is not None:</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>             transaction.check_observation_gate()</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>             latest = check_snapshot(transaction.current_snapshot(), names, limits)</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>             if np.max(np.abs(np.asarray(latest[&quot;joint_positions&quot;]) - initial[&quot;joint_positions&quot;])) &gt; 0.15:</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>                 raise RuntimeError(&quot;Robot moved during generation; generate again from current state&quot;)</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>         document = make_document(trajectory, initial, graph)</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>         if document is None:</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>             print(json.dumps({&quot;request_id&quot;: identifier, &quot;state&quot;: &quot;no_motion&quot;}), flush=True)</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>             return</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>         encoded = json.dumps(document, ensure_ascii=False, separators=(&quot;,&quot;, &quot;:&quot;), allow_nan=False)</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>         if len(encoded.encode(&quot;utf-8&quot;)) &gt; 4 * 1024 * 1024:</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>             raise ValueError(&quot;Complete JSON exceeds the WBC transport limit&quot;)</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>         args.output.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>         with tempfile.NamedTemporaryFile(mode=&quot;w&quot;, encoding=&quot;utf-8&quot;, dir=args.output.parent,</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>                                          prefix=&quot;.text_wbc_&quot;, delete=False) as stream:</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>             temporary = Path(stream.name)</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>             stream.write(encoded + &quot;\n&quot;)</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>         try:</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>             os.link(temporary, args.output)  # Atomic exclusive publication; never overwrite another writer.</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>         finally:</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>             temporary.unlink(missing_ok=True)</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>         print(json.dumps({&quot;request_id&quot;: identifier, &quot;state&quot;: &quot;generated&quot;, &quot;file&quot;: str(args.output),</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>                           &quot;frames&quot;: document[&quot;frame_count&quot;], &quot;base&quot;: graph[&quot;base_checkpoint_sha256&quot;]}), flush=True)</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>         if args.execute:</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>             submitted = True</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>             result = transaction.execute(document, args.timeout)</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>             submitted = False</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>             print(json.dumps({&quot;request_id&quot;: identifier, &quot;state&quot;: result}), flush=True)</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>     finally:</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>         if transaction is not None:</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>             try:</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>                 if submitted:</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>                     transaction.cancel(identifier)</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>             finally:</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>                 transaction.close()</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a> </span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a> </span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>     try:</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>         main()</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>     except Exception as error:</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>         print(json.dumps({&quot;state&quot;: &quot;failed&quot;, &quot;error_type&quot;: type(error).__name__, &quot;detail&quot;: str(error),</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a>                           &quot;python_executable&quot;: sys.executable}, ensure_ascii=False), file=sys.stderr, flush=True)</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>         raise</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

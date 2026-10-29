@@ -1,0 +1,220 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>texttomotion/motion_adapter.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>texttomotion/motion_adapter.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> &quot;&quot;&quot;Robot boundary for the unmodified text_to_motion_onnx.zip delivery.&quot;&quot;&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> import hashlib</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> import importlib.util</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import json</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> from pathlib import Path</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> import re</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import sys</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import time</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import numpy as np</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import yaml</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> </span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> HERE = Path(__file__).resolve().parent</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> BASELINE = HERE / &quot;baseline&quot;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> SOURCE_SHA256 = &quot;48485ea7f14fd7e52920f7f59e4da20515b9f043e0aa388ee2a3e43130a84119&quot;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> JOINTS = [</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     &quot;left_shoulder_pitch_joint&quot;, &quot;left_shoulder_roll_joint&quot;, &quot;left_elbow_roll_joint&quot;,</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     &quot;right_shoulder_pitch_joint&quot;, &quot;right_shoulder_roll_joint&quot;, &quot;right_elbow_roll_joint&quot;,</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     &quot;neck_yaw_joint&quot;, &quot;neck_pitch_joint&quot;, &quot;neck_roll_joint&quot;,</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> ]</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> TERMINAL = {&quot;completed&quot;, &quot;cancelled&quot;, &quot;rejected&quot;, &quot;failed&quot;, &quot;stopped&quot;, &quot;no_motion&quot;}</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> def valid_id(value):</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     return isinstance(value, str) and re.fullmatch(r&quot;[A-Za-z0-9_-]{1,64}&quot;, value) is not None</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> def verify_baseline():</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     record = json.loads((BASELINE / &quot;BASELINE.json&quot;).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     if record[&quot;source_sha256&quot;] != SOURCE_SHA256:</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>         raise ValueError(&quot;Wrong text-motion source delivery&quot;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     for relative, expected in record[&quot;files&quot;].items():</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>         path = (BASELINE / relative).resolve()</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>         if not path.is_relative_to(BASELINE.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != expected:</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>             raise ValueError(&quot;Changed baseline file: &quot; + relative)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> </span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> </span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> def open_pipeline(manifest, backend):</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     verify_baseline()</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     source_manifest = BASELINE / &quot;onnx/manifest.json&quot;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     expected = hashlib.sha256(source_manifest.read_bytes()).hexdigest()</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     manifest = Path(manifest).resolve()</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     if not manifest.is_file():</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         raise FileNotFoundError(&quot;Provide model_manifest pointing to the current delivery&#x27;s manifest.json&quot;)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     info = json.loads(manifest.read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     if backend == &quot;lite2&quot;:</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>         if info.get(&quot;preparation_manifest_sha256&quot;) != expected:</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>             raise ValueError(&quot;RKNN must be compiled from the current ONNX delivery; old compiled packages are refused&quot;)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     elif backend == &quot;onnx-reference&quot;:</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>         if hashlib.sha256(manifest.read_bytes()).hexdigest() != expected:</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>             raise ValueError(&quot;CPU reference must use the current delivery&#x27;s ONNX manifest&quot;)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     else:</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         raise ValueError(&quot;backend must be lite2 or onnx-reference&quot;)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     if info.get(&quot;trajectory_columns&quot;) != [&quot;right_hand[0:3]&quot;, &quot;left_hand[3:6]&quot;, &quot;head[6:9]&quot;]:</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         raise ValueError(&quot;Unknown model coordinate order&quot;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     if info[&quot;motion_metadata&quot;][&quot;joint_names&quot;] != JOINTS or info.get(&quot;fps&quot;) != 50:</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         raise ValueError(&quot;Unknown model joint metadata/FPS&quot;)</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     # Always run the host implementation shipped in the current source zip.</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     if backend == &quot;lite2&quot;:</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         from board_runtime import rknn_lite_class</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         rknn_lite_class()</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     sys.path.insert(0, str(BASELINE / &quot;onnx&quot;))</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     from deploy_rknn.pipeline import RknnMotionPipeline</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     return RknnMotionPipeline(manifest, backend)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> </span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> </span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> def load_limits(mapping_file):</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     mapping = yaml.safe_load(Path(mapping_file).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     limits = []</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     for name in JOINTS:</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>         matches = [motor for motor in mapping[&quot;motors&quot;] if motor[&quot;joint_name&quot;] == name]</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         if len(matches) != 1 or matches[0].get(&quot;enabled&quot;) is not True:</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>             raise ValueError(&quot;Missing/duplicate/disabled joint in mapping: &quot; + name)</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         motor = matches[0]</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>         lo, hi = float(motor[&quot;joint_lower&quot;]), float(motor[&quot;joint_upper&quot;])</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         if not np.isfinite([lo, hi]).all() or lo &gt;= hi:</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>             raise ValueError(&quot;Invalid joint limits: &quot; + name)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         limits.append((lo, hi))</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     return np.asarray(limits, dtype=np.float64)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> </span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> def check_pose(pose, limits):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     if np.asarray(pose).dtype.kind not in &quot;fiu&quot;:</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>         raise ValueError(&quot;Pose values must be numeric, excluding booleans&quot;)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     result = np.asarray(pose, dtype=np.float32)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     if result.shape != (9,) or not np.isfinite(result).all():</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>         raise ValueError(&quot;Pose must contain nine finite radians in robot joint order&quot;)</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     if np.any(result &lt; limits[:, 0] - 1e-6) or np.any(result &gt; limits[:, 1] + 1e-6):</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         raise ValueError(&quot;Pose exceeds the current robot mapping limits&quot;)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     return np.clip(result, limits[:, 0], limits[:, 1]).astype(np.float32)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> </span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> </span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a> def mirror_arms(value):</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     &quot;&quot;&quot;Involution between delivered viewer-side columns and anatomical joints.</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a> </span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>     Swap arms and invert shoulder/elbow roll; pitch and head axes are unchanged.</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     Apply once to BOTH model inputs and outputs, never to already adapted JSON.</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     &quot;&quot;&quot;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>     value = np.asarray(value, dtype=np.float32)</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     result = value.copy()</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     sign = np.asarray([1, -1, -1], dtype=np.float32)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     result[..., :3] = value[..., 3:6] * sign</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>     result[..., 3:6] = value[..., :3] * sign</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     return result</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a> </span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a> </span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a> def configure_generation_limits(pipeline, limits):</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     &quot;&quot;&quot;Use mapping limits in every original composer operation, per pipeline.</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a> </span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     The frozen composer keeps its limits in module globals. Give this pipeline</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>     a private module instance so another pipeline&#x27;s mapping cannot change them.</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>     Source files, model tensors and the original module remain untouched.</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     &quot;&quot;&quot;</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     limits = np.asarray(limits, dtype=np.float64)</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     if limits.shape != (9, 2) or not np.isfinite(limits).all() or np.any(limits[:, 0] &gt;= limits[:, 1]):</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         raise ValueError(&quot;Generation needs nine finite ordered robot joint limits&quot;)</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     if np.array_equal(getattr(pipeline, &quot;_robot_generation_limits&quot;, None), limits):</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         return</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     lower, upper = mirror_arms(limits[:, 0]), mirror_arms(limits[:, 1])</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     model_limits = np.stack([np.minimum(lower, upper), np.maximum(lower, upper)], axis=1)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     spec = importlib.util.spec_from_file_location(&quot;_l0_robot_motion&quot;, BASELINE / &quot;onnx/deploy_rknn/motion.py&quot;)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     module = importlib.util.module_from_spec(spec)</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     spec.loader.exec_module(module)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     # The source composer uses head/left/right parts; trajectory columns use</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>     # right/left/head. mirror_arms already handles anatomical sides and signs.</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     module.LIMITS = np.stack([model_limits[6:9], model_limits[3:6], model_limits[:3]])</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     module.FULL_LIMITS = model_limits</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>     module.LIMITS.setflags(write=False)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     module.FULL_LIMITS.setflags(write=False)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     previous = pipeline.composer</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     pipeline.composer = module.MotionComposer(previous.metadata, previous.atoms, previous.lengths, previous.a_pose)</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     pipeline._robot_generation_limits = limits.copy()</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> </span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> </span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a> def validate_request(request):</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     allowed = {&quot;command&quot;, &quot;request_id&quot;, &quot;mode&quot;, &quot;text&quot;, &quot;token_ids&quot;, &quot;speed&quot;, &quot;seed&quot;,</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>                &quot;return_home&quot;, &quot;return_frames&quot;, &quot;end_pose&quot;, &quot;limit_policy&quot;}</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>     if not isinstance(request, dict) or set(request) - allowed:</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         raise ValueError(&quot;Unknown request fields&quot;)</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>     if not valid_id(request.get(&quot;request_id&quot;)) or request.get(&quot;command&quot;, &quot;generate&quot;) != &quot;generate&quot;:</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         raise ValueError(&quot;Invalid generate request/id&quot;)</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>     mode = request.get(&quot;mode&quot;, &quot;text&quot;)</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     if mode not in (&quot;text&quot;, &quot;web&quot;):</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         raise ValueError(&quot;mode must be text or web&quot;)</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     if mode == &quot;text&quot;:</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         text = request.get(&quot;text&quot;, &quot;&quot;)</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>         if not isinstance(text, str) or not text.strip() or len(text) &gt; 128:</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>             raise ValueError(&quot;text must contain 1..128 characters; whitespace is preserved&quot;)</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>     else:</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>         tokens = request.get(&quot;token_ids&quot;)</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>         if not isinstance(tokens, list) or len(tokens) != 3 or any(type(t) is not int for t in tokens):</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>             raise ValueError(&quot;web mode requires three integer token IDs: head/left/right&quot;)</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     speed = request.get(&quot;speed&quot;, 1.2)</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     if type(speed) not in (int, float) or not np.isfinite(speed) or not 0.1 &lt;= speed &lt;= 4.0:</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>         raise ValueError(&quot;Robot playback accepts speed in [0.1, 4.0]&quot;)</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     if type(request.get(&quot;return_home&quot;, True)) is not bool:</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>         raise ValueError(&quot;return_home must be boolean&quot;)</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     frames = request.get(&quot;return_frames&quot;, -1)</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     if type(frames) is not int or frames not in (-1, 30, 60, 90):</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>         raise ValueError(&quot;return_frames must be -1, 30, 60 or 90&quot;)</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     seed = request.get(&quot;seed&quot;)</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     if seed is not None and (type(seed) is not int or not 0 &lt;= seed &lt; 2**32):</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>         raise ValueError(&quot;seed must be an integer in [0, 2**32)&quot;)</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     if request.get(&quot;limit_policy&quot;, &quot;reject&quot;) not in (&quot;reject&quot;, &quot;clip&quot;):</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>         raise ValueError(&quot;limit_policy must be reject or clip&quot;)</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a> </span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a> </span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a> def generate(pipeline, request, initial, limits):</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     validate_request(request)</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     configure_generation_limits(pipeline, limits)</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     initial = check_pose(initial, limits)</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     end = check_pose(request.get(&quot;end_pose&quot;, initial), limits)</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     output = pipeline.generate(</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>         mode=request.get(&quot;mode&quot;, &quot;text&quot;), text=request.get(&quot;text&quot;, &quot;&quot;), token_ids=request.get(&quot;token_ids&quot;),</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>         init_pose=mirror_arms(initial), end_pose=mirror_arms(end),</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>         return_home=request.get(&quot;return_home&quot;, True), return_frames=request.get(&quot;return_frames&quot;, -1),</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>         speed=request.get(&quot;speed&quot;, 1.2), seed=request.get(&quot;seed&quot;))</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     tokens = np.asarray(output[&quot;token_ids&quot;])</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     if tokens.shape != (3,) or tokens.dtype.kind not in &quot;iu&quot;:</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>         raise ValueError(&quot;Invalid model token IDs&quot;)</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     # Token order is head/left/right. Own all three axes of each selected part,</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     # including constant axes; variation thresholds do not express ownership.</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     mask = np.repeat(tokens[[1, 2, 0]] != 0, 3)</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     if not mask.any():</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>         return None</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     motion = mirror_arms(output[&quot;motion&quot;])</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     count = np.asarray(output[&quot;frame_count&quot;])</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>     if motion.ndim != 2 or motion.shape[1] != 9 or not 2 &lt;= len(motion) &lt;= 5000 or \</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>             count.shape != (1,) or count.dtype.kind not in &quot;iu&quot; or int(count[0]) != len(motion) or \</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>             not np.isfinite(motion).all():</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>         raise ValueError(&quot;Invalid complete model trajectory&quot;)</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>     if np.max(np.abs(motion[0, mask] - initial[mask])) &gt; 0.005:</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>         raise ValueError(&quot;Generated first frame differs from the captured start pose&quot;)</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>     if request.get(&quot;return_home&quot;, True) and np.max(np.abs(motion[-1, mask] - end[mask])) &gt; 0.005:</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>         raise ValueError(&quot;Generated active parts do not reach the requested end pose&quot;)</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>     clipped = np.clip(motion, limits[:, 0], limits[:, 1])</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     adjustments = np.abs(clipped - motion)</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>     if np.any(adjustments &gt; 1e-6) and request.get(&quot;limit_policy&quot;, &quot;reject&quot;) == &quot;reject&quot;:</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>         names = [name for j, name in enumerate(JOINTS) if np.any(adjustments[:, j] &gt; 1e-6)]</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>         raise ValueError(&quot;Model exceeds robot limits: &quot; + &quot;, &quot;.join(names) + &quot;; explicit limit_policy=clip is required&quot;)</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>     return {</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>         &quot;format&quot;: &quot;l0_text_motion_v2&quot;, &quot;robot&quot;: &quot;l0_v5&quot;, &quot;angle_unit&quot;: &quot;rad&quot;, &quot;fps&quot;: 50,</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>         &quot;coordinate_contract&quot;: &quot;robot_anatomical_v1&quot;, &quot;request_id&quot;: request[&quot;request_id&quot;],</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>         &quot;source_zip_sha256&quot;: SOURCE_SHA256, &quot;joint_names&quot;: JOINTS, &quot;active_joints&quot;: mask.tolist(),</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>         &quot;positions&quot;: clipped.tolist(), &quot;frame_count&quot;: len(motion),</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>         &quot;token_ids&quot;: tokens.tolist(), &quot;material_ids&quot;: np.asarray(output[&quot;material_ids&quot;]).tolist(),</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>         &quot;backend&quot;: pipeline.backend, &quot;inference_ms&quot;: output[&quot;inference_ms&quot;],</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>         &quot;generation_request&quot;: request, &quot;start_pose&quot;: initial.tolist(), &quot;end_pose&quot;: end.tolist(),</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>         &quot;model_diagnostics&quot;: {</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>             &quot;generation_joint_limits_rad&quot;: {name: list(map(float, bound)) for name, bound in zip(JOINTS, limits)},</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>             **{key: np.asarray(output[key]).tolist()</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>             for key in (&quot;part_transition_frames&quot;, &quot;action_frame_count_before_speed&quot;, &quot;frame_count_before_speed&quot;,</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>                         &quot;return_home_start_frame&quot;, &quot;selector&quot;)}},</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>         &quot;limit_policy&quot;: request.get(&quot;limit_policy&quot;, &quot;reject&quot;),</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>         &quot;limit_adjustments&quot;: {name: {&quot;count&quot;: int(np.count_nonzero(adjustments[:, j] &gt; 1e-6)),</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>                                       &quot;max_rad&quot;: float(adjustments[:, j].max())}</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>                               for j, name in enumerate(JOINTS)},</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>         # Renewed immediately before sending; this default also bounds offline replay.</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>         &quot;expires_at_ms&quot;: int(time.time() * 1000) + 2000,</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

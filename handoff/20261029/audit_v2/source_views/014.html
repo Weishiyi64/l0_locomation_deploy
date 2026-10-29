@@ -1,0 +1,206 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/goal_to_planner_node.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/goal_to_planner_node.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/usr/bin/python3</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &quot;&quot;&quot;Optional upstream goal manager. All goal/heading/arrival state is outside ONNX.&quot;&quot;&quot;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> import signal</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> import time</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> from pathlib import Path</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> </span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> import numpy as np</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> import rclpy</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> from geometry_msgs.msg import Pose, PoseArray, PoseStamped</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> from nav_msgs.msg import Odometry</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> from nav_msgs.msg import Path as PathMsg</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> from navigation_route import NavigationRoute, load_house_planner</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> from planner_commands import GoalTask, absolute_goal, yaw_xyzw</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> from rclpy.executors import ExternalShutdownException</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> from rclpy.node import Node</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> from std_msgs.msg import Float32MultiArray, String</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> </span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> class GoalToPlanner(Node):</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     def __init__(self):</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>         super().__init__(&#x27;goal_to_planner&#x27;)</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>         def param(name, default):</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>             return self.declare_parameter(name, default).value</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> </span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>         self.frame = param(&#x27;odom_frame&#x27;, &#x27;device0/odom&#x27;)</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>         self.navigation_map = param(&#x27;navigation_map&#x27;, &#x27;flat&#x27;)</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>         self.speed = float(param(&#x27;nav_speed&#x27;, 0.5))</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>         self.turn_speed = float(param(&#x27;turn_speed&#x27;, 2.0))</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>         self.timeout = float(param(&#x27;odom_timeout&#x27;, 0.5))</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>         self.goal = self.pose = None</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>         self.route = self.map_planner = None</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>         self.planar_speed = 0.0</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>         self.route_path = self.create_publisher(</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>             PathMsg, &#x27;/navigation_path&#x27;, QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>         )</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>         self.remaining_path = self.create_publisher(</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>             PathMsg, &#x27;/navigation_remaining_path&#x27;, QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>         )</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>         self.create_subscription(Float32MultiArray, &#x27;/navigation_goal&#x27;, self.on_navigation_goal, 10)</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>         self.wait_reason = None</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>         self.accepted_goal = self.create_publisher(</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>             PoseArray,</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>             &#x27;/goal_to_planner/accepted_goal&#x27;,</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>         )</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>         self.odom_time = -float(&#x27;inf&#x27;)</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>         self.input_pub = self.create_publisher(Float32MultiArray, &#x27;/planner_input&#x27;, 1)</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>         self.status = self.create_publisher(String, &#x27;/goal_to_planner/state&#x27;, 10)</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>         self.create_subscription(PoseStamped, param(&#x27;goal_topic&#x27;, &#x27;/goal_pose&#x27;), self.on_goal, 10)</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>         self.create_subscription(</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>             Odometry, param(&#x27;odom_topic&#x27;, &#x27;/manifold/ODIN2/device0/odometry&#x27;), self.on_odom, qos_profile_sensor_data</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>         )</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>         # Match the trained high-level task update period (5 Hz).</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         self.create_timer(0.2, self.tick)</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a> </span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>     def publish_accepted_goal(self):</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>         message = PoseArray()</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>         message.header.frame_id = self.frame</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         message.header.stamp = self.get_clock().now().to_msg()</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         if self.goal is not None:</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>             pose = Pose()</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>             pose.position.x, pose.position.y = float(self.goal.x), float(self.goal.y)</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>             yaw = self.goal.heading or 0.0</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>             pose.orientation.z = float(np.sin(yaw / 2))</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>             pose.orientation.w = float(np.cos(yaw / 2))</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>             message.poses = [pose]</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>         self.accepted_goal.publish(message)</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a> </span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     @staticmethod</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>     def quaternion(pose):</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>         q = pose.orientation</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>         return [q.x, q.y, q.z, q.w]</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a> </span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>     def publish_route(self, remaining=False):</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>         message = PathMsg()</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         message.header.frame_id = self.frame</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         message.header.stamp = self.get_clock().now().to_msg()</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>         if self.route is not None and self.route.path is not None:</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>             points = self.route.path[self.route.index :] if remaining else self.route.path</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>             for x, y in points:</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>                 pose = PoseStamped()</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>                 pose.header = message.header</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>                 pose.pose.position.x, pose.pose.position.y = float(x), float(y)</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>                 pose.pose.orientation.w = 1.0</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>                 message.poses.append(pose)</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>         (self.remaining_path if remaining else self.route_path).publish(message)</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a> </span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>     def start_navigation(self, goal):</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>         if self.goal is not None and self.route is not None and self.goal.keep_position_for(goal):</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>             # A nearby goal does not reopen completed navigation. Heading and</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>             # speed settings can still change; preserve the completed XY anchor.</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>             if goal.heading != self.goal.heading:</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>                 self.goal.heading_locked = False</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>                 self.route.complete = False</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>                 self.route.hold_steps = 0</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>             self.goal.heading = goal.heading</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>             self.goal.speed, self.goal.turn_speed = goal.speed, goal.turn_speed</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>             return</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         if not self.navigation_map:</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>             raise ValueError(&#x27;Set navigation_map to a map registered in device0/odom before using A*&#x27;)</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>         if self.map_planner is None:</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>             self.map_planner = load_house_planner(Path(self.navigation_map))</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>         self.goal = goal</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>         self.route = NavigationRoute(self.map_planner, goal)</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a> </span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>     def on_navigation_goal(self, msg):</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>         try:</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>             self.start_navigation(absolute_goal(msg.data))</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         except (ValueError, OSError, RuntimeError) as error:</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>             self.route = self.goal = None</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>             self.get_logger().error(str(error))</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>         self.publish_route()</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>         self.publish_accepted_goal()</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a> </span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>     def on_goal(self, msg):</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>         try:</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>             if msg.header.frame_id != self.frame:</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>                 raise ValueError(f&#x27;Goal frame must be {self.frame}&#x27;)</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>             q = self.quaternion(msg.pose)</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>             # An omitted (all-zero) quaternion means position only.</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>             heading = None if all(v == 0 for v in q) else yaw_xyzw(q)</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>             self.start_navigation(</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>                 GoalTask(msg.pose.position.x, msg.pose.position.y, heading, self.speed, self.turn_speed)</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>             )</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         except (ValueError, OSError, RuntimeError) as error:</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>             self.route = self.goal = None</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>             self.get_logger().warning(str(error))</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>         self.publish_route()</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>         self.publish_accepted_goal()</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> </span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     def on_odom(self, msg):</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>         try:</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>             if msg.header.frame_id != self.frame or msg.child_frame_id != &#x27;device0/base_link&#x27;:</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>                 raise ValueError(&#x27;Odometry must describe device0/base_link in the configured odom frame&#x27;)</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>             p = msg.pose.pose</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>             self.pose = (p.position.x, p.position.y, yaw_xyzw(self.quaternion(p)))</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>             v = msg.twist.twist.linear</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>             self.planar_speed = float(np.hypot(v.x, v.y))</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>             if not np.isfinite(self.planar_speed):</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>                 raise ValueError(&#x27;Non-finite odometry speed&#x27;)</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>             if not np.isfinite(self.pose).all():</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>                 raise ValueError(&#x27;Non-finite odometry&#x27;)</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>             self.odom_time = time.monotonic()</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>         except ValueError as error:</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>             self.odom_time = -float(&#x27;inf&#x27;)</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>             self.get_logger().warning(str(error), throttle_duration_sec=2.0)</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a> </span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>     def tick(self):</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>         command, mode = np.zeros(5), &#x27;Hold&#x27;</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>         preview = np.zeros(4)</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>         if (</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>             self.goal is not None</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>             and self.route is not None</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>             and self.pose is not None</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>             and time.monotonic() - self.odom_time &lt;= self.timeout</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>         ):</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>             revision = self.route.revision</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>             command, mode = self.route.update(self.pose, self.planar_speed, self.get_clock().now().nanoseconds / 1e9)</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>             preview = self.route.preview if mode == &#x27;Nav&#x27; else np.zeros(4)</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>             if revision != self.route.revision:</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>                 self.publish_route()</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>                 if self.route.error:</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>                     self.get_logger().warning(&#x27;A* unavailable; Hold and retry: &#x27; + self.route.error)</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>             x, y, yaw = self.pose</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>             distance = float(np.hypot(self.goal.x - x, self.goal.y - y))</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>             self.get_logger().info(</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>                 f&#x27;Goal tracking: mode={mode}, odom=({x:.3f},{y:.3f}), &#x27;</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>                 f&#x27;yaw={yaw:.3f}, distance={distance:.3f} m, &#x27;</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>                 f&#x27;planner_input={np.r_[command, preview].tolist()}&#x27;,</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>                 throttle_duration_sec=2.0,</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>             )</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>         if self.route is not None and (self.pose is None or time.monotonic() - self.odom_time &gt; self.timeout):</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>             self.route.arrived_since = None</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>         reason = (</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>             &#x27;waiting for odometry&#x27;</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>             if self.goal is not None and (self.pose is None or time.monotonic() - self.odom_time &gt; self.timeout)</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>             else None</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         )</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>         if reason != self.wait_reason:</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>             if reason:</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>                 self.get_logger().warning(&#x27;Goal accepted but waiting for fresh odometry; output Hold&#x27;)</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>             self.wait_reason = reason</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>         self.publish_route(remaining=True)</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>         self.input_pub.publish(Float32MultiArray(data=np.r_[command, preview].tolist()))</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>         self.status.publish(String(data=mode))</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a> </span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a> </span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a> def main():</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>     rclpy.init()</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>     node = GoalToPlanner()</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>     try:</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>         rclpy.spin(node)</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>     except (KeyboardInterrupt, ExternalShutdownException):</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>         pass</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>     finally:</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>         signal.signal(signal.SIGINT, signal.SIG_IGN)</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>         if rclpy.ok():</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>             node.input_pub.publish(Float32MultiArray(data=[0.0] * 9))</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>         node.destroy_node()</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>         rclpy.try_shutdown()</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a> </span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a> </span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a> if __name__ == &#x27;__main__&#x27;:</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>     main()</span></pre></html>

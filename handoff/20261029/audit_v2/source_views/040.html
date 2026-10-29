@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/wbc_json_reference_probe.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/wbc_json_reference_probe.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;wbc_json_reference.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;fstream&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;iomanip&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;iostream&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;iterator&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> // Board-side inspection of the exact parser/table consumed by RLWbc. No ROS</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> // initialization, model context, hardware transport or actuator publication.</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> int main(int argc, char** argv) {</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>   if (argc != 6) {</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>     std::cerr &lt;&lt; &quot;Usage: wbc_json_reference_probe JSON CONFIG MAPPING BASE_SHA256 OUTPUT\n&quot;;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     return 2;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   }</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   try {</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     std::ifstream source(argv[1], std::ios::binary);</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     if (!source) throw std::runtime_error(&quot;cannot read JSON&quot;);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     const std::string payload{std::istreambuf_iterator&lt;char&gt;(source), std::istreambuf_iterator&lt;char&gt;()};</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>     const auto names = YAML::LoadFile(argv[2])[&quot;RobotCfg&quot;][&quot;joint_order_mj&quot;].as&lt;std::vector&lt;std::string&gt;&gt;();</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     const WbcJsonReference reference(payload, names, wbcJsonJointLimits(argv[3], names), argv[4]);</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     std::ifstream existing(argv[5]);</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     if (existing.good()) throw std::runtime_error(&quot;output already exists&quot;);</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     std::ofstream out(argv[5]);</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     if (!out) throw std::runtime_error(&quot;cannot write output&quot;);</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     out &lt;&lt; std::setprecision(17) &lt;&lt; &quot;{\&quot;frame_count\&quot;:&quot; &lt;&lt; reference.size() &lt;&lt; &quot;,\&quot;root_position\&quot;:[&quot;;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     for (std::size_t j = 0; j &lt; 3; ++j) out &lt;&lt; (j ? &quot;,&quot; : &quot;&quot;) &lt;&lt; reference.rootPosition()[j];</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     out &lt;&lt; &quot;],\&quot;root_quaternion_wxyz\&quot;:[&quot;;</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     for (std::size_t j = 0; j &lt; 4; ++j) out &lt;&lt; (j ? &quot;,&quot; : &quot;&quot;) &lt;&lt; reference.rootOrientation()[j];</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     out &lt;&lt; &quot;],\&quot;joint_pos\&quot;:[&quot;;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     for (std::size_t i = 0; i &lt; reference.size(); ++i) {</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>       out &lt;&lt; (i ? &quot;,[&quot; : &quot;[&quot;);</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>       const auto&amp; row = reference.frame(static_cast&lt;int&gt;(i));</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>       for (std::size_t j = 0; j &lt; 21; ++j) out &lt;&lt; (j ? &quot;,&quot; : &quot;&quot;) &lt;&lt; row[j];</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>       out &lt;&lt; &#x27;]&#x27;;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     }</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     out &lt;&lt; &quot;]}\n&quot;;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     if (!out.good()) throw std::runtime_error(&quot;reference export failed&quot;);</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     std::cout &lt;&lt; &quot;Validated reference: &quot; &lt;&lt; reference.size() &lt;&lt; &quot; frames; root + 21 joints; no actuator path\n&quot;;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     return 0;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   } catch (const std::exception&amp; error) {</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     std::cerr &lt;&lt; error.what() &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     return 1;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   }</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

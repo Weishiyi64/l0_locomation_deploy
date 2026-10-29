@@ -1,0 +1,13 @@
+{
+  "net_files": 72,
+  "net_functions": 328,
+  "net_lines_added": 6079,
+  "net_lines_deleted": 2606,
+  "all_net_files_have_primary_section": true,
+  "all_net_functions_have_section": true,
+  "parser_error_count": 0,
+  "historical_cleanup_files": 23,
+  "historical_cleanup_functions": 50,
+  "auxiliary_files": 8,
+  "auxiliary_functions": 11
+}

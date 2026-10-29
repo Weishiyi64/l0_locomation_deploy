@@ -1,0 +1,138 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/rl_controller_wbc_json.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/rl_controller_wbc_json.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;rl_controller_wbc.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;algorithm&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;cmath&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;functional&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> namespace {</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> std::string quoted(const std::string&amp; value) {</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>   static const char hex[] = &quot;0123456789abcdef&quot;;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>   std::string out = &quot;\&quot;&quot;;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>   for (unsigned char c : value) {</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>     if (c == &#x27;&quot;&#x27; || c == &#x27;\\&#x27;) { out += &#x27;\\&#x27;; out += static_cast&lt;char&gt;(c); }</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>     else if (c &lt; 32) { out += &quot;\\u00&quot;; out += hex[c &gt;&gt; 4]; out += hex[c &amp; 15]; }</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     else out += static_cast&lt;char&gt;(c);</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   }</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   return out + &#x27;&quot;&#x27;;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> }</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> void remember(std::deque&lt;std::string&gt;&amp; ids, const std::string&amp; id) {</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   if (ids.size() &gt; 256) ids.pop_front();</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> }</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> }  // namespace</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> void RLWbc::initializeJsonReference() {</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   node_-&gt;get_parameter(&quot;wbc_json_base_action&quot;, json_base_action_);</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   if (json_base_action_.empty()) return;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   if (!lora_assets_ || !motions_.count(json_base_action_) ||</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>       lora_assets_-&gt;action(json_base_action_).parameter_source != &quot;base&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     throw std::runtime_error(&quot;wbc_json_base_action must select a preloaded complete Base parameter pack&quot;);</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   std::string mapping_file;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   if (!node_-&gt;get_parameter(&quot;mapping_file&quot;, mapping_file) || mapping_file.empty())</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     throw std::runtime_error(&quot;JSON WBC requires the robot mapping_file&quot;);</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   json_joint_limits_ = wbcJsonJointLimits(mapping_file, joint_names_);</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   // Cache through the exact ordinary WBC reference reader before its control</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   // thread starts. JSON admission never queries a live reference context.</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   json_base_reference_ = inferReferenceFrame(*motions_.at(json_base_action_), 0);</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;Text JSON reference uses WBC Base action=%s frame=0 root_height=%.6f; no measured height gate&quot;,</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>               json_base_action_.c_str(), json_base_reference_.root_position[2]);</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   json_status_pub_ = node_-&gt;create_publisher&lt;std_msgs::msg::String&gt;(&quot;/text_motion/wbc_status&quot;, 20);</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   json_callback_group_ = node_-&gt;create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   json_cancel_group_ = node_-&gt;create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   rclcpp::SubscriptionOptions options;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   options.callback_group = json_callback_group_;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   json_sub_ = node_-&gt;create_subscription&lt;std_msgs::msg::String&gt;(&quot;/text_motion/json&quot;,</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>       rclcpp::QoS(1).reliable().durability_volatile(),</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>       std::bind(&amp;RLWbc::jsonReferenceCallback, this, std::placeholders::_1), options);</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>   options.callback_group = json_cancel_group_;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   json_cancel_sub_ = node_-&gt;create_subscription&lt;std_msgs::msg::String&gt;(&quot;/text_motion/cancel&quot;, 10,</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>       std::bind(&amp;RLWbc::jsonCancelCallback, this, std::placeholders::_1), options);</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;JSON WBC enabled: shared Base %s; complete Base parameters=%s; /text_motion/json&quot;,</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>               lora_assets_-&gt;baseHash().c_str(), json_base_action_.c_str());</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> }</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> </span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> void RLWbc::publishJsonStatus(const std::string&amp; id, const char* state, const std::string&amp; detail) {</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   std_msgs::msg::String message;</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   message.data = &quot;{\&quot;request_id\&quot;:&quot; + quoted(id) + &quot;,\&quot;state\&quot;:&quot; + quoted(state) +</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>       &quot;,\&quot;detail\&quot;:&quot; + quoted(detail) + &quot;}&quot;;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   json_status_pub_-&gt;publish(message);</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> }</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> </span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a> void RLWbc::jsonReferenceCallback(const std_msgs::msg::String::ConstSharedPtr msg) {</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   std::string id;</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   try {</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     if (msg-&gt;data.size() &gt; 4U * 1024U * 1024U) throw std::runtime_error(&quot;JSON exceeds 4 MiB&quot;);</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     const auto header = YAML::Load(msg-&gt;data);</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     id = header[&quot;request_id&quot;].as&lt;std::string&gt;(&quot;&quot;);</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     if (header[&quot;root_reference_source&quot;].as&lt;std::string&gt;(&quot;snapshot&quot;) == &quot;wbc_base_action&quot; &amp;&amp;</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>         header[&quot;wbc_base_action&quot;].as&lt;std::string&gt;(&quot;&quot;) != json_base_action_)</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>       throw std::runtime_error(&quot;JSON root reference Base action mismatch&quot;);</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     {</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>       std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>       if (std::find(json_cancelled_ids_.begin(), json_cancelled_ids_.end(), id) != json_cancelled_ids_.end()) {</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         publishJsonStatus(id, &quot;cancelled&quot;, &quot;cancelled before JSON admission&quot;);</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>         return;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>       }</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>       if (std::find(json_recent_ids_.begin(), json_recent_ids_.end(), id) != json_recent_ids_.end()) {</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         publishJsonStatus(id, &quot;duplicate&quot;, &quot;JSON request already handled&quot;);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         return;</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>       }</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     }</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     std::unique_lock&lt;std::mutex&gt; loading_lock(loading_mutex_, std::try_to_lock);</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     if (!loading_lock.owns_lock()) throw std::runtime_error(&quot;another WBC preparation is loading&quot;);</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     auto reference = std::make_shared&lt;WbcJsonReference&gt;(msg-&gt;data, joint_names_, json_joint_limits_, lora_assets_-&gt;baseHash(),</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>         &amp;json_base_reference_.root_position, &amp;json_base_reference_.root_orientation);</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     auto motion = std::make_unique&lt;Motion&gt;();</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     motion-&gt;robot_cfg_path_ = lora_assets_-&gt;action(json_base_action_).config;</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     loadConfig(*motion, motion-&gt;robot_cfg_path_);</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     motion-&gt;motion_id_ = reference-&gt;id();</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     motion-&gt;json_reference_ = reference;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>     motion-&gt;reference_num_frames_ = static_cast&lt;int&gt;(reference-&gt;size());</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>     motion-&gt;reference_root_body_index_ = 0;</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     initializeModel(*motion);  // Reuse policy ABI checks; no reference RKNN is created.</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     {</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>       std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>       if (active_ || prepared_ || preparing_) throw std::runtime_error(&quot;WBC is preparing/prepared/active&quot;);</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>       if (std::find(json_cancelled_ids_.begin(), json_cancelled_ids_.end(), id) != json_cancelled_ids_.end()) {</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>         publishJsonStatus(id, &quot;cancelled&quot;, &quot;cancelled before JSON admission&quot;);</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         return;</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>       }</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>       if (std::find(json_recent_ids_.begin(), json_recent_ids_.end(), id) != json_recent_ids_.end()) {</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         publishJsonStatus(id, &quot;duplicate&quot;, &quot;JSON request already handled&quot;);</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         return;</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>       }</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>       for (const auto&amp; entry : motions_) {</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>         const auto&amp; previous = entry.second;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>         if (previous-&gt;json_reference_ &amp;&amp; !previous-&gt;json_consumed_ &amp;&amp; !previous-&gt;json_reference_-&gt;expired())</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>           throw std::runtime_error(&quot;a complete JSON is already waiting for its WBC command&quot;);</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>       }</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>       // Retire prior dynamic references only while idle and under the same</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>       // mutex as runLoop/prepare. Ordinary LoRA motions remain preloaded.</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>       for (auto it = motions_.begin(); it != motions_.end();) {</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         if (it-&gt;second-&gt;json_reference_) {</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>           if (current_ == it-&gt;second.get()) current_ = nullptr;</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>           it = motions_.erase(it);</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         } else ++it;</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>       }</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>       if (reference-&gt;expired()) throw std::runtime_error(&quot;JSON expired before registration&quot;);</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>       remember(json_recent_ids_, id);</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>       motions_.emplace(id, std::move(motion));</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     }</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     publishJsonStatus(id, &quot;ready&quot;, &quot;complete JSON registered; Base parameters selected; no actuator command sent&quot;);</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>   } catch (const std::exception&amp; error) {</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     publishJsonStatus(id, &quot;rejected&quot;, error.what());</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>   }</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a> }</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a> </span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a> void RLWbc::jsonCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg) {</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   const auto&amp; id = msg-&gt;data;</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   if (id.size() &gt; 32 || id.compare(0, 2, &quot;T_&quot;) != 0) return;</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>   remember(json_cancelled_ids_, id);</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   const auto motion = motions_.find(id);</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   if (motion != motions_.end()) motion-&gt;second-&gt;json_consumed_ = true;</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   const bool executing = current_ &amp;&amp; current_-&gt;motion_id_ == id &amp;&amp; (active_ || prepared_ || preparing_);</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   publishJsonStatus(id, executing ? &quot;cancelling&quot; : &quot;cancelled&quot;,</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>       executing ? &quot;controller owns WBC to AMP handoff&quot; : &quot;cancelled before WBC activation&quot;);</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a> }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

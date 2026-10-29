@@ -1,0 +1,86 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/start_sim2real.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/start_sim2real.sh</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> # Formal sim2real entry only. HPM remains manually managed.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> set -eo pipefail</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> if [[ ${1:-} == --help || ${1:-} == -h ]]; then</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>   echo &#x27;用法：bash scripts/start_sim2real.sh [--workspace 工作空间] [--dry-run]&#x27;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   echo &#x27;读取 deploy_config/wbc-production.env，新建运行记录并启动 sim2real。&#x27;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>   echo &#x27;不启动 HPM、录包或动作控制台。--dry-run 仅检查配置、打印命令。&#x27;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a>   exit 0</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> fi</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> source &quot;$(dirname -- &quot;${BASH_SOURCE[0]}&quot;)/wbc_runtime_common.bash&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> wbc_options &quot;$@&quot;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> wbc_environment &quot;$wbc_workspace/deploy_config/wbc-production.env&quot;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> cmd=(ros2 launch legged_controllers sim2real.launch.py</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   &quot;robot_type:=$robot_type&quot; &quot;subpolicy:=$amp_policy&quot;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   wbc_enabled:=true wbc_mode:=lora hpm_mode:=real bag_enabled:=false</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   &quot;wbc_lora_bundle:=$wbc_bundle&quot; &quot;wbc_policies:=$wbc_actions&quot;)</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> wbc_print_command &quot;${cmd[@]}&quot;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> $wbc_dry_run &amp;&amp; exit 0</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> mkdir -p -- &quot;$wbc_run_root&quot;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> exec 9&gt;&quot;$wbc_run_root/.sim2real.lock&quot;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> flock -n 9 || wbc_die &#x27;此工作空间的启动脚本已在运行&#x27;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> wbc_run_dir=$(/usr/bin/python3 -B - &quot;$wbc_workspace&quot; &quot;$wbc_prefix&quot; &quot;$wbc_installed&quot; &quot;$robot_type&quot; &quot;$amp_policy&quot; &lt;&lt;&#x27;PY&#x27;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> import datetime, hashlib, json, os, shutil, subprocess, sys, tempfile</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> from pathlib import Path</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> ws, prefix, bundle = map(Path, sys.argv[1:4])</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> robot, amp_name = sys.argv[4:]</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> repo = ws / &#x27;src/l0_ros2_deploy_v2&#x27;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> for proc in Path(&#x27;/proc&#x27;).glob(&#x27;[0-9]*/cmdline&#x27;):</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     try:</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>         executable = proc.read_bytes().split(b&#x27;\0&#x27;, 1)[0].decode()</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     except (OSError, UnicodeError):</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         continue</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     if Path(executable).name in (&#x27;rl_controller&#x27;, &#x27;topic_hardware_adapter&#x27;):</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>         raise SystemExit(&#x27;已有部署节点运行，请先按原流程结束该部署：&#x27; + executable)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> amp = repo / &#x27;legged_deploy/policy&#x27; / robot / amp_name</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> installed_amp = prefix / &#x27;share/legged_deploy/policy&#x27; / robot / amp_name</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> def sha(path):</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     with path.open(&#x27;rb&#x27;) as f:</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>         h = hashlib.sha256()</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         for chunk in iter(lambda: f.read(1024 * 1024), b&#x27;&#x27;):</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>             h.update(chunk)</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         return h.hexdigest()</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> for name in (&#x27;rl_config.yaml&#x27;, &#x27;joy_config.yaml&#x27;):</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     if sha(amp / name) != sha(installed_amp / name):</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>         raise SystemExit(&#x27;AMP 源码/安装配置不一致：&#x27; + name)</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> worker = prefix / &#x27;lib/legged_deploy/rl_controller&#x27;</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> worker_hash = sha(worker)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> amp_hashes = {str(p): sha(p) for p in (amp / &#x27;policy.rknn&#x27;, installed_amp / &#x27;rl_config.yaml&#x27;, installed_amp / &#x27;joy_config.yaml&#x27;)}</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> files = json.loads((bundle / &#x27;INSTALLATION.json&#x27;).read_text())[&#x27;files&#x27;]</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> for relative, expected in files.items():</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     p = (bundle / relative).resolve()</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     if not p.is_relative_to(bundle.resolve()) or sha(p) != expected:</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         raise SystemExit(&#x27;运行资产校验失败：&#x27; + relative)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> root = ws / &#x27;runs/wbc_production&#x27;</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> run = Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime(&#x27;%Y%m%d_%H%M%S_&#x27;), dir=root))</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a> (run / &#x27;ros&#x27;).mkdir()</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> (run / &#x27;bags&#x27;).mkdir()</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> shutil.copy2(ws / &#x27;deploy_config/wbc-production.env&#x27;, run / &#x27;environment.env&#x27;)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a> for name in (&#x27;INSTALLATION.json&#x27;, &#x27;base_manifest.json&#x27;):</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>     shutil.copy2(bundle / name, run / name)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> preprocessing = ws / &#x27;model_sources&#x27; / bundle.name / &#x27;PREPROCESSING.json&#x27;</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a> if preprocessing.is_file():</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     shutil.copy2(preprocessing, run / preprocessing.name)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> (run / &#x27;installed_bundle.txt&#x27;).write_text(str(bundle) + &#x27;\n&#x27;)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> (run / &#x27;models.sha256&#x27;).write_text(&#x27;&#x27;.join(f&#x27;{h}  {p}\n&#x27; for p, h in sorted(files.items())))</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> (run / &#x27;worker.sha256&#x27;).write_text(f&#x27;{worker_hash}  {worker}\n&#x27;)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> (run / &#x27;amp.sha256&#x27;).write_text(&#x27;&#x27;.join(f&#x27;{h}  {p}\n&#x27; for p, h in amp_hashes.items()))</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> with (run / &#x27;version.txt&#x27;).open(&#x27;w&#x27;) as out:</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     for args in ([&#x27;git&#x27;, &#x27;-C&#x27;, str(repo), &#x27;rev-parse&#x27;, &#x27;HEAD&#x27;], [&#x27;git&#x27;, &#x27;-C&#x27;, str(repo), &#x27;status&#x27;, &#x27;--short&#x27;], [&#x27;uname&#x27;, &#x27;-a&#x27;]):</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>         subprocess.run(args, stdout=out, stderr=out, check=True)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     out.write(&#x27;\n&#x27;.join(f&#x27;{k}={os.environ.get(k, &quot;unset&quot;)}&#x27; for k in (&#x27;ROS_DOMAIN_ID&#x27;,&#x27;ROS_LOCALHOST_ONLY&#x27;,&#x27;RMW_IMPLEMENTATION&#x27;)) + &#x27;\n&#x27;)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a> with (run / &#x27;source_changes.patch&#x27;).open(&#x27;w&#x27;) as out:</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     subprocess.run([&#x27;git&#x27;, &#x27;-C&#x27;, str(repo), &#x27;diff&#x27;, &#x27;HEAD&#x27;, &#x27;--binary&#x27;], stdout=out, check=True)</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> pending = root / &#x27;current_run_dir.pending&#x27;</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a> pending.write_text(str(run) + &#x27;\n&#x27;)</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a> pending.replace(root / &#x27;current_run_dir&#x27;)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> print(run)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> PY</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a> ) || wbc_die &#x27;运行记录初始化失败，未启动节点&#x27;</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> export ROS_LOG_DIR=&quot;$wbc_run_dir/ros&quot;</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> wbc_print_command &quot;${cmd[@]}&quot; &gt; &quot;$wbc_run_dir/start_command.txt&quot;</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> printf &#x27;运行记录：%s\nHPM 请按原流程手动维护；本终端只启动 sim2real。\n&#x27; &quot;$wbc_run_dir&quot;</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a> if wbc_logged_command &quot;$wbc_run_dir/deploy.log&quot; &quot;${cmd[@]}&quot;; then result=0; else result=$?; fi</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a> printf &#x27;%s\n&#x27; &quot;$result&quot; &gt; &quot;$wbc_run_dir/launch.exitcode&quot;</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> printf &#x27;部署入口已退出。完整启动结果请查看 deploy.log；外层返回 0 不保证子节点成功。\n&#x27;</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a> exit &quot;$result&quot;</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,137 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/generate_wbc_emotion_index.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/generate_wbc_emotion_index.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Generate emotion_index.json from lora/&lt;emotion&gt;/&lt;motion&gt; without loading .pt.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Requires Base checkpoint/ONNX/YAML and each action&#x27;s lorackpt_N.pt and</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> motion/reference_motion.onnx. Matching checkpoint_N.pt is optional.</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> Writes a new index only.</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> &quot;&quot;&quot;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import argparse</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import hashlib</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import json</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import os</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> import re</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import sys</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> import tempfile</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> from pathlib import Path</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> </span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> ACTION_ID = re.compile(r&quot;[A-Za-z0-9_-]{1,32}&quot;)</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> def checked_file(root, path):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     if not path.is_file() or not path.resolve().is_relative_to(root):</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>         raise ValueError(f&quot;Missing file or path outside training root: {path}&quot;)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     return path</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> def sha256(path):</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     digest = hashlib.sha256()</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     with path.open(&quot;rb&quot;) as stream:</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>         for chunk in iter(lambda: stream.read(1024 * 1024), b&quot;&quot;):</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>             digest.update(chunk)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     return digest.hexdigest()</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> </span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> </span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> def saved_steps(directory, prefix):</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     result = {}</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     pattern = re.compile(re.escape(prefix) + r&quot;_([0-9]+)\.pt&quot;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     for path in sorted(directory.glob(prefix + &quot;_*.pt&quot;)):</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         match = pattern.fullmatch(path.name)</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>         if not match:</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>             continue</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>         step = int(match.group(1))</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         if step in result:</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>             raise ValueError(f&quot;Ambiguous filenames for {prefix} step {step}: {directory}&quot;)</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         result[step] = path</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     return result</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> </span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> </span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> def generate(root, actions=None, step=None):</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     root = root.resolve()</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     if not root.is_dir():</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         raise ValueError(f&quot;Training root does not exist: {root}&quot;)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     for name in (&quot;base/base_ckpt.pt&quot;, &quot;base/policy.onnx&quot;, &quot;base/policy.yaml&quot;):</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         checked_file(root, root / name)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     if step is not None and step &lt; 0:</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         raise ValueError(&quot;--step must be nonnegative&quot;)</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     if actions is not None and (not actions or len(actions) != len(set(actions)) or</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>                                 any(not ACTION_ID.fullmatch(x) for x in actions)):</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         raise ValueError(&quot;--actions must contain unique valid action IDs&quot;)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     selected = set(actions) if actions is not None else None</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     entries, seen = [], set()</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     for directory in sorted((root / &quot;lora&quot;).glob(&quot;*/*&quot;)):</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>         if not directory.is_dir() or (selected is not None and directory.name not in selected):</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>             continue</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>         action = directory.name</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>         if not directory.resolve().is_relative_to(root):</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>             raise ValueError(f&quot;Action directory escapes training root: {directory}&quot;)</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>         if not ACTION_ID.fullmatch(action) or action in seen:</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             raise ValueError(f&quot;Invalid or duplicate action ID: {action}&quot;)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>         seen.add(action)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         adapters, checkpoints = saved_steps(directory, &quot;lorackpt&quot;), saved_steps(directory, &quot;checkpoint&quot;)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>         if not adapters:</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>             raise ValueError(f&quot;{action}: missing lorackpt_N.pt&quot;)</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>         chosen = max(adapters) if step is None else step</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         if chosen not in adapters:</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>             raise ValueError(f&quot;{action}: lorackpt file is required for step {chosen}&quot;)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         adapter = checked_file(root, adapters[chosen])</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         reference = checked_file(root, directory / &quot;motion/reference_motion.onnx&quot;)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>         entry = {</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>             &quot;emotion&quot;: directory.parent.name, &quot;motion&quot;: action,</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>             &quot;key&quot;: str(directory.relative_to(root / &quot;lora&quot;)), &quot;checkpoint_step&quot;: chosen,</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>             &quot;adapter&quot;: str(adapter.relative_to(root)),</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>             &quot;motion_onnx&quot;: str(reference.relative_to(root)),</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>             &quot;adapter_sha256&quot;: sha256(adapter),</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>             &quot;motion_onnx_sha256&quot;: sha256(reference),</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>         }</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>         if chosen in checkpoints:</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>             checkpoint = checked_file(root, checkpoints[chosen])</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>             entry.update(checkpoint=str(checkpoint.relative_to(root)), checkpoint_sha256=sha256(checkpoint))</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>         motion_npz = directory / &quot;motion&quot; / (action + &quot;.npz&quot;)</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         if motion_npz.exists() or motion_npz.is_symlink():</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>             checked_file(root, motion_npz)</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>             entry[&quot;motion_npz&quot;] = str(motion_npz.relative_to(root))</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         entries.append(entry)</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>     if selected is not None and selected - seen:</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>         raise ValueError(&quot;Actions not found: &quot; + &quot;, &quot;.join(sorted(selected - seen)))</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     if not entries:</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         raise ValueError(&quot;No action directories found under lora/&lt;emotion&gt;/&lt;motion&gt;&quot;)</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     return entries</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a> </span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a> </span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> def main():</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     parser.add_argument(&quot;source&quot;, type=Path, help=&quot;training root containing base/ and lora/&quot;)</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     parser.add_argument(&quot;--output&quot;, type=Path, default=Path(&quot;emotion_index.json&quot;),</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>                         help=&quot;new JSON file; relative paths are relative to source (default: emotion_index.json)&quot;)</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     parser.add_argument(&quot;--actions&quot;, nargs=&quot;+&quot;, help=&quot;only scan these action IDs (default: all actions)&quot;)</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     parser.add_argument(&quot;--step&quot;, type=int, help=&quot;use this checkpoint filename step for every selected action&quot;)</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     parser.add_argument(&quot;--dry-run&quot;, action=&quot;store_true&quot;, help=&quot;print the generated JSON without writing or replacing any file&quot;)</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>     args = parser.parse_args()</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>     root = args.source.resolve()</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     output = args.output if args.output.is_absolute() else root / args.output</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     if not args.dry_run and (output.exists() or output.is_symlink()):</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>         parser.error(f&quot;output already exists; choose a new --output path: {output}&quot;)</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     entries = generate(root, args.actions, args.step)</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     content = json.dumps(entries, indent=2, ensure_ascii=False) + &quot;\n&quot;</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     if args.dry_run:</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         sys.stdout.write(content)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     else:</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>         output.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         with tempfile.TemporaryDirectory(prefix=&quot;.emotion_index_&quot;, dir=output.parent) as temporary:</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>             candidate = Path(temporary) / &quot;index.json&quot;</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>             candidate.write_text(content, encoding=&quot;utf-8&quot;)</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>             # Atomic publication, including refusal to overwrite a file/symlink</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>             # that appeared after the initial existence check.</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>             os.link(candidate, output)</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         print(f&quot;Wrote {len(entries)} actions: {output}&quot;)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     return 0</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a> </span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a> </span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     try:</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>         sys.exit(main())</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     except Exception as error:</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

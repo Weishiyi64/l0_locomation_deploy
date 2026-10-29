@@ -1,0 +1,133 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/keyboard_action_trigger.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/keyboard_action_trigger.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &quot;&quot;&quot;Publish a configured action name when a configured command line is entered.&quot;&quot;&quot;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> import os</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> import select</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> import sys</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> </span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> import rclpy</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> import yaml</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> from ament_index_python.packages import get_package_share_directory</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> from rclpy.node import Node</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> from std_msgs.msg import String</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> </span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> class KeyboardActionTrigger(Node):</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>     def __init__(self) -&gt; None:</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>         super().__init__(&quot;keyboard_action_trigger&quot;)</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>         self.declare_parameter(&quot;config_path&quot;, &quot;&quot;)</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>         self.declare_parameter(&quot;trigger_topic&quot;, &quot;/keyboard_action_trigger&quot;)</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> </span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>         config_param = self.get_parameter(&quot;config_path&quot;).get_parameter_value().string_value</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>         topic_param = self.get_parameter(&quot;trigger_topic&quot;).get_parameter_value().string_value</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>         self.command_to_action = self.load_bindings(config_param)</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>         self.publisher = self.create_publisher(String, topic_param or &quot;/keyboard_action_trigger&quot;, 10)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> </span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>         bindings = &quot;, &quot;.join(</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>             f&quot;{command}-&gt;{action_name}&quot; for command, action_name in sorted(self.command_to_action.items())</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>         )</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>         self.get_logger().info(</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>             f&quot;Keyboard action trigger publishing action names on {topic_param or &#x27;/keyboard_action_trigger&#x27;}; &quot;</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>             f&quot;enter a command and press Enter; bindings: {bindings or &#x27;none&#x27;}&quot;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>         )</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     def resolve_config_path(self, raw_path: str) -&gt; str:</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>         if not raw_path:</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>             return &quot;&quot;</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>         if os.path.isabs(raw_path):</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>             return raw_path</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>         try:</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>             return os.path.join(get_package_share_directory(&quot;legged_controllers&quot;), raw_path)</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>         except Exception:</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>             return raw_path</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> </span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>     def load_bindings(self, raw_config_path: str) -&gt; dict:</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>         config_path = self.resolve_config_path(raw_config_path)</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>         if not config_path:</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>             self.get_logger().error(&quot;keyboard_action_trigger.py requires config_path&quot;)</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>             return {}</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>         try:</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>             with open(config_path, &quot;r&quot;, encoding=&quot;utf-8&quot;) as stream:</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>                 root = yaml.safe_load(stream) or {}</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>         except Exception as exc:</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>             self.get_logger().error(f&quot;Failed to load keyboard action config {config_path}: {exc}&quot;)</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>             return {}</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a> </span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         cfg = root.get(&quot;keyboard_actions&quot;, root)</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>         actions = cfg.get(&quot;actions&quot;, [])</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>         if not isinstance(actions, list):</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>             self.get_logger().error(f&quot;keyboard action config {config_path} must contain actions: []&quot;)</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>             return {}</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a> </span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         command_to_action = {}</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>         for entry in actions:</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>             if not isinstance(entry, dict):</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>                 self.get_logger().warning(&quot;Skipping keyboard action entry that is not a map&quot;)</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>                 continue</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>             command = str(entry.get(&quot;key&quot;, &quot;&quot;)).strip()</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>             action_name = str(entry.get(&quot;name&quot;) or command).strip()</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>             if not command or not action_name:</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>                 self.get_logger().warning(&quot;Skipping keyboard action entry without key/name&quot;)</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>                 continue</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>             command_to_action[command] = action_name</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>         return command_to_action</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a> </span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>     def publish_trigger(self, action_name: str) -&gt; None:</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>         msg = String()</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>         msg.data = action_name</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         self.publisher.publish(msg)</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         self.get_logger().info(f&quot;Published keyboard action trigger: {action_name}&quot;)</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a> </span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a> </span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a> def main() -&gt; None:</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>     rclpy.init()</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>     node = KeyboardActionTrigger()</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a> </span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>     input_stream = sys.stdin</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>     close_input_stream = False</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>     if not input_stream.isatty():</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>         try:</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>             input_stream = open(&quot;/dev/tty&quot;, &quot;r&quot;)</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>             close_input_stream = True</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>         except OSError as exc:</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>             node.get_logger().error(f&quot;keyboard_action_trigger.py requires an interactive terminal: {exc}&quot;)</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>             node.destroy_node()</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>             rclpy.shutdown()</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>             return</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a> </span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>     if not input_stream.isatty():</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>         node.get_logger().error(&quot;keyboard_action_trigger.py requires an interactive terminal&quot;)</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>         node.destroy_node()</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         if rclpy.ok():</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>             rclpy.shutdown()</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>         return</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a> </span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>     try:</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>         while rclpy.ok():</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>             rclpy.spin_once(node, timeout_sec=0.0)</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>             readable, _, _ = select.select([input_stream], [], [], 0.1)</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>             if not readable:</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>                 continue</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>             command = input_stream.readline()</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>             if command == &quot;&quot;:</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>                 break</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>             command = command.strip()</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>             if not command:</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>                 continue</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>             action_name = node.command_to_action.get(command)</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>             if action_name:</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>                 node.publish_trigger(action_name)</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>             else:</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>                 node.get_logger().warning(f&quot;Ignoring unknown keyboard action command: {command}&quot;)</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>     except KeyboardInterrupt:</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>         pass</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>     finally:</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         if close_input_stream:</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>             input_stream.close()</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         node.destroy_node()</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>         if rclpy.ok():</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>             rclpy.shutdown()</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a> </span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a> </span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     main()</span></pre></html>

@@ -1,0 +1,180 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/astar_global_planner.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/astar_global_planner.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> # Copyright (c) 2025-2026, The Legged Lab Project Developers.</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> # All rights reserved.</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> # Licensed under BSD-3-Clause.</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> </span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> &quot;&quot;&quot;Simple 2D A* global planner utilities for Isaac Lab terrain navigation.</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> </span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> This module intentionally has no Isaac Sim / Isaac Lab dependency.</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> It can be reused by visualization scripts, training commands, and env logic.</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> </span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> Coordinate convention:</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>     - world xy: meters, [x, y]</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>     - grid rc : row/col, grid[row, col]</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     - grid value: 0 = free, 1 = occupied</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> &quot;&quot;&quot;</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> from __future__ import annotations</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> </span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> import heapq</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> import math</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> from typing import Iterable</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> </span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> import numpy as np</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> </span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> class AStarPlanner:</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>     &quot;&quot;&quot;2D occupancy-grid A* planner.</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> </span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>     Args:</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>         grid: ``np.ndarray`` with shape ``[height, width]``. 0 means free, 1 means occupied.</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>         resolution: meters per grid cell.</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>         origin_xy: world coordinate of grid cell ``grid[0, 0]`` lower-left corner.</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     &quot;&quot;&quot;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     def __init__(</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>         self,</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>         grid: np.ndarray,</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>         resolution: float,</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>         origin_xy: tuple[float, float],</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>         prevent_corner_cutting: bool = False,</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>     ):</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>         if grid.ndim != 2:</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>             raise ValueError(f&quot;grid must be 2-D, got shape={grid.shape}&quot;)</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>         if resolution &lt;= 0.0:</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>             raise ValueError(f&quot;resolution must be positive, got {resolution}&quot;)</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> </span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>         self.grid = grid.astype(np.uint8)</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>         self.resolution = float(resolution)</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>         self.origin_xy = np.array(origin_xy, dtype=np.float32)</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>         self.prevent_corner_cutting = bool(prevent_corner_cutting)</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>         self.h, self.w = self.grid.shape</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a> </span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>         self.neighbors = [</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>             (-1, 0, 1.0),</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>             (1, 0, 1.0),</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>             (0, -1, 1.0),</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>             (0, 1, 1.0),</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>             (-1, -1, math.sqrt(2.0)),</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>             (-1, 1, math.sqrt(2.0)),</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>             (1, -1, math.sqrt(2.0)),</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>             (1, 1, math.sqrt(2.0)),</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         ]</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a> </span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>     def world_to_grid(self, xy: Iterable[float]) -&gt; tuple[int, int]:</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>         &quot;&quot;&quot;Convert world xy coordinate to grid row/col.&quot;&quot;&quot;</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>         xy = np.asarray(xy, dtype=np.float32)</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>         col = int(math.floor((xy[0] - self.origin_xy[0]) / self.resolution))</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>         row = int(math.floor((xy[1] - self.origin_xy[1]) / self.resolution))</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>         return row, col</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a> </span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     def grid_to_world(self, rc: tuple[int, int]) -&gt; np.ndarray:</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>         &quot;&quot;&quot;Convert grid row/col to the center of the cell in world xy.&quot;&quot;&quot;</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>         row, col = rc</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>         x = self.origin_xy[0] + (col + 0.5) * self.resolution</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>         y = self.origin_xy[1] + (row + 0.5) * self.resolution</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>         return np.array([x, y], dtype=np.float32)</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a> </span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     def valid(self, rc: tuple[int, int]) -&gt; bool:</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         &quot;&quot;&quot;Return whether a grid cell is inside bounds and free.&quot;&quot;&quot;</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         row, col = rc</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>         return 0 &lt;= row &lt; self.h and 0 &lt;= col &lt; self.w and self.grid[row, col] == 0</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a> </span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>     def segment_is_free(self, start_xy: Iterable[float], end_xy: Iterable[float]) -&gt; bool:</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>         &quot;&quot;&quot;Check a whole segment against closed occupied cells, including corners.</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a> </span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>         Used for visibility shortcuts on the already robot-inflated map. Exact</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>         segment/AABB intersections avoid missing a short corner crossing between</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>         discrete samples. Touching an occupied cell or the map boundary is unsafe.</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>         &quot;&quot;&quot;</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>         endpoints = np.asarray((start_xy, end_xy), dtype=np.float64)</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>         if endpoints.shape != (2, 2) or not np.isfinite(endpoints).all():</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>             return False</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>         endpoints = (endpoints - self.origin_xy) / self.resolution</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>         epsilon = 1e-6  # Grid units; conservatively include float32 boundary ties.</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>         lower = np.floor(endpoints.min(0) - epsilon).astype(np.int64)</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>         upper = np.floor(endpoints.max(0) + epsilon).astype(np.int64)</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>         if (lower &lt; 0).any() or upper[0] &gt;= self.w or upper[1] &gt;= self.h:</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>             return False</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>         occupied = np.argwhere(self.grid[lower[1] : upper[1] + 1, lower[0] : upper[0] + 1])</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>         if len(occupied) == 0:</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>             return True</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         cell = occupied[:, ::-1] + lower</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>         box_min, box_max = cell - epsilon, cell + 1.0 + epsilon</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>         start, end = endpoints</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>         delta = end - start</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>         entry, leave = np.zeros(len(cell)), np.ones(len(cell))</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>         possible = np.ones(len(cell), dtype=bool)</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>         for axis in range(2):</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>             if delta[axis] == 0.0:</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>                 possible &amp;= (start[axis] &gt;= box_min[:, axis]) &amp; (start[axis] &lt;= box_max[:, axis])</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>             else:</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>                 t0 = (box_min[:, axis] - start[axis]) / delta[axis]</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>                 t1 = (box_max[:, axis] - start[axis]) / delta[axis]</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>                 entry = np.maximum(entry, np.minimum(t0, t1))</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>                 leave = np.minimum(leave, np.maximum(t0, t1))</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>         return not np.any(possible &amp; (entry &lt;= leave))</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a> </span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>     @staticmethod</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>     def heuristic(a: tuple[int, int], b: tuple[int, int]) -&gt; float:</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>         &quot;&quot;&quot;Euclidean grid-distance heuristic.&quot;&quot;&quot;</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>         return math.hypot(a[0] - b[0], a[1] - b[1])</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a> </span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>     def plan(self, start_xy: Iterable[float], goal_xy: Iterable[float]) -&gt; np.ndarray | None:</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>         &quot;&quot;&quot;Plan a dense path in world xy coordinates.</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> </span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         Returns:</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>             ``np.ndarray`` with shape ``[N, 2]`` if path is found, otherwise ``None``.</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         &quot;&quot;&quot;</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>         start = self.world_to_grid(start_xy)</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>         goal = self.world_to_grid(goal_xy)</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a> </span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>         if not self.valid(start):</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>             raise ValueError(f&quot;start is invalid: rc={start}, xy={start_xy}&quot;)</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>         if not self.valid(goal):</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>             raise ValueError(f&quot;goal is invalid: rc={goal}, xy={goal_xy}&quot;)</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a> </span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>         open_set: list[tuple[float, tuple[int, int]]] = []</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>         heapq.heappush(open_set, (0.0, start))</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>         came_from: dict[tuple[int, int], tuple[int, int]] = {}</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>         g_score = {start: 0.0}</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>         closed = set()</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a> </span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>         while open_set:</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>             _, current = heapq.heappop(open_set)</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>             if current in closed:</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>                 continue</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>             closed.add(current)</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a> </span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>             if current == goal:</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>                 return self._reconstruct(came_from, current)</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a> </span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>             for dr, dc, move_cost in self.neighbors:</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>                 nxt = (current[0] + dr, current[1] + dc)</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>                 if not self.valid(nxt):</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>                     continue</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>                 # Do not allow diagonal corner-cutting through walls.  A diagonal</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>                 # move is only valid when both adjacent cardinal cells are free.</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>                 if (</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>                     self.prevent_corner_cutting</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>                     and dr != 0</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>                     and dc != 0</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>                     and (not self.valid((current[0] + dr, current[1])) or not self.valid((current[0], current[1] + dc)))</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>                 ):</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>                     continue</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a> </span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>                 tentative_g = g_score[current] + move_cost</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>                 if nxt not in g_score or tentative_g &lt; g_score[nxt]:</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>                     came_from[nxt] = current</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>                     g_score[nxt] = tentative_g</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>                     f_score = tentative_g + self.heuristic(nxt, goal)</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>                     heapq.heappush(open_set, (f_score, nxt))</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a> </span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>         return None</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a> </span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>     def _reconstruct(self, came_from: dict, current: tuple[int, int]) -&gt; np.ndarray:</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>         cells = [current]</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>         while current in came_from:</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>             current = came_from[current]</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>             cells.append(current)</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>         cells.reverse()</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         return np.array([self.grid_to_world(cell) for cell in cells], dtype=np.float32)</span></pre></html>

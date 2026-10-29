@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>records/initialize_remote.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>records/initialize_remote.py</h1><p>基线 WORKSPACE_NEW；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> from pathlib import Path</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> import json,shutil,hashlib</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> new=Path(&quot;/userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_20261028_203257&quot;)</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> assert not new.exists(), &quot;Refuse to overwrite a workspace&quot;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> new.mkdir(parents=True)</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> (new/&quot;records&quot;).mkdir()</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> (new/&quot;src&quot;).mkdir()</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> old=Path(&quot;/userdata/forlinx/wbc_workspace/l0_deploy_v2_ws&quot;)</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> text=Path(&quot;/userdata/forlinx/wbcworkspace/text_to_motion_20261028_193624&quot;)</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> models=new/&quot;model_sources&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> models.mkdir()</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> for part in (&quot;compiled&quot;,&quot;deps&quot;,&quot;runtime&quot;):</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>  shutil.copytree(text/part, models/&quot;text_to_motion&quot;/part, ignore=shutil.ignore_patterns(&quot;__pycache__&quot;,&quot;*.pyc&quot;))</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> manifest=json.loads((models/&quot;text_to_motion/compiled/manifest.json&quot;).read_text())</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> assert manifest[&quot;preparation_manifest_sha256&quot;]==&quot;e60a13fc286b75737c213650a028f1a12285d9310ae0cd85addbfb162acf3f3e&quot;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> policy_root=new/&quot;src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5&quot;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> policy_root.mkdir(parents=True)</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> installed=old/&quot;install/legged_deploy/share/legged_deploy/policy/l0_v5&quot;</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> shutil.copytree(installed/&quot;wbc_lora_fp16&quot;,policy_root/&quot;text_wbc_bundle&quot;,symlinks=False)</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> shutil.copytree(installed/&quot;l0_v5_amp_10281&quot;,policy_root/&quot;l0_v5_amp_10281&quot;,symlinks=False)</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> graph=json.loads((policy_root/&quot;text_wbc_bundle/base_manifest.json&quot;).read_text())</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> assert graph[&quot;base_checkpoint_sha256&quot;]==&quot;f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142&quot;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> assert graph[&quot;source_onnx_sha256&quot;]==&quot;a497a69d359a56af438f5643fb07cddf7b3e7d8806c02b1e17bdc505dfa1c626&quot;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> for record in list(manifest[&quot;models&quot;].values())+[manifest[&quot;motion_assets&quot;],manifest[&quot;vocabulary&quot;]]:</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>  assert hashlib.sha256((models/&quot;text_to_motion/compiled&quot;/record[&quot;file&quot;]).read_bytes()).hexdigest()==record[&quot;sha256&quot;]</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> # Mesh assets are copied as regular files; the source payload carries code/XML.</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> for meshes in (old/&quot;src/l0_ros2_deploy_v2/legged_description&quot;).rglob(&quot;meshes&quot;):</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>  if meshes.is_dir():</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   target=new/&quot;src&quot;/meshes.relative_to(old/&quot;src&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   shutil.copytree(meshes,target,symlinks=False)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> fingerprints={}</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> for p in (old/&quot;src&quot;).rglob(&quot;*&quot;):</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>  if p.is_file() and &quot;.git&quot; not in p.relative_to(old).parts and p.suffix in {&quot;.cpp&quot;,&quot;.h&quot;,&quot;.hpp&quot;,&quot;.py&quot;,&quot;.sh&quot;,&quot;.bash&quot;,&quot;.yaml&quot;,&quot;.xml&quot;,&quot;.md&quot;,&quot;.txt&quot;}:</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   fingerprints[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> for p in [installed/&quot;wbc_lora_fp16/base_manifest.json&quot;,installed/&quot;wbc_lora_fp16/base_lora.rknn&quot;,Path(&quot;/usr/lib/librknnrt.so&quot;)]:</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>  fingerprints[str(p.resolve())]=hashlib.sha256(p.read_bytes()).hexdigest()</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> (new/&quot;records/ORIGINAL_BOARD_HASHES.json&quot;).write_text(json.dumps(fingerprints,indent=2)+&quot;\n&quot;)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> record={&quot;workspace&quot;:str(new),&quot;text_source_manifest_sha256&quot;:manifest[&quot;preparation_manifest_sha256&quot;],&quot;original_files_hashed&quot;:len(fingerprints),&quot;existing_deployments_modified&quot;:False}</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> (new/&quot;records/WORKSPACE.json&quot;).write_text(json.dumps(record,indent=2)+&quot;\n&quot;)</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> print(json.dumps(record,indent=2))</span></pre><h2 id="A">原版本 WORKSPACE</h2><p>该版本不存在此文件。</p></html>

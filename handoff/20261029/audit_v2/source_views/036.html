@@ -1,0 +1,1364 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/rl_controller_wbc.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/rl_controller_wbc.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;rl_controller_wbc.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;algorithm&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;cmath&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;functional&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;limits&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;set&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;utility&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> </span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &quot;base/rl_controller_registrar.h&quot;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> </span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> namespace {</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> constexpr std::size_t kJointCount = 21;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> constexpr std::size_t kPolicyInputSize = 399;</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> constexpr std::size_t kCommandInputSize = 240;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> constexpr std::size_t kReferenceBodyCount = 23;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> const std::array&lt;const char*, 6&gt; kReferenceOutputs =</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     {{&quot;joint_pos&quot;, &quot;joint_vel&quot;, &quot;body_pos_w&quot;, &quot;body_quat_w&quot;, &quot;body_lin_vel_w&quot;, &quot;body_ang_vel_w&quot;}};</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> const std::array&lt;std::size_t, 6&gt; kReferenceOutputSizes = {{21, 21, 69, 92, 69, 69}};</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> std::string joinPath(const std::string&amp; base, const std::string&amp; child) {</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   if (child.empty() || child.front() == &#x27;/&#x27;) return child;</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   return base + &quot;/&quot; + child;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> }</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> </span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> bool finiteVector(const std::vector&lt;float&gt;&amp; values) {</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   return std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); });</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> }</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> </span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> std::array&lt;double, 4&gt; normalize(const std::array&lt;double, 4&gt;&amp; q) {</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   if (!std::isfinite(norm) || norm &lt; 1e-9) throw std::runtime_error(&quot;invalid robot orientation quaternion&quot;);</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   return {{q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm}};</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> }</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> </span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> std::array&lt;double, 4&gt; conjugate(const std::array&lt;double, 4&gt;&amp; q) { return {{q[0], -q[1], -q[2], -q[3]}}; }</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> std::array&lt;double, 4&gt; multiply(const std::array&lt;double, 4&gt;&amp; a, const std::array&lt;double, 4&gt;&amp; b) {</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   return {{a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>            a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>            a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]}};</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> }</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> </span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> std::array&lt;double, 3&gt; rotateInverse(const std::array&lt;double, 4&gt;&amp; orientation, const std::array&lt;double, 3&gt;&amp; vector) {</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   const auto q = normalize(orientation);</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   const auto rotated = multiply(multiply(conjugate(q), {{0.0, vector[0], vector[1], vector[2]}}), q);</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   return {{rotated[1], rotated[2], rotated[3]}};</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> }</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> std::array&lt;double, 4&gt; yawQuaternion(const std::array&lt;double, 4&gt;&amp; orientation) {</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   const auto q = normalize(orientation);</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   const double yaw = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3]));</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   return {{std::cos(yaw * 0.5), 0.0, 0.0, std::sin(yaw * 0.5)}};</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> }</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a> </span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> void appendRotationFirstTwoRows(const std::array&lt;double, 4&gt;&amp; input, std::vector&lt;float&gt;&amp; out) {</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   const auto q = normalize(input);</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   const double w = q[0], x = q[1], y = q[2], z = q[3];</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   out.push_back(static_cast&lt;float&gt;(1.0 - 2.0 * (y * y + z * z)));</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * y - z * w)));</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * z + y * w)));</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * y + z * w)));</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   out.push_back(static_cast&lt;float&gt;(1.0 - 2.0 * (x * x + z * z)));</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (y * z - x * w)));</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> }</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> </span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a> RLControllerRegistrar registrar_wbc(&quot;rl_wbc&quot;, [](rclcpp::Node::SharedPtr node) {</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   return std::unique_ptr&lt;ControllerType&gt;(new RLWbc(std::move(node)));</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> });</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> </span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a> }  // namespace</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a> </span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> std::string RLWbc::rlCmdPublishTopic() const { return &quot;control/policy/command/wbc&quot;; }</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> </span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a> RLWbc::RLWbc(rclcpp::Node::SharedPtr node) : BaseRLController(node), node_(std::move(node)) {</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   const auto preload_started = std::chrono::steady_clock::now();</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   std::string policy_root;</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   std::string robot_type;</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   std::vector&lt;std::string&gt; policies;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   if (!node_-&gt;get_parameter(&quot;policy_root_path&quot;, policy_root) || policy_root.empty() ||</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>       !node_-&gt;get_parameter(&quot;robot_type&quot;, robot_type) || robot_type.empty() ||</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>       !node_-&gt;get_parameter(&quot;available_wbc_policies&quot;, policies) || policies.empty())</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     throw std::runtime_error(&quot;WBC requires policy_root_path, robot_type and available_wbc_policies&quot;);</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   const auto valid_directory = [](const std::string&amp; value) {</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     return !value.empty() &amp;&amp; std::all_of(value.begin(), value.end(), [](char c) {</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>       return (c &gt;= &#x27;A&#x27; &amp;&amp; c &lt;= &#x27;Z&#x27;) || (c &gt;= &#x27;a&#x27; &amp;&amp; c &lt;= &#x27;z&#x27;) || (c &gt;= &#x27;0&#x27; &amp;&amp; c &lt;= &#x27;9&#x27;) || c == &#x27;-&#x27; || c == &#x27;_&#x27;;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>     });</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   };</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   if (!valid_directory(robot_type) || std::set&lt;std::string&gt;(policies.begin(), policies.end()).size() != policies.size())</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     throw std::runtime_error(&quot;Invalid WBC robot_type or duplicate policy directories&quot;);</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   std::string mode = &quot;static&quot;, manifest;</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   node_-&gt;get_parameter(&quot;wbc_mode&quot;, mode);</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>   node_-&gt;get_parameter(&quot;wbc_lora_manifest&quot;, manifest);</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   if (mode != &quot;static&quot; &amp;&amp; mode != &quot;lora&quot;) throw std::runtime_error(&quot;wbc_mode must be static or lora&quot;);</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   if (mode == &quot;lora&quot;) {</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     if (manifest.empty()) throw std::runtime_error(&quot;LoRA requires a WBC manifest, never an AMP subpolicy&quot;);</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     lora_assets_ = std::make_unique&lt;WbcLoraAssets&gt;(manifest, policies);</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     shared_policy_ = std::make_unique&lt;RknnModel&gt;(lora_assets_-&gt;modelPath(), RknnModel::InputMode::ResidentWbc);</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>     lora_assets_-&gt;bindModel(*shared_policy_);</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     for (auto&amp; buffer : adapter_buffers_) lora_assets_-&gt;allocate(buffer);</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC shared Base initialized once: %s; checkpoint=%s; %s&quot;,</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>                 lora_assets_-&gt;modelPath().c_str(), lora_assets_-&gt;baseHash().c_str(), shared_policy_-&gt;runtimeVersion().c_str());</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC resident I/O (explicit cache sync, FP16/FP32 native):\n%s&quot;,</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>                 shared_policy_-&gt;residentLayout().c_str());</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   }</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   inputs_.resize(lora_assets_ ? 0 : 2, nullptr);</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   input_sizes_.resize(inputs_.size(), 0);</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   for (const auto&amp; policy : policies)</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   {</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     if (!valid_directory(policy)) throw std::runtime_error(&quot;Invalid WBC policy directory: &quot; + policy);</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     auto motion = std::make_unique&lt;Motion&gt;();</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     motion-&gt;config_dir_ = joinPath(joinPath(policy_root, robot_type), policy);</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     motion-&gt;robot_cfg_path_ = lora_assets_ ? lora_assets_-&gt;action(policy).config : joinPath(motion-&gt;config_dir_, &quot;rl_config.yaml&quot;);</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     try</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     {</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>       loadConfig(*motion, motion-&gt;robot_cfg_path_);</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>       if (lora_assets_ &amp;&amp; motion-&gt;motion_id_ != policy) throw std::runtime_error(&quot;WBC action/config identity mismatch&quot;);</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>       initializeModel(*motion);</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>       const std::string id = motion-&gt;motion_id_;</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>       if (!motions_.emplace(id, std::move(motion)).second)</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         throw std::runtime_error(&quot;Duplicate WBC motion_id: &quot; + id);</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>       RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC preloaded %s: %.2f ms&quot;, id.c_str(),</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>                   std::chrono::duration&lt;double, std::milli&gt;(std::chrono::steady_clock::now() - started).count());</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     } catch (const std::exception&amp; exception)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     {</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>       throw std::runtime_error(&quot;WBC preload failed for &quot; + policy + &quot;: &quot; + exception.what());</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     }</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   }</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   if (!readDeployParams(deploy_params_)) throw std::runtime_error(&quot;Failed to read WBC deployment parameters&quot;);</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   initializeJsonReference();</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   if (!node_-&gt;has_parameter(&quot;sensor_timeout&quot;)) node_-&gt;declare_parameter(&quot;sensor_timeout&quot;, 0.1);</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   node_-&gt;get_parameter(&quot;sensor_timeout&quot;, sensor_timeout_sec_);</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>   if (!std::isfinite(sensor_timeout_sec_) || sensor_timeout_sec_ &lt;= 0.0)</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>     throw std::runtime_error(&quot;sensor_timeout must be finite and positive&quot;);</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>   initBaseTopic(node_);</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   posCmd_.source_id = &quot;wbc&quot;;</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>   posCmd_.target_positions.resize(kJointCount);</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   posCmd_.joint_names.assign(joint_names_.begin(), joint_names_.end());</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a> </span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>   done_pub_ = node_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;control/policy/wbc/done&quot;, rclcpp::QoS(10));</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   active_sub_ = node_-&gt;create_subscription&lt;std_msgs::msg::Bool&gt;(</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>       &quot;control/policy/wbc/active&quot;, rclcpp::QoS(1).reliable().transient_local(),</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>       std::bind(&amp;RLWbc::activeCallback, this, std::placeholders::_1));</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>   prepare_callback_group_ = node_-&gt;create_callback_group(rclcpp::CallbackGroupType::Reentrant);</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>   prepare_service_ = node_-&gt;create_service&lt;luvbot_control_interfaces::srv::ControlWbcMotion&gt;(</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>       &quot;control/policy/wbc/prepare&quot;,</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>       std::bind(&amp;RLWbc::prepareCallback, this, std::placeholders::_1, std::placeholders::_2),</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>       rmw_qos_profile_services_default, prepare_callback_group_);</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a> </span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   loop_thread_ = std::thread(&amp;RLWbc::runLoop, this);</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>   if (deploy_params_.set_realtime_priority)</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>   {</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     sched_param scheduler{};</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     scheduler.sched_priority = deploy_params_.thread_priority;</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     const int policy = getSchedulerPolicy(deploy_params_.thread_scheduling_method);</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     if (pthread_setschedparam(loop_thread_.native_handle(), policy, &amp;scheduler) != 0)</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>       RCLCPP_WARN(node_-&gt;get_logger(), &quot;WBC: failed to set realtime priority&quot;);</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     else</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>       printThreadSchedulerInfo(loop_thread_.native_handle(), &quot;WBC&quot;);</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>   }</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC worker ready: 50 Hz, %zu motions preloaded in %.2f ms; idle inference disabled&quot;,</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>               motions_.size(),</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>               std::chrono::duration&lt;double, std::milli&gt;(std::chrono::steady_clock::now() - preload_started).count());</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a> }</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a> </span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a> RLWbc::~RLWbc() {</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>   loop_running_.store(false);</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>   if (loop_thread_.joinable()) loop_thread_.join();</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>   // The owning executor is stopped before controller destruction. Also retire</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>   // any loader already holding the spare slot before model memory is released.</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>   std::lock_guard&lt;std::mutex&gt; loading_lock(loading_mutex_);</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>   ++prepare_generation_;</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>   preparing_ = prepared_ = active_ = false;</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a> }</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a> </span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a> void RLWbc::loadConfig(Motion&amp; motion, const std::string&amp; path) {</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>   const YAML::Node root = YAML::LoadFile(path);</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>   const YAML::Node robot = root[&quot;RobotCfg&quot;];</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>   const YAML::Node wbc = root[&quot;WbcCfg&quot;];</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>   requireNode(robot, &quot;RobotCfg&quot;);</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>   requireNode(wbc, &quot;WbcCfg&quot;);</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>   const auto joints = asStringList(robot[&quot;joint_order_mj&quot;], &quot;RobotCfg.joint_order_mj&quot;);</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>   if (!joint_names_.empty() &amp;&amp; joints != joint_names_)</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>     throw std::runtime_error(&quot;All WBC motions must have identical observation joint names/order&quot;);</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>   if (joint_names_.empty()) joint_names_ = joints;</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   for (const char* key : {&quot;kps&quot;, &quot;kds&quot;})</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>   {</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>     const auto gains = asDoubleList(robot[key], std::string(&quot;RobotCfg.&quot;) + key);</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>     if (gains.size() != kJointCount || !std::all_of(gains.begin(), gains.end(), [](double value) {</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>           return std::isfinite(value) &amp;&amp; value &gt;= 0.0;</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>         }))</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>       throw std::runtime_error(std::string(&quot;Invalid WBC gains: &quot;) + key);</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   }</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>   const auto defaults = asDoubleList(robot[&quot;default_joint_angles&quot;], &quot;RobotCfg.default_joint_angles&quot;);</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>   const auto scales = asDoubleList(robot[&quot;action_scale&quot;], &quot;RobotCfg.action_scale&quot;);</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>   if (joint_names_.size() != kJointCount || defaults.size() != kJointCount || scales.size() != kJointCount)</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     throw std::runtime_error(&quot;WBC joint/default/action_scale arrays must each contain 21 values&quot;);</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>   if (std::set&lt;std::string&gt;(joint_names_.begin(), joint_names_.end()).size() != joint_names_.size())</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     throw std::runtime_error(&quot;WBC policy joint names must be unique&quot;);</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>   motion.default_joint_positions_.assign(defaults.begin(), defaults.end());</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>   motion.action_scale_.assign(scales.begin(), scales.end());</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>   if (!finiteVector(motion.default_joint_positions_) || !finiteVector(motion.action_scale_) ||</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>       std::any_of(motion.action_scale_.begin(), motion.action_scale_.end(), [](float value) { return value &lt;= 0.0f; }))</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>     throw std::runtime_error(&quot;WBC defaults must be finite and action scales finite and positive&quot;);</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a> </span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>   motion.control_dt_ = wbc[&quot;control_dt&quot;].as&lt;double&gt;();</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>   motion.start_hold_sec_ = wbc[&quot;start_hold_sec&quot;].as&lt;double&gt;();</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>   motion.history_steps_ = wbc[&quot;history_steps&quot;].as&lt;std::vector&lt;int&gt;&gt;();</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>   motion.future_steps_ = wbc[&quot;future_steps&quot;].as&lt;std::vector&lt;int&gt;&gt;();</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>   motion.previous_action_steps_ = wbc[&quot;previous_action_steps&quot;].as&lt;int&gt;();</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>   motion.policy_input_name_ = wbc[&quot;policy_input_name&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>   motion.command_input_name_ = wbc[&quot;command_input_name&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>   motion.output_name_ = wbc[&quot;output_name&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>   if (!std::isfinite(motion.control_dt_) || !std::isfinite(motion.start_hold_sec_) ||</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>       std::abs(motion.control_dt_ - 0.02) &gt; 1e-9 || motion.start_hold_sec_ &lt; 0.0 ||</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>       robot[&quot;policy_frequency&quot;].as&lt;int&gt;() != 50 || robot[&quot;num_actions&quot;].as&lt;int&gt;() != 21 ||</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>       motion.policy_input_name_ != &quot;policy&quot; ||</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>       (motion.command_input_name_ != &quot;command_short&quot; &amp;&amp; motion.command_input_name_ != &quot;command&quot;) ||</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>       motion.output_name_ != &quot;action&quot; ||</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>       motion.history_steps_ != std::vector&lt;int&gt;({0, 1, 2, 3, 4, 8, 16}) ||</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>       motion.future_steps_ != std::vector&lt;int&gt;({-8, -4, -2, 0, 1, 2, 3, 4}) || motion.previous_action_steps_ != 3)</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>     throw std::runtime_error(&quot;WBC config does not match the exported 399/240 model ABI&quot;);</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a> </span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>   motion.motion_id_ = wbc[&quot;motion_id&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>   if (motion.motion_id_.empty() || motion.motion_id_.size() &gt; 32 ||</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>       !std::all_of(motion.motion_id_.begin(), motion.motion_id_.end(), [](char c) {</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>         return (c &gt;= &#x27;A&#x27; &amp;&amp; c &lt;= &#x27;Z&#x27;) || (c &gt;= &#x27;a&#x27; &amp;&amp; c &lt;= &#x27;z&#x27;) || (c &gt;= &#x27;0&#x27; &amp;&amp; c &lt;= &#x27;9&#x27;) || c == &#x27;-&#x27; || c == &#x27;_&#x27;;</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>       }))</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>     throw std::runtime_error(&quot;Invalid WBC motion id&quot;);</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>   motion.reference_num_frames_ = wbc[&quot;reference_num_frames&quot;].as&lt;int&gt;();</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>   motion.adapter_id_ = motion.motion_id_;</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>   motion.reference_root_body_index_ = wbc[&quot;reference_root_body_index&quot;].as&lt;int&gt;();</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>   if (motion.reference_num_frames_ &lt;= 0 || motion.reference_num_frames_ &gt; 100000 || motion.reference_root_body_index_ &lt; 0 ||</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>       motion.reference_root_body_index_ &gt;= static_cast&lt;int&gt;(kReferenceBodyCount))</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>     throw std::runtime_error(&quot;Invalid WBC reference frame count or root body index&quot;);</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a> }</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a> </span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a> void RLWbc::initializeModel(Motion&amp; motion) {</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>   if (lora_assets_) motion.policy_ = shared_policy_.get();</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>   else {</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>     motion.model_ = std::make_unique&lt;RknnModel&gt;(rknnModelPath(joinPath(motion.config_dir_, &quot;policy.onnx&quot;)));</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>     motion.policy_ = motion.model_.get();</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>   }</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>   if (motion.policy_-&gt;inputCount() != (lora_assets_ ? 33U : 2U) || motion.policy_-&gt;outputCount() != 1)</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>     throw std::runtime_error(&quot;WBC RKNN model input/output count does not match selected mode&quot;);</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>   motion.policy_input_index_ = motion.policy_-&gt;inputIndex(motion.policy_input_name_);</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>   motion.command_input_index_ = motion.policy_-&gt;inputIndex(motion.command_input_name_);</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>   if (motion.command_input_index_ &lt; 0)</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>     motion.command_input_index_ =</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>         motion.policy_-&gt;inputIndex(motion.command_input_name_ == &quot;command_short&quot; ? &quot;command&quot; : &quot;command_short&quot;);</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>   motion.output_index_ = motion.policy_-&gt;outputIndex(motion.output_name_);</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>   if (motion.policy_input_index_ &lt; 0 || motion.command_input_index_ &lt; 0 ||</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>       motion.policy_input_index_ == motion.command_input_index_ || motion.output_index_ &lt; 0)</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>     throw std::runtime_error(&quot;WBC RKNN input/output names do not match policy, command_short, action&quot;);</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>   if (motion.policy_-&gt;inputElements(motion.policy_input_index_) != kPolicyInputSize ||</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>       motion.policy_-&gt;inputElements(motion.command_input_index_) != kCommandInputSize ||</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>       motion.policy_-&gt;outputElements(motion.output_index_) != kJointCount)</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>     throw std::runtime_error(&quot;WBC RKNN tensor sizes do not match policy[399], command_short[240], action[21]&quot;);</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a> </span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>   if (motion.json_reference_) return;</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>   motion.reference_model_ = std::make_unique&lt;RknnModel&gt;(lora_assets_ ? lora_assets_-&gt;action(motion.adapter_id_).reference :</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>       rknnModelPath(joinPath(motion.config_dir_, &quot;reference_motion.onnx&quot;)));</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>   if (motion.reference_model_-&gt;inputCount() != 1 || motion.reference_model_-&gt;inputIndex(&quot;time_step&quot;) != 0 ||</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>       motion.reference_model_-&gt;inputElements() != 1 || motion.reference_model_-&gt;outputCount() != kReferenceOutputs.size())</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>     throw std::runtime_error(&quot;WBC reference RKNN must have time_step[1,1] and six reference outputs&quot;);</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>   for (std::size_t i = 0; i &lt; kReferenceOutputs.size(); ++i)</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>   {</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>     const int index = motion.reference_model_-&gt;outputIndex(kReferenceOutputs[i]);</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>     if (index &lt; 0 || motion.reference_model_-&gt;outputElements(index) != kReferenceOutputSizes[i])</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>       throw std::runtime_error(std::string(&quot;WBC reference RKNN output size/name mismatch: &quot;) + kReferenceOutputs[i]);</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>     motion.reference_output_indices_[i] = index;</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>   }</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a> }</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a> </span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a> bool RLWbc::captureFrame(RobotFrame&amp; frame, std::array&lt;double, 4&gt;* orientation_wxyz, std::string&amp; error,</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>                          int64_t* observation_stamp) {</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>   luvbot_control_interfaces::msg::PolicyObservation sensor;</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>   {</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>     std::lock_guard&lt;std::mutex&gt; lock(observation_mutex_);</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>     const double age =</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>         std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - observation_received_at_).count();</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>     const double stamp_age = (node_-&gt;now().nanoseconds() - observation_stamp_ns_) * 1e-9;</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>     if (!observation_received_ || age &gt; sensor_timeout_sec_ || stamp_age &lt; 0.0 || stamp_age &gt; sensor_timeout_sec_ ||</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>         !policy_observation_.inference_enabled)</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>     {</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>       error = &quot;fresh, inference-enabled PolicyObservation is required&quot;;</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>       return false;</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>     }</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>     sensor = policy_observation_;</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>     if (observation_stamp) *observation_stamp = observation_stamp_ns_;</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>   }</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>   try</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>   {</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>     const std::array&lt;double, 4&gt; orientation = normalize(</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>         {{sensor.imu.orientation.w, sensor.imu.orientation.x, sensor.imu.orientation.y, sensor.imu.orientation.z}});</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>     const auto gravity = rotateInverse(orientation, {{0.0, 0.0, -1.0}});</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>     const double angular_velocity[] = {sensor.imu.angular_velocity.x, sensor.imu.angular_velocity.y,</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>                                        sensor.imu.angular_velocity.z};</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>     for (std::size_t i = 0; i &lt; 3; ++i)</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>     {</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>       frame.angular_velocity[i] = static_cast&lt;float&gt;(angular_velocity[i]);</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>       frame.projected_gravity[i] = static_cast&lt;float&gt;(gravity[i]);</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>     }</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>     frame.joint_position.resize(kJointCount);</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>     frame.joint_velocity.resize(kJointCount);</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>     for (std::size_t i = 0; i &lt; kJointCount; ++i)</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>     {</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>       frame.joint_position[i] = static_cast&lt;float&gt;(sensor.joints.position[i]) - current_-&gt;default_joint_positions_[i];</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>       frame.joint_velocity[i] = static_cast&lt;float&gt;(sensor.joints.velocity[i]);</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>     }</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>     if (orientation_wxyz) *orientation_wxyz = orientation;</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>   } catch (const std::exception&amp; exception)</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>   {</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>     error = exception.what();</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>     return false;</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>   }</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>   if (!finiteVector(frame.joint_position) || !finiteVector(frame.joint_velocity))</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>   {</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>     error = &quot;non-finite WBC sensor input&quot;;</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>     return false;</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>   }</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>   return true;</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a> }</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a> </span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a> RLWbc::ReferenceFrame RLWbc::inferReferenceFrame(int index) {</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>   return inferReferenceFrame(*current_, index);</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a> }</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a> </span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a> RLWbc::ReferenceFrame RLWbc::inferReferenceFrame(const Motion&amp; motion, int index) {</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>   if (motion.json_reference_) {</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>     const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>     const auto&amp; reference = *motion.json_reference_;</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>     ReferenceFrame frame;</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>     const auto&amp; joints = reference.frame(index);</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>     frame.joint_position.assign(joints.begin(), joints.end());</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a>     frame.root_position = reference.rootPosition();</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a>     frame.root_orientation = reference.rootOrientation();</span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>     ++reference_queries_;</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>     reference_sec_ += std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - started).count();</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>     return frame;</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>   }</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>   const float time_step = static_cast&lt;float&gt;(std::max(0, std::min(index, motion.reference_num_frames_ - 1)));</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a>   const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>   ++reference_queries_;</span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a>   const bool inferred = motion.reference_model_-&gt;run(&amp;time_step, 1);</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>   reference_sec_ += std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - started).count();</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a>   if (!inferred)</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a>     throw std::runtime_error(&quot;WBC reference RKNN inference failed: &quot; + motion.reference_model_-&gt;lastError());</span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a>   ReferenceFrame frame;</span>
+<span id="C-L356" class="line"><a href="#C-L356"> 356</a>   frame.joint_position = motion.reference_model_-&gt;output(motion.reference_output_indices_[0]);</span>
+<span id="C-L357" class="line"><a href="#C-L357"> 357</a>   const auto&amp; positions = motion.reference_model_-&gt;output(motion.reference_output_indices_[2]);</span>
+<span id="C-L358" class="line"><a href="#C-L358"> 358</a>   const auto&amp; orientations = motion.reference_model_-&gt;output(motion.reference_output_indices_[3]);</span>
+<span id="C-L359" class="line"><a href="#C-L359"> 359</a>   for (std::size_t i = 0; i &lt; 3; ++i) frame.root_position[i] = positions[motion.reference_root_body_index_ * 3 + i];</span>
+<span id="C-L360" class="line"><a href="#C-L360"> 360</a>   double norm_squared = 0.0;</span>
+<span id="C-L361" class="line"><a href="#C-L361"> 361</a>   for (std::size_t i = 0; i &lt; 4; ++i)</span>
+<span id="C-L362" class="line"><a href="#C-L362"> 362</a>   {</span>
+<span id="C-L363" class="line"><a href="#C-L363"> 363</a>     frame.root_orientation[i] = orientations[motion.reference_root_body_index_ * 4 + i];</span>
+<span id="C-L364" class="line"><a href="#C-L364"> 364</a>     norm_squared += frame.root_orientation[i] * frame.root_orientation[i];</span>
+<span id="C-L365" class="line"><a href="#C-L365"> 365</a>   }</span>
+<span id="C-L366" class="line"><a href="#C-L366"> 366</a>   if (!std::isfinite(norm_squared) || std::abs(norm_squared - 1.0) &gt; 0.1)</span>
+<span id="C-L367" class="line"><a href="#C-L367"> 367</a>     throw std::runtime_error(&quot;WBC reference RKNN returned an invalid root quaternion&quot;);</span>
+<span id="C-L368" class="line"><a href="#C-L368"> 368</a>   frame.root_orientation = normalize(frame.root_orientation);</span>
+<span id="C-L369" class="line"><a href="#C-L369"> 369</a>   return frame;</span>
+<span id="C-L370" class="line"><a href="#C-L370"> 370</a> }</span>
+<span id="C-L371" class="line"><a href="#C-L371"> 371</a> </span>
+<span id="C-L372" class="line"><a href="#C-L372"> 372</a> std::vector&lt;float&gt; RLWbc::makePolicyInput() const {</span>
+<span id="C-L373" class="line"><a href="#C-L373"> 373</a>   std::vector&lt;float&gt; input;</span>
+<span id="C-L374" class="line"><a href="#C-L374"> 374</a>   input.reserve(kPolicyInputSize);</span>
+<span id="C-L375" class="line"><a href="#C-L375"> 375</a>   for (int field = 0; field &lt; 4; ++field)</span>
+<span id="C-L376" class="line"><a href="#C-L376"> 376</a>   {</span>
+<span id="C-L377" class="line"><a href="#C-L377"> 377</a>     for (int offset : current_-&gt;history_steps_)</span>
+<span id="C-L378" class="line"><a href="#C-L378"> 378</a>     {</span>
+<span id="C-L379" class="line"><a href="#C-L379"> 379</a>       const RobotFrame&amp; frame = state_history_.at(static_cast&lt;std::size_t&gt;(offset));</span>
+<span id="C-L380" class="line"><a href="#C-L380"> 380</a>       if (field == 0)</span>
+<span id="C-L381" class="line"><a href="#C-L381"> 381</a>         input.insert(input.end(), frame.angular_velocity.begin(), frame.angular_velocity.end());</span>
+<span id="C-L382" class="line"><a href="#C-L382"> 382</a>       else if (field == 1)</span>
+<span id="C-L383" class="line"><a href="#C-L383"> 383</a>         input.insert(input.end(), frame.projected_gravity.begin(), frame.projected_gravity.end());</span>
+<span id="C-L384" class="line"><a href="#C-L384"> 384</a>       else if (field == 2)</span>
+<span id="C-L385" class="line"><a href="#C-L385"> 385</a>         input.insert(input.end(), frame.joint_position.begin(), frame.joint_position.end());</span>
+<span id="C-L386" class="line"><a href="#C-L386"> 386</a>       else</span>
+<span id="C-L387" class="line"><a href="#C-L387"> 387</a>         input.insert(input.end(), frame.joint_velocity.begin(), frame.joint_velocity.end());</span>
+<span id="C-L388" class="line"><a href="#C-L388"> 388</a>     }</span>
+<span id="C-L389" class="line"><a href="#C-L389"> 389</a>   }</span>
+<span id="C-L390" class="line"><a href="#C-L390"> 390</a>   for (const auto&amp; action : action_history_) input.insert(input.end(), action.begin(), action.end());</span>
+<span id="C-L391" class="line"><a href="#C-L391"> 391</a>   if (input.size() != kPolicyInputSize) throw std::runtime_error(&quot;constructed WBC policy input is not 399 elements&quot;);</span>
+<span id="C-L392" class="line"><a href="#C-L392"> 392</a>   return input;</span>
+<span id="C-L393" class="line"><a href="#C-L393"> 393</a> }</span>
+<span id="C-L394" class="line"><a href="#C-L394"> 394</a> </span>
+<span id="C-L395" class="line"><a href="#C-L395"> 395</a> std::vector&lt;float&gt; RLWbc::makeCommandInput(const std::array&lt;double, 4&gt;&amp; robot_orientation, int reference_index,</span>
+<span id="C-L396" class="line"><a href="#C-L396"> 396</a>                                          bool reset_anchor) {</span>
+<span id="C-L397" class="line"><a href="#C-L397"> 397</a>   std::vector&lt;int&gt; indices;</span>
+<span id="C-L398" class="line"><a href="#C-L398"> 398</a>   std::vector&lt;ReferenceFrame&gt; references;</span>
+<span id="C-L399" class="line"><a href="#C-L399"> 399</a>   indices.reserve(current_-&gt;future_steps_.size());</span>
+<span id="C-L400" class="line"><a href="#C-L400"> 400</a>   references.reserve(current_-&gt;future_steps_.size());</span>
+<span id="C-L401" class="line"><a href="#C-L401"> 401</a>   for (int offset : current_-&gt;future_steps_)</span>
+<span id="C-L402" class="line"><a href="#C-L402"> 402</a>   {</span>
+<span id="C-L403" class="line"><a href="#C-L403"> 403</a>     const int index = std::max(0, std::min(reference_index + offset, current_-&gt;reference_num_frames_ - 1));</span>
+<span id="C-L404" class="line"><a href="#C-L404"> 404</a>     const auto previous = std::find(indices.begin(), indices.end(), index);</span>
+<span id="C-L405" class="line"><a href="#C-L405"> 405</a>     // Reuse only duplicate clamped frames within this control cycle.</span>
+<span id="C-L406" class="line"><a href="#C-L406"> 406</a>     if (previous == indices.end())</span>
+<span id="C-L407" class="line"><a href="#C-L407"> 407</a>       references.push_back(inferReferenceFrame(index));</span>
+<span id="C-L408" class="line"><a href="#C-L408"> 408</a>     else</span>
+<span id="C-L409" class="line"><a href="#C-L409"> 409</a>       references.push_back(references[static_cast&lt;std::size_t&gt;(previous - indices.begin())]);</span>
+<span id="C-L410" class="line"><a href="#C-L410"> 410</a>     indices.push_back(index);</span>
+<span id="C-L411" class="line"><a href="#C-L411"> 411</a>   }</span>
+<span id="C-L412" class="line"><a href="#C-L412"> 412</a>   std::vector&lt;float&gt; input;</span>
+<span id="C-L413" class="line"><a href="#C-L413"> 413</a>   input.reserve(kCommandInputSize);</span>
+<span id="C-L414" class="line"><a href="#C-L414"> 414</a>   const auto&amp; current = references[3];  // future_steps[3] is the current reference frame.</span>
+<span id="C-L415" class="line"><a href="#C-L415"> 415</a>   if (reset_anchor)</span>
+<span id="C-L416" class="line"><a href="#C-L416"> 416</a>     yaw_anchor_wxyz_ = multiply(yawQuaternion(robot_orientation), conjugate(yawQuaternion(current.root_orientation)));</span>
+<span id="C-L417" class="line"><a href="#C-L417"> 417</a>   const auto reference_yaw = yawQuaternion(current.root_orientation);</span>
+<span id="C-L418" class="line"><a href="#C-L418"> 418</a>   // Signal-major layout: 8 positions, 8 rotation matrices&#x27; first two rows, 8 joint vectors.</span>
+<span id="C-L419" class="line"><a href="#C-L419"> 419</a>   for (const auto&amp; future : references)</span>
+<span id="C-L420" class="line"><a href="#C-L420"> 420</a>   {</span>
+<span id="C-L421" class="line"><a href="#C-L421"> 421</a>     const auto local = rotateInverse(reference_yaw,</span>
+<span id="C-L422" class="line"><a href="#C-L422"> 422</a>         {{future.root_position[0] - current.root_position[0],</span>
+<span id="C-L423" class="line"><a href="#C-L423"> 423</a>           future.root_position[1] - current.root_position[1], future.root_position[2]}});</span>
+<span id="C-L424" class="line"><a href="#C-L424"> 424</a>     for (double value : local) input.push_back(static_cast&lt;float&gt;(value));</span>
+<span id="C-L425" class="line"><a href="#C-L425"> 425</a>   }</span>
+<span id="C-L426" class="line"><a href="#C-L426"> 426</a>   const auto robot_inverse = conjugate(normalize(robot_orientation));</span>
+<span id="C-L427" class="line"><a href="#C-L427"> 427</a>   for (const auto&amp; future : references)</span>
+<span id="C-L428" class="line"><a href="#C-L428"> 428</a>   {</span>
+<span id="C-L429" class="line"><a href="#C-L429"> 429</a>     appendRotationFirstTwoRows(multiply(multiply(robot_inverse, yaw_anchor_wxyz_), future.root_orientation), input);</span>
+<span id="C-L430" class="line"><a href="#C-L430"> 430</a>   }</span>
+<span id="C-L431" class="line"><a href="#C-L431"> 431</a>   for (const auto&amp; future : references)</span>
+<span id="C-L432" class="line"><a href="#C-L432"> 432</a>   {</span>
+<span id="C-L433" class="line"><a href="#C-L433"> 433</a>     const auto&amp; joints = future.joint_position;</span>
+<span id="C-L434" class="line"><a href="#C-L434"> 434</a>     input.insert(input.end(), joints.begin(), joints.end());</span>
+<span id="C-L435" class="line"><a href="#C-L435"> 435</a>   }</span>
+<span id="C-L436" class="line"><a href="#C-L436"> 436</a>   if (input.size() != kCommandInputSize) throw std::runtime_error(&quot;constructed WBC command input is not 240 elements&quot;);</span>
+<span id="C-L437" class="line"><a href="#C-L437"> 437</a>   return input;</span>
+<span id="C-L438" class="line"><a href="#C-L438"> 438</a> }</span>
+<span id="C-L439" class="line"><a href="#C-L439"> 439</a> </span>
+<span id="C-L440" class="line"><a href="#C-L440"> 440</a> bool RLWbc::inferAndPublish(double elapsed_sec, bool commit_action, std::string&amp; error) {</span>
+<span id="C-L441" class="line"><a href="#C-L441"> 441</a>   const auto inference_started = std::chrono::steady_clock::now();</span>
+<span id="C-L442" class="line"><a href="#C-L442"> 442</a>   reference_sec_ = 0.0;</span>
+<span id="C-L443" class="line"><a href="#C-L443"> 443</a>   policy_sec_ = 0.0;</span>
+<span id="C-L444" class="line"><a href="#C-L444"> 444</a>   reference_queries_ = 0;</span>
+<span id="C-L445" class="line"><a href="#C-L445"> 445</a>   int64_t input_stamp = 0;</span>
+<span id="C-L446" class="line"><a href="#C-L446"> 446</a>   const bool success = [&amp;]() {</span>
+<span id="C-L447" class="line"><a href="#C-L447"> 447</a>     RobotFrame frame;</span>
+<span id="C-L448" class="line"><a href="#C-L448"> 448</a>     std::array&lt;double, 4&gt; orientation;</span>
+<span id="C-L449" class="line"><a href="#C-L449"> 449</a>     if (!captureFrame(frame, &amp;orientation, error, &amp;input_stamp)) return false;</span>
+<span id="C-L450" class="line"><a href="#C-L450"> 450</a>     state_history_.push_front(std::move(frame));</span>
+<span id="C-L451" class="line"><a href="#C-L451"> 451</a>     while (state_history_.size() &gt; 17) state_history_.pop_back();</span>
+<span id="C-L452" class="line"><a href="#C-L452"> 452</a> </span>
+<span id="C-L453" class="line"><a href="#C-L453"> 453</a>     try</span>
+<span id="C-L454" class="line"><a href="#C-L454"> 454</a>     {</span>
+<span id="C-L455" class="line"><a href="#C-L455"> 455</a>       const std::vector&lt;float&gt; policy_input = makePolicyInput();</span>
+<span id="C-L456" class="line"><a href="#C-L456"> 456</a>       const int reference_index = std::min(current_-&gt;reference_num_frames_ - 1,</span>
+<span id="C-L457" class="line"><a href="#C-L457"> 457</a>           static_cast&lt;int&gt;(std::max(0.0, elapsed_sec - current_-&gt;start_hold_sec_) / current_-&gt;control_dt_));</span>
+<span id="C-L458" class="line"><a href="#C-L458"> 458</a>       const std::vector&lt;float&gt; command_input = makeCommandInput(orientation, reference_index, !commit_action);</span>
+<span id="C-L459" class="line"><a href="#C-L459"> 459</a>       const auto policy_started = std::chrono::steady_clock::now();</span>
+<span id="C-L460" class="line"><a href="#C-L460"> 460</a>       bool inferred;</span>
+<span id="C-L461" class="line"><a href="#C-L461"> 461</a>       if (lora_assets_) {</span>
+<span id="C-L462" class="line"><a href="#C-L462"> 462</a>         inferred = shared_policy_-&gt;runResident(policy_input.data(), policy_input.size(),</span>
+<span id="C-L463" class="line"><a href="#C-L463"> 463</a>                                                command_input.data(), command_input.size());</span>
+<span id="C-L464" class="line"><a href="#C-L464"> 464</a>       } else {</span>
+<span id="C-L465" class="line"><a href="#C-L465"> 465</a>         inputs_[current_-&gt;policy_input_index_] = policy_input.data();</span>
+<span id="C-L466" class="line"><a href="#C-L466"> 466</a>         input_sizes_[current_-&gt;policy_input_index_] = policy_input.size();</span>
+<span id="C-L467" class="line"><a href="#C-L467"> 467</a>         inputs_[current_-&gt;command_input_index_] = command_input.data();</span>
+<span id="C-L468" class="line"><a href="#C-L468"> 468</a>         input_sizes_[current_-&gt;command_input_index_] = command_input.size();</span>
+<span id="C-L469" class="line"><a href="#C-L469"> 469</a>         inferred = current_-&gt;policy_-&gt;run(inputs_, input_sizes_);</span>
+<span id="C-L470" class="line"><a href="#C-L470"> 470</a>       }</span>
+<span id="C-L471" class="line"><a href="#C-L471"> 471</a>       policy_sec_ = std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - policy_started).count();</span>
+<span id="C-L472" class="line"><a href="#C-L472"> 472</a>       if (!inferred)</span>
+<span id="C-L473" class="line"><a href="#C-L473"> 473</a>       {</span>
+<span id="C-L474" class="line"><a href="#C-L474"> 474</a>         error = current_-&gt;policy_-&gt;lastError();</span>
+<span id="C-L475" class="line"><a href="#C-L475"> 475</a>         return false;</span>
+<span id="C-L476" class="line"><a href="#C-L476"> 476</a>       }</span>
+<span id="C-L477" class="line"><a href="#C-L477"> 477</a>       auto action = current_-&gt;policy_-&gt;output(current_-&gt;output_index_);</span>
+<span id="C-L478" class="line"><a href="#C-L478"> 478</a>       if (action.size() != kJointCount || !finiteVector(action))</span>
+<span id="C-L479" class="line"><a href="#C-L479"> 479</a>       {</span>
+<span id="C-L480" class="line"><a href="#C-L480"> 480</a>         error = &quot;WBC policy returned an invalid action&quot;;</span>
+<span id="C-L481" class="line"><a href="#C-L481"> 481</a>         return false;</span>
+<span id="C-L482" class="line"><a href="#C-L482"> 482</a>       }</span>
+<span id="C-L483" class="line"><a href="#C-L483"> 483</a>       // Reject late results and observations invalidated during inference.</span>
+<span id="C-L484" class="line"><a href="#C-L484"> 484</a>       RobotFrame latest_frame;</span>
+<span id="C-L485" class="line"><a href="#C-L485"> 485</a>       if (!captureFrame(latest_frame, nullptr, error)) return false;</span>
+<span id="C-L486" class="line"><a href="#C-L486"> 486</a>       const double inference_sec =</span>
+<span id="C-L487" class="line"><a href="#C-L487"> 487</a>           std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - inference_started).count();</span>
+<span id="C-L488" class="line"><a href="#C-L488"> 488</a>       const double input_age = (node_-&gt;now().nanoseconds() - input_stamp) * 1e-9;</span>
+<span id="C-L489" class="line"><a href="#C-L489"> 489</a>       if (input_age &lt; 0.0 || input_age &gt; sensor_timeout_sec_ ||</span>
+<span id="C-L490" class="line"><a href="#C-L490"> 490</a>           inference_sec &gt; std::min(current_-&gt;control_dt_, std::min(sensor_timeout_sec_, command_validity_ms_ / 1000.0)))</span>
+<span id="C-L491" class="line"><a href="#C-L491"> 491</a>       {</span>
+<span id="C-L492" class="line"><a href="#C-L492"> 492</a>         error = input_age &lt; 0.0 || input_age &gt; sensor_timeout_sec_ ?</span>
+<span id="C-L493" class="line"><a href="#C-L493"> 493</a>             &quot;WBC input timestamp expired/invalid&quot; : &quot;WBC inference exceeded command validity budget&quot;;</span>
+<span id="C-L494" class="line"><a href="#C-L494"> 494</a>         return false;</span>
+<span id="C-L495" class="line"><a href="#C-L495"> 495</a>       }</span>
+<span id="C-L496" class="line"><a href="#C-L496"> 496</a>       posCmd_.target_positions.resize(kJointCount);</span>
+<span id="C-L497" class="line"><a href="#C-L497"> 497</a>       // Bound Qreference in radians after scaling; preserve raw actor history.</span>
+<span id="C-L498" class="line"><a href="#C-L498"> 498</a>       for (std::size_t i = 0; i &lt; kJointCount; ++i)</span>
+<span id="C-L499" class="line"><a href="#C-L499"> 499</a>         posCmd_.target_positions[i] = std::clamp(</span>
+<span id="C-L500" class="line"><a href="#C-L500"> 500</a>             static_cast&lt;double&gt;(action[i]) * current_-&gt;action_scale_[i] + current_-&gt;default_joint_positions_[i],</span>
+<span id="C-L501" class="line"><a href="#C-L501"> 501</a>             -10.0, 10.0);</span>
+<span id="C-L502" class="line"><a href="#C-L502"> 502</a>       publishPolicyCommand();</span>
+<span id="C-L503" class="line"><a href="#C-L503"> 503</a>       if (commit_action)</span>
+<span id="C-L504" class="line"><a href="#C-L504"> 504</a>       {</span>
+<span id="C-L505" class="line"><a href="#C-L505"> 505</a>         action_history_.push_front(action);</span>
+<span id="C-L506" class="line"><a href="#C-L506"> 506</a>         while (action_history_.size() &gt; static_cast&lt;std::size_t&gt;(current_-&gt;previous_action_steps_))</span>
+<span id="C-L507" class="line"><a href="#C-L507"> 507</a>           action_history_.pop_back();</span>
+<span id="C-L508" class="line"><a href="#C-L508"> 508</a>       }</span>
+<span id="C-L509" class="line"><a href="#C-L509"> 509</a>       return true;</span>
+<span id="C-L510" class="line"><a href="#C-L510"> 510</a>     } catch (const std::exception&amp; exception)</span>
+<span id="C-L511" class="line"><a href="#C-L511"> 511</a>     {</span>
+<span id="C-L512" class="line"><a href="#C-L512"> 512</a>       error = exception.what();</span>
+<span id="C-L513" class="line"><a href="#C-L513"> 513</a>       return false;</span>
+<span id="C-L514" class="line"><a href="#C-L514"> 514</a>     }</span>
+<span id="C-L515" class="line"><a href="#C-L515"> 515</a>   }();</span>
+<span id="C-L516" class="line"><a href="#C-L516"> 516</a>   const double cycle_sec = std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - inference_started).count();</span>
+<span id="C-L517" class="line"><a href="#C-L517"> 517</a>   ++timing_.samples;</span>
+<span id="C-L518" class="line"><a href="#C-L518"> 518</a>   if (cycle_sec &gt; std::min(current_-&gt;control_dt_, std::min(sensor_timeout_sec_, command_validity_ms_ / 1000.0)))</span>
+<span id="C-L519" class="line"><a href="#C-L519"> 519</a>     ++timing_.timeouts;</span>
+<span id="C-L520" class="line"><a href="#C-L520"> 520</a>   timing_.reference_total += reference_sec_;</span>
+<span id="C-L521" class="line"><a href="#C-L521"> 521</a>   timing_.reference_max = std::max(timing_.reference_max, reference_sec_);</span>
+<span id="C-L522" class="line"><a href="#C-L522"> 522</a>   timing_.policy_total += policy_sec_;</span>
+<span id="C-L523" class="line"><a href="#C-L523"> 523</a>   timing_.policy_max = std::max(timing_.policy_max, policy_sec_);</span>
+<span id="C-L524" class="line"><a href="#C-L524"> 524</a>   timing_.cycle_total += cycle_sec;</span>
+<span id="C-L525" class="line"><a href="#C-L525"> 525</a>   timing_.cycle_max = std::max(timing_.cycle_max, cycle_sec);</span>
+<span id="C-L526" class="line"><a href="#C-L526"> 526</a>   const auto bucket = [](double seconds) {</span>
+<span id="C-L527" class="line"><a href="#C-L527"> 527</a>     return static_cast&lt;std::size_t&gt;(std::min(1000.0, std::max(0.0, seconds * 10000.0)));</span>
+<span id="C-L528" class="line"><a href="#C-L528"> 528</a>   };</span>
+<span id="C-L529" class="line"><a href="#C-L529"> 529</a>   ++timing_.reference_hist[bucket(reference_sec_)];</span>
+<span id="C-L530" class="line"><a href="#C-L530"> 530</a>   ++timing_.policy_hist[bucket(policy_sec_)];</span>
+<span id="C-L531" class="line"><a href="#C-L531"> 531</a>   ++timing_.cycle_hist[bucket(cycle_sec)];</span>
+<span id="C-L532" class="line"><a href="#C-L532"> 532</a>   if (!success) {</span>
+<span id="C-L533" class="line"><a href="#C-L533"> 533</a>     const double budget = std::min(current_-&gt;control_dt_, std::min(sensor_timeout_sec_, command_validity_ms_ / 1000.0));</span>
+<span id="C-L534" class="line"><a href="#C-L534"> 534</a>     error += &quot;; cycle_ms=&quot; + std::to_string(cycle_sec * 1000.0) + &quot; budget_ms=&quot; + std::to_string(budget * 1000.0) +</span>
+<span id="C-L535" class="line"><a href="#C-L535"> 535</a>              &quot; input_age_ms=&quot; + (input_stamp &gt; 0 ? std::to_string((node_-&gt;now().nanoseconds() - input_stamp) * 1e-6) : &quot;unavailable&quot;) +</span>
+<span id="C-L536" class="line"><a href="#C-L536"> 536</a>              &quot; reference_queries=&quot; + std::to_string(reference_queries_);</span>
+<span id="C-L537" class="line"><a href="#C-L537"> 537</a>   }</span>
+<span id="C-L538" class="line"><a href="#C-L538"> 538</a>   return success;</span>
+<span id="C-L539" class="line"><a href="#C-L539"> 539</a> }</span>
+<span id="C-L540" class="line"><a href="#C-L540"> 540</a> </span>
+<span id="C-L541" class="line"><a href="#C-L541"> 541</a> void RLWbc::prepareCallback(const std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Request&gt; request,</span>
+<span id="C-L542" class="line"><a href="#C-L542"> 542</a>                             std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response) {</span>
+<span id="C-L543" class="line"><a href="#C-L543"> 543</a>   const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L544" class="line"><a href="#C-L544"> 544</a>   response-&gt;motion_id = request-&gt;motion_id;</span>
+<span id="C-L545" class="line"><a href="#C-L545"> 545</a>   if (request-&gt;command == luvbot_control_interfaces::srv::ControlWbcMotion::Request::CANCEL) {</span>
+<span id="C-L546" class="line"><a href="#C-L546"> 546</a>     std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L547" class="line"><a href="#C-L547"> 547</a>     ++prepare_generation_;</span>
+<span id="C-L548" class="line"><a href="#C-L548"> 548</a>     preparing_ = prepared_ = active_ = false;</span>
+<span id="C-L549" class="line"><a href="#C-L549"> 549</a>     response-&gt;success = true;</span>
+<span id="C-L550" class="line"><a href="#C-L550"> 550</a>     response-&gt;message = &quot;WBC cancelled; in-flight loading result invalidated&quot;;</span>
+<span id="C-L551" class="line"><a href="#C-L551"> 551</a>     return;</span>
+<span id="C-L552" class="line"><a href="#C-L552"> 552</a>   }</span>
+<span id="C-L553" class="line"><a href="#C-L553"> 553</a>   if (request-&gt;command != luvbot_control_interfaces::srv::ControlWbcMotion::Request::START) {</span>
+<span id="C-L554" class="line"><a href="#C-L554"> 554</a>     response-&gt;message = &quot;unsupported WBC command&quot;;</span>
+<span id="C-L555" class="line"><a href="#C-L555"> 555</a>     return;</span>
+<span id="C-L556" class="line"><a href="#C-L556"> 556</a>   }</span>
+<span id="C-L557" class="line"><a href="#C-L557"> 557</a>   // The executor callback is a non-realtime loader. Observation/active callbacks remain runnable.</span>
+<span id="C-L558" class="line"><a href="#C-L558"> 558</a>   // A cancelled read can finish, but a new request cannot write the same spare slot until it does.</span>
+<span id="C-L559" class="line"><a href="#C-L559"> 559</a>   std::unique_lock&lt;std::mutex&gt; loading_lock(loading_mutex_, std::try_to_lock);</span>
+<span id="C-L560" class="line"><a href="#C-L560"> 560</a>   if (!loading_lock.owns_lock()) {</span>
+<span id="C-L561" class="line"><a href="#C-L561"> 561</a>     response-&gt;message = &quot;previous adapter load is still retiring&quot;;</span>
+<span id="C-L562" class="line"><a href="#C-L562"> 562</a>     return;</span>
+<span id="C-L563" class="line"><a href="#C-L563"> 563</a>   }</span>
+<span id="C-L564" class="line"><a href="#C-L564"> 564</a>   Motion* next = nullptr;</span>
+<span id="C-L565" class="line"><a href="#C-L565"> 565</a>   int slot;</span>
+<span id="C-L566" class="line"><a href="#C-L566"> 566</a>   uint64_t generation;</span>
+<span id="C-L567" class="line"><a href="#C-L567"> 567</a>   {</span>
+<span id="C-L568" class="line"><a href="#C-L568"> 568</a>     std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L569" class="line"><a href="#C-L569"> 569</a>     if (prepared_ &amp;&amp; rclcpp::Time(posCmd_.valid_until) &lt;= node_-&gt;now()) prepared_ = false;</span>
+<span id="C-L570" class="line"><a href="#C-L570"> 570</a>     if (active_ || prepared_ || preparing_) {</span>
+<span id="C-L571" class="line"><a href="#C-L571"> 571</a>       response-&gt;message = &quot;a WBC motion is preparing, prepared or active&quot;;</span>
+<span id="C-L572" class="line"><a href="#C-L572"> 572</a>       return;</span>
+<span id="C-L573" class="line"><a href="#C-L573"> 573</a>     }</span>
+<span id="C-L574" class="line"><a href="#C-L574"> 574</a>     const auto motion = motions_.find(request-&gt;motion_id);</span>
+<span id="C-L575" class="line"><a href="#C-L575"> 575</a>     if (motion == motions_.end()) {</span>
+<span id="C-L576" class="line"><a href="#C-L576"> 576</a>       response-&gt;message = &quot;unknown WBC motion_id&quot;;</span>
+<span id="C-L577" class="line"><a href="#C-L577"> 577</a>       return;</span>
+<span id="C-L578" class="line"><a href="#C-L578"> 578</a>     }</span>
+<span id="C-L579" class="line"><a href="#C-L579"> 579</a>     next = motion-&gt;second.get();</span>
+<span id="C-L580" class="line"><a href="#C-L580"> 580</a>     if (next-&gt;json_reference_) {</span>
+<span id="C-L581" class="line"><a href="#C-L581"> 581</a>       if (next-&gt;json_consumed_ || next-&gt;json_reference_-&gt;expired()) {</span>
+<span id="C-L582" class="line"><a href="#C-L582"> 582</a>         response-&gt;message = &quot;JSON reference already consumed/cancelled or expired&quot;;</span>
+<span id="C-L583" class="line"><a href="#C-L583"> 583</a>         return;</span>
+<span id="C-L584" class="line"><a href="#C-L584"> 584</a>       }</span>
+<span id="C-L585" class="line"><a href="#C-L585"> 585</a>       next-&gt;json_consumed_ = true;  // A failed preparation cannot later replay this request.</span>
+<span id="C-L586" class="line"><a href="#C-L586"> 586</a>     }</span>
+<span id="C-L587" class="line"><a href="#C-L587"> 587</a>     slot = 1 - active_buffer_;</span>
+<span id="C-L588" class="line"><a href="#C-L588"> 588</a>     generation = ++prepare_generation_;</span>
+<span id="C-L589" class="line"><a href="#C-L589"> 589</a>     preparing_ = true;</span>
+<span id="C-L590" class="line"><a href="#C-L590"> 590</a>   }</span>
+<span id="C-L591" class="line"><a href="#C-L591"> 591</a>   std::string error;</span>
+<span id="C-L592" class="line"><a href="#C-L592"> 592</a>   const auto load_started = std::chrono::steady_clock::now();</span>
+<span id="C-L593" class="line"><a href="#C-L593"> 593</a>   try {</span>
+<span id="C-L594" class="line"><a href="#C-L594"> 594</a>     if (lora_assets_) {</span>
+<span id="C-L595" class="line"><a href="#C-L595"> 595</a>       lora_assets_-&gt;loadAdapter(lora_assets_-&gt;action(next-&gt;adapter_id_), adapter_buffers_[slot]);</span>
+<span id="C-L596" class="line"><a href="#C-L596"> 596</a>       shared_policy_-&gt;stageResidentParameters(slot, lora_assets_-&gt;parameterInputs(adapter_buffers_[slot]));</span>
+<span id="C-L597" class="line"><a href="#C-L597"> 597</a>     }</span>
+<span id="C-L598" class="line"><a href="#C-L598"> 598</a>   } catch (const std::exception&amp; exception) {</span>
+<span id="C-L599" class="line"><a href="#C-L599"> 599</a>     error = exception.what();</span>
+<span id="C-L600" class="line"><a href="#C-L600"> 600</a>   }</span>
+<span id="C-L601" class="line"><a href="#C-L601"> 601</a>   const double load_ms = std::chrono::duration&lt;double, std::milli&gt;(std::chrono::steady_clock::now() - load_started).count();</span>
+<span id="C-L602" class="line"><a href="#C-L602"> 602</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L603" class="line"><a href="#C-L603"> 603</a>   if (next-&gt;json_reference_ &amp;&amp; std::find(json_cancelled_ids_.begin(), json_cancelled_ids_.end(), request-&gt;motion_id) !=</span>
+<span id="C-L604" class="line"><a href="#C-L604"> 604</a>       json_cancelled_ids_.end() &amp;&amp; generation == prepare_generation_) preparing_ = false;</span>
+<span id="C-L605" class="line"><a href="#C-L605"> 605</a>   if (generation != prepare_generation_ || !preparing_) {</span>
+<span id="C-L606" class="line"><a href="#C-L606"> 606</a>     response-&gt;message = &quot;WBC preparation was cancelled&quot;;</span>
+<span id="C-L607" class="line"><a href="#C-L607"> 607</a>     return;</span>
+<span id="C-L608" class="line"><a href="#C-L608"> 608</a>   }</span>
+<span id="C-L609" class="line"><a href="#C-L609"> 609</a>   preparing_ = false;</span>
+<span id="C-L610" class="line"><a href="#C-L610"> 610</a>   const auto elapsed = [&amp;] { return std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - started).count(); };</span>
+<span id="C-L611" class="line"><a href="#C-L611"> 611</a>   if (!error.empty() || elapsed() &gt;= prepare_timeout_sec_) {</span>
+<span id="C-L612" class="line"><a href="#C-L612"> 612</a>     response-&gt;message = error.empty() ? &quot;adapter load exceeded preparation budget&quot; : error;</span>
+<span id="C-L613" class="line"><a href="#C-L613"> 613</a>     RCLCPP_WARN(node_-&gt;get_logger(), &quot;WBC prepare %s rejected: %s&quot;, request-&gt;motion_id.c_str(), response-&gt;message.c_str());</span>
+<span id="C-L614" class="line"><a href="#C-L614"> 614</a>     return;</span>
+<span id="C-L615" class="line"><a href="#C-L615"> 615</a>   }</span>
+<span id="C-L616" class="line"><a href="#C-L616"> 616</a>   // No inference is in flight while mutex_ is held. Never mutate the active adapter buffer.</span>
+<span id="C-L617" class="line"><a href="#C-L617"> 617</a>   Motion* previous = current_;</span>
+<span id="C-L618" class="line"><a href="#C-L618"> 618</a>   const int previous_slot = active_buffer_;</span>
+<span id="C-L619" class="line"><a href="#C-L619"> 619</a>   const int previous_resident_slot = shared_policy_ ? shared_policy_-&gt;residentSlot() : -1;</span>
+<span id="C-L620" class="line"><a href="#C-L620"> 620</a>   // Do allocating snapshots before committing the new device bindings.</span>
+<span id="C-L621" class="line"><a href="#C-L621"> 621</a>   const auto previous_command = posCmd_;</span>
+<span id="C-L622" class="line"><a href="#C-L622"> 622</a>   if (shared_policy_ &amp;&amp; !shared_policy_-&gt;commitResidentParameters(slot)) {</span>
+<span id="C-L623" class="line"><a href="#C-L623"> 623</a>     response-&gt;message = shared_policy_-&gt;lastError();</span>
+<span id="C-L624" class="line"><a href="#C-L624"> 624</a>     RCLCPP_ERROR(node_-&gt;get_logger(), &quot;WBC prepare %s rejected: %s&quot;, request-&gt;motion_id.c_str(), response-&gt;message.c_str());</span>
+<span id="C-L625" class="line"><a href="#C-L625"> 625</a>     return;</span>
+<span id="C-L626" class="line"><a href="#C-L626"> 626</a>   }</span>
+<span id="C-L627" class="line"><a href="#C-L627"> 627</a>   // Keep the complete inactive motion state for rollback after first-frame failure.</span>
+<span id="C-L628" class="line"><a href="#C-L628"> 628</a>   const auto previous_anchor = yaw_anchor_wxyz_;</span>
+<span id="C-L629" class="line"><a href="#C-L629"> 629</a>   auto previous_states = std::move(state_history_);</span>
+<span id="C-L630" class="line"><a href="#C-L630"> 630</a>   auto previous_actions = std::move(action_history_);</span>
+<span id="C-L631" class="line"><a href="#C-L631"> 631</a>   const auto previous_timing = timing_;</span>
+<span id="C-L632" class="line"><a href="#C-L632"> 632</a>   const bool previous_done = done_published_;</span>
+<span id="C-L633" class="line"><a href="#C-L633"> 633</a>   current_ = next;</span>
+<span id="C-L634" class="line"><a href="#C-L634"> 634</a>   active_buffer_ = slot;</span>
+<span id="C-L635" class="line"><a href="#C-L635"> 635</a>   timing_ = TimingStats{};</span>
+<span id="C-L636" class="line"><a href="#C-L636"> 636</a>   yaw_anchor_wxyz_ = {{1.0, 0.0, 0.0, 0.0}};</span>
+<span id="C-L637" class="line"><a href="#C-L637"> 637</a>   RobotFrame initial_frame;</span>
+<span id="C-L638" class="line"><a href="#C-L638"> 638</a>   try {</span>
+<span id="C-L639" class="line"><a href="#C-L639"> 639</a>     if (elapsed() &lt; prepare_timeout_sec_ &amp;&amp; captureFrame(initial_frame, nullptr, error)) {</span>
+<span id="C-L640" class="line"><a href="#C-L640"> 640</a>       // Sensor/start validity is decided by the same captureFrame path for</span>
+<span id="C-L641" class="line"><a href="#C-L641"> 641</a>       // ordinary and JSON motions. Only stale JSON payload matching is extra.</span>
+<span id="C-L642" class="line"><a href="#C-L642"> 642</a>       if (current_-&gt;json_reference_) {</span>
+<span id="C-L643" class="line"><a href="#C-L643"> 643</a>         const auto&amp; initial = current_-&gt;json_reference_-&gt;start();</span>
+<span id="C-L644" class="line"><a href="#C-L644"> 644</a>         for (std::size_t j = 0; j &lt; kJointCount; ++j) {</span>
+<span id="C-L645" class="line"><a href="#C-L645"> 645</a>           const float observed = initial_frame.joint_position[j] + current_-&gt;default_joint_positions_[j];</span>
+<span id="C-L646" class="line"><a href="#C-L646"> 646</a>           if (std::abs(observed - initial[j]) &gt; 0.15)</span>
+<span id="C-L647" class="line"><a href="#C-L647"> 647</a>             throw std::runtime_error(&quot;robot pose changed since JSON generation&quot;);</span>
+<span id="C-L648" class="line"><a href="#C-L648"> 648</a>         }</span>
+<span id="C-L649" class="line"><a href="#C-L649"> 649</a>       }</span>
+<span id="C-L650" class="line"><a href="#C-L650"> 650</a>       state_history_.assign(17, initial_frame);</span>
+<span id="C-L651" class="line"><a href="#C-L651"> 651</a>       action_history_.assign(static_cast&lt;std::size_t&gt;(current_-&gt;previous_action_steps_), std::vector&lt;float&gt;(kJointCount, 0.0f));</span>
+<span id="C-L652" class="line"><a href="#C-L652"> 652</a>       done_published_ = false;</span>
+<span id="C-L653" class="line"><a href="#C-L653"> 653</a>       if (inferAndPublish(0.0, false, error) &amp;&amp; elapsed() &lt; prepare_timeout_sec_) {</span>
+<span id="C-L654" class="line"><a href="#C-L654"> 654</a>         response-&gt;robot_cfg_path = current_-&gt;robot_cfg_path_;</span>
+<span id="C-L655" class="line"><a href="#C-L655"> 655</a>         response-&gt;duration_sec = current_-&gt;start_hold_sec_ + current_-&gt;reference_num_frames_ * current_-&gt;control_dt_;</span>
+<span id="C-L656" class="line"><a href="#C-L656"> 656</a>         response-&gt;message = &quot;WBC motion prepared&quot;;</span>
+<span id="C-L657" class="line"><a href="#C-L657"> 657</a>         logTiming(&quot;prepare&quot;);</span>
+<span id="C-L658" class="line"><a href="#C-L658"> 658</a>         if (elapsed() &lt; prepare_timeout_sec_) {</span>
+<span id="C-L659" class="line"><a href="#C-L659"> 659</a>           timing_ = TimingStats{};</span>
+<span id="C-L660" class="line"><a href="#C-L660"> 660</a>           prepared_ = true;</span>
+<span id="C-L661" class="line"><a href="#C-L661"> 661</a>           response-&gt;success = true;</span>
+<span id="C-L662" class="line"><a href="#C-L662"> 662</a>           RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC prepared action=%s generation=%llu slot=%d shared_context=%s %.2f ms load_pack=%.2f ms&quot;,</span>
+<span id="C-L663" class="line"><a href="#C-L663"> 663</a>                       request-&gt;motion_id.c_str(), static_cast&lt;unsigned long long&gt;(generation), slot,</span>
+<span id="C-L664" class="line"><a href="#C-L664"> 664</a>                       lora_assets_ ? &quot;reused&quot; : &quot;static&quot;, elapsed() * 1000.0, load_ms);</span>
+<span id="C-L665" class="line"><a href="#C-L665"> 665</a>           return;</span>
+<span id="C-L666" class="line"><a href="#C-L666"> 666</a>         }</span>
+<span id="C-L667" class="line"><a href="#C-L667"> 667</a>         error = &quot;preparation deadline after diagnostics&quot;;</span>
+<span id="C-L668" class="line"><a href="#C-L668"> 668</a>       }</span>
+<span id="C-L669" class="line"><a href="#C-L669"> 669</a>     }</span>
+<span id="C-L670" class="line"><a href="#C-L670"> 670</a>   } catch (const std::exception&amp; exception) {</span>
+<span id="C-L671" class="line"><a href="#C-L671"> 671</a>     error = exception.what();</span>
+<span id="C-L672" class="line"><a href="#C-L672"> 672</a>   }</span>
+<span id="C-L673" class="line"><a href="#C-L673"> 673</a>   logTiming(&quot;prepare_failed&quot;);</span>
+<span id="C-L674" class="line"><a href="#C-L674"> 674</a>   if (shared_policy_ &amp;&amp; !shared_policy_-&gt;restoreResidentParameters(previous_resident_slot))</span>
+<span id="C-L675" class="line"><a href="#C-L675"> 675</a>     error += &quot;; &quot; + shared_policy_-&gt;lastError();</span>
+<span id="C-L676" class="line"><a href="#C-L676"> 676</a>   current_ = previous;</span>
+<span id="C-L677" class="line"><a href="#C-L677"> 677</a>   active_buffer_ = previous_slot;</span>
+<span id="C-L678" class="line"><a href="#C-L678"> 678</a>   yaw_anchor_wxyz_ = previous_anchor;</span>
+<span id="C-L679" class="line"><a href="#C-L679"> 679</a>   state_history_ = std::move(previous_states);</span>
+<span id="C-L680" class="line"><a href="#C-L680"> 680</a>   action_history_ = std::move(previous_actions);</span>
+<span id="C-L681" class="line"><a href="#C-L681"> 681</a>   timing_ = previous_timing;</span>
+<span id="C-L682" class="line"><a href="#C-L682"> 682</a>   done_published_ = previous_done;</span>
+<span id="C-L683" class="line"><a href="#C-L683"> 683</a>   posCmd_ = previous_command;</span>
+<span id="C-L684" class="line"><a href="#C-L684"> 684</a>   response-&gt;message = &quot;WBC pre-inference failed: &quot; + (error.empty() ? std::string(&quot;preparation deadline&quot;) : error);</span>
+<span id="C-L685" class="line"><a href="#C-L685"> 685</a>   RCLCPP_WARN(node_-&gt;get_logger(), &quot;%s&quot;, response-&gt;message.c_str());</span>
+<span id="C-L686" class="line"><a href="#C-L686"> 686</a> }</span>
+<span id="C-L687" class="line"><a href="#C-L687"> 687</a> </span>
+<span id="C-L688" class="line"><a href="#C-L688"> 688</a> void RLWbc::activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {</span>
+<span id="C-L689" class="line"><a href="#C-L689"> 689</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L690" class="line"><a href="#C-L690"> 690</a>   if (!msg-&gt;data)</span>
+<span id="C-L691" class="line"><a href="#C-L691"> 691</a>   {</span>
+<span id="C-L692" class="line"><a href="#C-L692"> 692</a>     ++prepare_generation_;</span>
+<span id="C-L693" class="line"><a href="#C-L693"> 693</a>     preparing_ = false;</span>
+<span id="C-L694" class="line"><a href="#C-L694"> 694</a>     if (active_) logTiming(&quot;deactivated&quot;);</span>
+<span id="C-L695" class="line"><a href="#C-L695"> 695</a>     active_ = false;</span>
+<span id="C-L696" class="line"><a href="#C-L696"> 696</a>     prepared_ = false;</span>
+<span id="C-L697" class="line"><a href="#C-L697"> 697</a>     return;</span>
+<span id="C-L698" class="line"><a href="#C-L698"> 698</a>   }</span>
+<span id="C-L699" class="line"><a href="#C-L699"> 699</a>   // A late activation must not revive a cancelled or expired preparation.</span>
+<span id="C-L700" class="line"><a href="#C-L700"> 700</a>   if (!prepared_ || rclcpp::Time(posCmd_.valid_until) &lt;= node_-&gt;now())</span>
+<span id="C-L701" class="line"><a href="#C-L701"> 701</a>   {</span>
+<span id="C-L702" class="line"><a href="#C-L702"> 702</a>     prepared_ = false;</span>
+<span id="C-L703" class="line"><a href="#C-L703"> 703</a>     RCLCPP_ERROR(node_-&gt;get_logger(), &quot;Ignoring WBC activation without a fresh prepared command&quot;);</span>
+<span id="C-L704" class="line"><a href="#C-L704"> 704</a>     return;</span>
+<span id="C-L705" class="line"><a href="#C-L705"> 705</a>   }</span>
+<span id="C-L706" class="line"><a href="#C-L706"> 706</a>   motion_start_ = std::chrono::steady_clock::now();</span>
+<span id="C-L707" class="line"><a href="#C-L707"> 707</a>   active_ = true;</span>
+<span id="C-L708" class="line"><a href="#C-L708"> 708</a>   prepared_ = false;</span>
+<span id="C-L709" class="line"><a href="#C-L709"> 709</a> }</span>
+<span id="C-L710" class="line"><a href="#C-L710"> 710</a> </span>
+<span id="C-L711" class="line"><a href="#C-L711"> 711</a> void RLWbc::logTiming(const char* phase) {</span>
+<span id="C-L712" class="line"><a href="#C-L712"> 712</a>   if (shared_policy_) {</span>
+<span id="C-L713" class="line"><a href="#C-L713"> 713</a>     const auto stats = shared_policy_-&gt;residentStats();</span>
+<span id="C-L714" class="line"><a href="#C-L714"> 714</a>     const double runs = static_cast&lt;double&gt;(std::max&lt;std::uint64_t&gt;(1, stats.runs));</span>
+<span id="C-L715" class="line"><a href="#C-L715"> 715</a>     RCLCPP_INFO(node_-&gt;get_logger(),</span>
+<span id="C-L716" class="line"><a href="#C-L716"> 716</a>         &quot;WBC resident cumulative [%s]: contexts=%llu allocated_bytes=%llu layout_bytes=%llu &quot;</span>
+<span id="C-L717" class="line"><a href="#C-L717"> 717</a>         &quot;prepares=%llu parameter_write_bytes=%llu converted_elements=%llu parameter_binds=%llu parameter_syncs=%llu &quot;</span>
+<span id="C-L718" class="line"><a href="#C-L718"> 718</a>         &quot;commits=%llu rollbacks=%llu runs=%llu observation_syncs=%llu output_syncs=%llu &quot;</span>
+<span id="C-L719" class="line"><a href="#C-L719"> 719</a>         &quot;pack_total_ms=%.3f commit_total_ms=%.3f; observation avg/max=%.3f/%.3f ms &quot;</span>
+<span id="C-L720" class="line"><a href="#C-L720"> 720</a>         &quot;run_wait avg/max=%.3f/%.3f ms output avg/max=%.3f/%.3f ms&quot;,</span>
+<span id="C-L721" class="line"><a href="#C-L721"> 721</a>         phase, static_cast&lt;unsigned long long&gt;(stats.context_initializations),</span>
+<span id="C-L722" class="line"><a href="#C-L722"> 722</a>         static_cast&lt;unsigned long long&gt;(stats.allocated_bytes), static_cast&lt;unsigned long long&gt;(stats.layout_bytes),</span>
+<span id="C-L723" class="line"><a href="#C-L723"> 723</a>         static_cast&lt;unsigned long long&gt;(stats.parameter_prepares), static_cast&lt;unsigned long long&gt;(stats.parameter_write_bytes),</span>
+<span id="C-L724" class="line"><a href="#C-L724"> 724</a>         static_cast&lt;unsigned long long&gt;(stats.parameter_converted_elements),</span>
+<span id="C-L725" class="line"><a href="#C-L725"> 725</a>         static_cast&lt;unsigned long long&gt;(stats.parameter_bind_calls), static_cast&lt;unsigned long long&gt;(stats.parameter_sync_calls),</span>
+<span id="C-L726" class="line"><a href="#C-L726"> 726</a>         static_cast&lt;unsigned long long&gt;(stats.commits), static_cast&lt;unsigned long long&gt;(stats.rollbacks),</span>
+<span id="C-L727" class="line"><a href="#C-L727"> 727</a>         static_cast&lt;unsigned long long&gt;(stats.runs), static_cast&lt;unsigned long long&gt;(stats.observation_sync_calls),</span>
+<span id="C-L728" class="line"><a href="#C-L728"> 728</a>         static_cast&lt;unsigned long long&gt;(stats.output_sync_calls), stats.pack_ms, stats.commit_ms,</span>
+<span id="C-L729" class="line"><a href="#C-L729"> 729</a>         stats.observation_ms / runs, stats.observation_max_ms, stats.execution_ms / runs, stats.execution_max_ms,</span>
+<span id="C-L730" class="line"><a href="#C-L730"> 730</a>         stats.output_ms / runs, stats.output_max_ms);</span>
+<span id="C-L731" class="line"><a href="#C-L731"> 731</a>     RCLCPP_INFO(node_-&gt;get_logger(),</span>
+<span id="C-L732" class="line"><a href="#C-L732"> 732</a>         &quot;WBC resident startup SDK memory: query_ret=%d weight_bytes=%llu internal_bytes=%llu dma_bytes=%llu &quot;</span>
+<span id="C-L733" class="line"><a href="#C-L733"> 733</a>         &quot;(SDK DMA may include persistent I/O; do not add these totals)&quot;,</span>
+<span id="C-L734" class="line"><a href="#C-L734"> 734</a>         stats.sdk_memory_query, static_cast&lt;unsigned long long&gt;(stats.sdk_weight_bytes),</span>
+<span id="C-L735" class="line"><a href="#C-L735"> 735</a>         static_cast&lt;unsigned long long&gt;(stats.sdk_internal_bytes), static_cast&lt;unsigned long long&gt;(stats.sdk_dma_bytes));</span>
+<span id="C-L736" class="line"><a href="#C-L736"> 736</a>   }</span>
+<span id="C-L737" class="line"><a href="#C-L737"> 737</a>   if (!current_ || timing_.samples == 0) return;</span>
+<span id="C-L738" class="line"><a href="#C-L738"> 738</a>   const double mean_ms = 1000.0 / static_cast&lt;double&gt;(timing_.samples);</span>
+<span id="C-L739" class="line"><a href="#C-L739"> 739</a>   RCLCPP_INFO(node_-&gt;get_logger(),</span>
+<span id="C-L740" class="line"><a href="#C-L740"> 740</a>               &quot;WBC timing %s [%s]: samples=%llu, timeouts=%llu; &quot;</span>
+<span id="C-L741" class="line"><a href="#C-L741"> 741</a>               &quot;reference avg/max=%.3f/%.3f ms, policy avg/max=%.3f/%.3f ms, cycle avg/max=%.3f/%.3f ms&quot;,</span>
+<span id="C-L742" class="line"><a href="#C-L742"> 742</a>               current_-&gt;motion_id_.c_str(), phase,</span>
+<span id="C-L743" class="line"><a href="#C-L743"> 743</a>               static_cast&lt;unsigned long long&gt;(timing_.samples), static_cast&lt;unsigned long long&gt;(timing_.timeouts),</span>
+<span id="C-L744" class="line"><a href="#C-L744"> 744</a>               timing_.reference_total * mean_ms, timing_.reference_max * 1000.0,</span>
+<span id="C-L745" class="line"><a href="#C-L745"> 745</a>               timing_.policy_total * mean_ms, timing_.policy_max * 1000.0,</span>
+<span id="C-L746" class="line"><a href="#C-L746"> 746</a>               timing_.cycle_total * mean_ms, timing_.cycle_max * 1000.0);</span>
+<span id="C-L747" class="line"><a href="#C-L747"> 747</a>   const auto percentile = [&amp;](const std::array&lt;uint64_t, 1001&gt;&amp; histogram, double fraction) {</span>
+<span id="C-L748" class="line"><a href="#C-L748"> 748</a>     const auto rank = static_cast&lt;uint64_t&gt;(std::ceil(fraction * static_cast&lt;double&gt;(timing_.samples)));</span>
+<span id="C-L749" class="line"><a href="#C-L749"> 749</a>     uint64_t cumulative = 0;</span>
+<span id="C-L750" class="line"><a href="#C-L750"> 750</a>     for (std::size_t i = 0; i &lt; histogram.size(); ++i) {</span>
+<span id="C-L751" class="line"><a href="#C-L751"> 751</a>       cumulative += histogram[i];</span>
+<span id="C-L752" class="line"><a href="#C-L752"> 752</a>       if (cumulative &gt;= rank)</span>
+<span id="C-L753" class="line"><a href="#C-L753"> 753</a>         return i == histogram.size() - 1 ? std::numeric_limits&lt;double&gt;::infinity() : (i + 1) * 0.1;</span>
+<span id="C-L754" class="line"><a href="#C-L754"> 754</a>     }</span>
+<span id="C-L755" class="line"><a href="#C-L755"> 755</a>     return std::numeric_limits&lt;double&gt;::infinity();</span>
+<span id="C-L756" class="line"><a href="#C-L756"> 756</a>   };</span>
+<span id="C-L757" class="line"><a href="#C-L757"> 757</a>   RCLCPP_INFO(node_-&gt;get_logger(),</span>
+<span id="C-L758" class="line"><a href="#C-L758"> 758</a>       &quot;WBC timing %s [%s]: histogram P95/P99 upper bounds (0.1 ms bins, inf means &gt;=100 ms): &quot;</span>
+<span id="C-L759" class="line"><a href="#C-L759"> 759</a>       &quot;reference=%.1f/%.1f policy=%.1f/%.1f cycle=%.1f/%.1f ms&quot;,</span>
+<span id="C-L760" class="line"><a href="#C-L760"> 760</a>       current_-&gt;motion_id_.c_str(), phase,</span>
+<span id="C-L761" class="line"><a href="#C-L761"> 761</a>       percentile(timing_.reference_hist, .95), percentile(timing_.reference_hist, .99),</span>
+<span id="C-L762" class="line"><a href="#C-L762"> 762</a>       percentile(timing_.policy_hist, .95), percentile(timing_.policy_hist, .99),</span>
+<span id="C-L763" class="line"><a href="#C-L763"> 763</a>       percentile(timing_.cycle_hist, .95), percentile(timing_.cycle_hist, .99));</span>
+<span id="C-L764" class="line"><a href="#C-L764"> 764</a> }</span>
+<span id="C-L765" class="line"><a href="#C-L765"> 765</a> </span>
+<span id="C-L766" class="line"><a href="#C-L766"> 766</a> void RLWbc::stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) {</span>
+<span id="C-L767" class="line"><a href="#C-L767"> 767</a>   const int64_t stamp_ns = rclcpp::Time(msg-&gt;header.stamp).nanoseconds();</span>
+<span id="C-L768" class="line"><a href="#C-L768"> 768</a>   const double age = (node_-&gt;now().nanoseconds() - stamp_ns) * 1e-9;</span>
+<span id="C-L769" class="line"><a href="#C-L769"> 769</a>   const bool valid = validatePolicyObservation(*msg, joint_names_, &quot;WBC&quot;);</span>
+<span id="C-L770" class="line"><a href="#C-L770"> 770</a>   std::lock_guard&lt;std::mutex&gt; lock(observation_mutex_);</span>
+<span id="C-L771" class="line"><a href="#C-L771"> 771</a>   if (!valid || stamp_ns &lt;= 0 || age &lt; 0.0 || age &gt; sensor_timeout_sec_ ||</span>
+<span id="C-L772" class="line"><a href="#C-L772"> 772</a>       (observation_received_ &amp;&amp; stamp_ns &lt;= observation_stamp_ns_))</span>
+<span id="C-L773" class="line"><a href="#C-L773"> 773</a>   {</span>
+<span id="C-L774" class="line"><a href="#C-L774"> 774</a>     observation_received_ = false;</span>
+<span id="C-L775" class="line"><a href="#C-L775"> 775</a>     return;</span>
+<span id="C-L776" class="line"><a href="#C-L776"> 776</a>   }</span>
+<span id="C-L777" class="line"><a href="#C-L777"> 777</a>   policy_observation_ = *msg;</span>
+<span id="C-L778" class="line"><a href="#C-L778"> 778</a>   observation_received_at_ = std::chrono::steady_clock::now();</span>
+<span id="C-L779" class="line"><a href="#C-L779"> 779</a>   observation_stamp_ns_ = stamp_ns;</span>
+<span id="C-L780" class="line"><a href="#C-L780"> 780</a>   observation_received_ = true;</span>
+<span id="C-L781" class="line"><a href="#C-L781"> 781</a> }</span>
+<span id="C-L782" class="line"><a href="#C-L782"> 782</a> </span>
+<span id="C-L783" class="line"><a href="#C-L783"> 783</a> void RLWbc::publishDone(bool success, const char* reason) {</span>
+<span id="C-L784" class="line"><a href="#C-L784"> 784</a>   if (done_published_) return;</span>
+<span id="C-L785" class="line"><a href="#C-L785"> 785</a>   done_published_ = true;</span>
+<span id="C-L786" class="line"><a href="#C-L786"> 786</a>   logTiming(reason);</span>
+<span id="C-L787" class="line"><a href="#C-L787"> 787</a>   std_msgs::msg::Bool done;</span>
+<span id="C-L788" class="line"><a href="#C-L788"> 788</a>   done.data = success;</span>
+<span id="C-L789" class="line"><a href="#C-L789"> 789</a>   done_pub_-&gt;publish(done);</span>
+<span id="C-L790" class="line"><a href="#C-L790"> 790</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC motion &#x27;%s&#x27; stopped: %s&quot;, current_-&gt;motion_id_.c_str(), reason);</span>
+<span id="C-L791" class="line"><a href="#C-L791"> 791</a> }</span>
+<span id="C-L792" class="line"><a href="#C-L792"> 792</a> </span>
+<span id="C-L793" class="line"><a href="#C-L793"> 793</a> void RLWbc::runLoop() {</span>
+<span id="C-L794" class="line"><a href="#C-L794"> 794</a>   rclcpp::WallRate rate(50.0);</span>
+<span id="C-L795" class="line"><a href="#C-L795"> 795</a>   while (loop_running_.load() &amp;&amp; rclcpp::ok())</span>
+<span id="C-L796" class="line"><a href="#C-L796"> 796</a>   {</span>
+<span id="C-L797" class="line"><a href="#C-L797"> 797</a>     {</span>
+<span id="C-L798" class="line"><a href="#C-L798"> 798</a>       std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="C-L799" class="line"><a href="#C-L799"> 799</a>       if (active_)</span>
+<span id="C-L800" class="line"><a href="#C-L800"> 800</a>       {</span>
+<span id="C-L801" class="line"><a href="#C-L801"> 801</a>         const double elapsed = std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - motion_start_).count();</span>
+<span id="C-L802" class="line"><a href="#C-L802"> 802</a>         const double duration = current_-&gt;start_hold_sec_ + current_-&gt;reference_num_frames_ * current_-&gt;control_dt_;</span>
+<span id="C-L803" class="line"><a href="#C-L803"> 803</a>         RobotFrame current_frame;</span>
+<span id="C-L804" class="line"><a href="#C-L804"> 804</a>         std::string state_error;</span>
+<span id="C-L805" class="line"><a href="#C-L805"> 805</a>         if (!captureFrame(current_frame, nullptr, state_error))</span>
+<span id="C-L806" class="line"><a href="#C-L806"> 806</a>         {</span>
+<span id="C-L807" class="line"><a href="#C-L807"> 807</a>           active_ = false;</span>
+<span id="C-L808" class="line"><a href="#C-L808"> 808</a>           publishDone(false, state_error.c_str());</span>
+<span id="C-L809" class="line"><a href="#C-L809"> 809</a>         }</span>
+<span id="C-L810" class="line"><a href="#C-L810"> 810</a>         else if (elapsed &gt;= duration)</span>
+<span id="C-L811" class="line"><a href="#C-L811"> 811</a>         {</span>
+<span id="C-L812" class="line"><a href="#C-L812"> 812</a>           active_ = false;</span>
+<span id="C-L813" class="line"><a href="#C-L813"> 813</a>           publishDone(true, &quot;completed&quot;);</span>
+<span id="C-L814" class="line"><a href="#C-L814"> 814</a>         }</span>
+<span id="C-L815" class="line"><a href="#C-L815"> 815</a>         else</span>
+<span id="C-L816" class="line"><a href="#C-L816"> 816</a>         {</span>
+<span id="C-L817" class="line"><a href="#C-L817"> 817</a>           std::string error;</span>
+<span id="C-L818" class="line"><a href="#C-L818"> 818</a>           if (!inferAndPublish(elapsed, true, error))</span>
+<span id="C-L819" class="line"><a href="#C-L819"> 819</a>           {</span>
+<span id="C-L820" class="line"><a href="#C-L820"> 820</a>             active_ = false;</span>
+<span id="C-L821" class="line"><a href="#C-L821"> 821</a>             RCLCPP_ERROR(node_-&gt;get_logger(), &quot;WBC inference failed: %s&quot;, error.c_str());</span>
+<span id="C-L822" class="line"><a href="#C-L822"> 822</a>             publishDone(false, &quot;runtime failure&quot;);</span>
+<span id="C-L823" class="line"><a href="#C-L823"> 823</a>           }</span>
+<span id="C-L824" class="line"><a href="#C-L824"> 824</a>         }</span>
+<span id="C-L825" class="line"><a href="#C-L825"> 825</a>       }</span>
+<span id="C-L826" class="line"><a href="#C-L826"> 826</a>     }</span>
+<span id="C-L827" class="line"><a href="#C-L827"> 827</a>     rate.sleep();</span>
+<span id="C-L828" class="line"><a href="#C-L828"> 828</a>   }</span>
+<span id="C-L829" class="line"><a href="#C-L829"> 829</a> }</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &quot;rl_controller_wbc.h&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> </span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;algorithm&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;cmath&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;functional&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;set&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;stdexcept&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;utility&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> #include &quot;base/rl_controller_registrar.h&quot;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> namespace {</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> constexpr std::size_t kJointCount = 21;</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> constexpr std::size_t kPolicyInputSize = 399;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> constexpr std::size_t kCommandInputSize = 240;</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> constexpr std::size_t kReferenceBodyCount = 23;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> const std::array&lt;const char*, 6&gt; kReferenceOutputs =</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     {{&quot;joint_pos&quot;, &quot;joint_vel&quot;, &quot;body_pos_w&quot;, &quot;body_quat_w&quot;, &quot;body_lin_vel_w&quot;, &quot;body_ang_vel_w&quot;}};</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> const std::array&lt;std::size_t, 6&gt; kReferenceOutputSizes = {{21, 21, 69, 92, 69, 69}};</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> std::string parentPath(const std::string&amp; path) {</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   const std::size_t slash = path.find_last_of(&#x27;/&#x27;);</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   return slash == std::string::npos ? std::string(&quot;.&quot;) : path.substr(0, slash);</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> }</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> </span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> std::string joinPath(const std::string&amp; base, const std::string&amp; child) {</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   if (child.empty() || child.front() == &#x27;/&#x27;) return child;</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>   return base + &quot;/&quot; + child;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a> }</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> bool finiteVector(const std::vector&lt;float&gt;&amp; values) {</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   return std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); });</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a> }</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a> </span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> std::array&lt;double, 4&gt; normalize(const std::array&lt;double, 4&gt;&amp; q) {</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   if (!std::isfinite(norm) || norm &lt; 1e-9) throw std::runtime_error(&quot;invalid robot orientation quaternion&quot;);</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>   return {{q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm}};</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> }</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> </span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> std::array&lt;double, 4&gt; conjugate(const std::array&lt;double, 4&gt;&amp; q) { return {{q[0], -q[1], -q[2], -q[3]}}; }</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> </span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a> std::array&lt;double, 4&gt; multiply(const std::array&lt;double, 4&gt;&amp; a, const std::array&lt;double, 4&gt;&amp; b) {</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   return {{a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>            a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>            a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]}};</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a> }</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a> </span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a> std::array&lt;double, 3&gt; rotateInverse(const std::array&lt;double, 4&gt;&amp; orientation, const std::array&lt;double, 3&gt;&amp; vector) {</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>   const auto q = normalize(orientation);</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>   const auto rotated = multiply(multiply(conjugate(q), {{0.0, vector[0], vector[1], vector[2]}}), q);</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   return {{rotated[1], rotated[2], rotated[3]}};</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a> }</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a> </span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a> std::array&lt;double, 4&gt; yawQuaternion(const std::array&lt;double, 4&gt;&amp; orientation) {</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>   const auto q = normalize(orientation);</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>   const double yaw = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3]));</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>   return {{std::cos(yaw * 0.5), 0.0, 0.0, std::sin(yaw * 0.5)}};</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a> }</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a> </span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a> void appendRotationFirstTwoRows(const std::array&lt;double, 4&gt;&amp; input, std::vector&lt;float&gt;&amp; out) {</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>   const auto q = normalize(input);</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>   const double w = q[0], x = q[1], y = q[2], z = q[3];</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>   out.push_back(static_cast&lt;float&gt;(1.0 - 2.0 * (y * y + z * z)));</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * y - z * w)));</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * z + y * w)));</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (x * y + z * w)));</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>   out.push_back(static_cast&lt;float&gt;(1.0 - 2.0 * (x * x + z * z)));</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   out.push_back(static_cast&lt;float&gt;(2.0 * (y * z - x * w)));</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a> }</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a> </span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a> RLControllerRegistrar registrar_wbc(&quot;rl_wbc&quot;, [](rclcpp::Node::SharedPtr node) {</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>   return std::unique_ptr&lt;ControllerType&gt;(new RLWbc(std::move(node)));</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a> });</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a> </span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a> }  // namespace</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a> </span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a> std::string RLWbc::rlCmdPublishTopic() const { return &quot;control/policy/command/wbc&quot;; }</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a> </span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a> RLWbc::RLWbc(rclcpp::Node::SharedPtr node) : BaseRLController(node), node_(std::move(node)) {</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>   if (!node_-&gt;get_parameter(&quot;robot_cfg_path&quot;, robot_cfg_path_) || robot_cfg_path_.empty())</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>     throw std::runtime_error(&quot;Required parameter &#x27;robot_cfg_path&#x27; not found&quot;);</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   config_dir_ = parentPath(robot_cfg_path_);</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>   loadConfig(robot_cfg_path_);</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   if (!readDeployParams(deploy_params_)) throw std::runtime_error(&quot;Failed to read WBC deployment parameters&quot;);</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>   if (!node_-&gt;has_parameter(&quot;sensor_timeout&quot;)) node_-&gt;declare_parameter(&quot;sensor_timeout&quot;, 0.1);</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   node_-&gt;get_parameter(&quot;sensor_timeout&quot;, sensor_timeout_sec_);</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>   if (!std::isfinite(sensor_timeout_sec_) || sensor_timeout_sec_ &lt;= 0.0)</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>     throw std::runtime_error(&quot;sensor_timeout must be finite and positive&quot;);</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>   initBaseTopic(node_);</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>   posCmd_.source_id = &quot;wbc&quot;;</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   posCmd_.joint_names.assign(joint_names_.begin(), joint_names_.end());</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   initializeModel();</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a> </span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>   done_pub_ = node_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;control/policy/wbc/done&quot;, rclcpp::QoS(10));</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   active_sub_ = node_-&gt;create_subscription&lt;std_msgs::msg::Bool&gt;(</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>       &quot;control/policy/wbc/active&quot;, rclcpp::QoS(1).reliable().transient_local(),</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>       std::bind(&amp;RLWbc::activeCallback, this, std::placeholders::_1));</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   prepare_service_ = node_-&gt;create_service&lt;luvbot_control_interfaces::srv::ControlWbcMotion&gt;(</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>       &quot;control/policy/wbc/prepare&quot;,</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>       std::bind(&amp;RLWbc::prepareCallback, this, std::placeholders::_1, std::placeholders::_2));</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a> </span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>   loop_thread_ = std::thread(&amp;RLWbc::runLoop, this);</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>   if (deploy_params_.set_realtime_priority)</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>   {</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>     sched_param scheduler{};</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>     scheduler.sched_priority = deploy_params_.thread_priority;</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>     const int policy = getSchedulerPolicy(deploy_params_.thread_scheduling_method);</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>     if (pthread_setschedparam(loop_thread_.native_handle(), policy, &amp;scheduler) != 0)</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>       RCLCPP_WARN(node_-&gt;get_logger(), &quot;WBC: failed to set realtime priority&quot;);</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>     else</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>       printThreadSchedulerInfo(loop_thread_.native_handle(), &quot;WBC&quot;);</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   }</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC worker ready: 50 Hz, motion=%s, %d reference frames, dual RKNN&quot;,</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>               motion_id_.c_str(), reference_num_frames_);</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a> }</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a> </span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a> RLWbc::~RLWbc() {</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>   loop_running_.store(false);</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>   if (loop_thread_.joinable()) loop_thread_.join();</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> }</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a> </span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a> void RLWbc::loadConfig(const std::string&amp; path) {</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>   const YAML::Node root = YAML::LoadFile(path);</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>   const YAML::Node robot = root[&quot;RobotCfg&quot;];</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>   const YAML::Node wbc = root[&quot;WbcCfg&quot;];</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>   requireNode(robot, &quot;RobotCfg&quot;);</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>   requireNode(wbc, &quot;WbcCfg&quot;);</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>   joint_names_ = asStringList(robot[&quot;joint_order_mj&quot;], &quot;RobotCfg.joint_order_mj&quot;);</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>   const auto defaults = asDoubleList(robot[&quot;default_joint_angles&quot;], &quot;RobotCfg.default_joint_angles&quot;);</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>   const auto scales = asDoubleList(robot[&quot;action_scale&quot;], &quot;RobotCfg.action_scale&quot;);</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>   if (joint_names_.size() != kJointCount || defaults.size() != kJointCount || scales.size() != kJointCount)</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     throw std::runtime_error(&quot;WBC joint/default/action_scale arrays must each contain 21 values&quot;);</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>   if (std::set&lt;std::string&gt;(joint_names_.begin(), joint_names_.end()).size() != joint_names_.size())</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>     throw std::runtime_error(&quot;WBC policy joint names must be unique&quot;);</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   default_joint_positions_.assign(defaults.begin(), defaults.end());</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>   action_scale_.assign(scales.begin(), scales.end());</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>   if (!finiteVector(default_joint_positions_) || !finiteVector(action_scale_) ||</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>       std::any_of(action_scale_.begin(), action_scale_.end(), [](float value) { return value &lt;= 0.0f; }))</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>     throw std::runtime_error(&quot;WBC defaults must be finite and action scales finite and positive&quot;);</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a> </span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>   clip_actions_ = robot[&quot;clip_actions&quot;].as&lt;float&gt;();</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>   control_dt_ = wbc[&quot;control_dt&quot;].as&lt;double&gt;();</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>   start_hold_sec_ = wbc[&quot;start_hold_sec&quot;].as&lt;double&gt;();</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>   history_steps_ = wbc[&quot;history_steps&quot;].as&lt;std::vector&lt;int&gt;&gt;();</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>   future_steps_ = wbc[&quot;future_steps&quot;].as&lt;std::vector&lt;int&gt;&gt;();</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>   previous_action_steps_ = wbc[&quot;previous_action_steps&quot;].as&lt;int&gt;();</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>   policy_input_name_ = wbc[&quot;policy_input_name&quot;].as&lt;std::string&gt;();</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>   command_input_name_ = wbc[&quot;command_input_name&quot;].as&lt;std::string&gt;();</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>   output_name_ = wbc[&quot;output_name&quot;].as&lt;std::string&gt;();</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>   if (!std::isfinite(control_dt_) || !std::isfinite(start_hold_sec_) || !std::isfinite(clip_actions_) ||</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>       std::abs(control_dt_ - 0.02) &gt; 1e-9 || start_hold_sec_ &lt; 0.0 || clip_actions_ &lt;= 0.0f ||</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>       robot[&quot;policy_frequency&quot;].as&lt;int&gt;() != 50 || robot[&quot;num_actions&quot;].as&lt;int&gt;() != 21 ||</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>       policy_input_name_ != &quot;policy&quot; || (command_input_name_ != &quot;command_short&quot; &amp;&amp; command_input_name_ != &quot;command&quot;) ||</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>       output_name_ != &quot;action&quot; ||</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>       history_steps_ != std::vector&lt;int&gt;({0, 1, 2, 3, 4, 8, 16}) ||</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>       future_steps_ != std::vector&lt;int&gt;({-8, -4, -2, 0, 1, 2, 3, 4}) || previous_action_steps_ != 3)</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>     throw std::runtime_error(&quot;WBC config does not match the exported 399/240 model ABI&quot;);</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a> </span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>   motion_id_ = wbc[&quot;motion_id&quot;].as&lt;std::string&gt;();</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>   if (motion_id_.empty() || motion_id_.size() &gt; 32 ||</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>       !std::all_of(motion_id_.begin(), motion_id_.end(), [](char c) {</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>         return (c &gt;= &#x27;A&#x27; &amp;&amp; c &lt;= &#x27;Z&#x27;) || (c &gt;= &#x27;a&#x27; &amp;&amp; c &lt;= &#x27;z&#x27;) || (c &gt;= &#x27;0&#x27; &amp;&amp; c &lt;= &#x27;9&#x27;) || c == &#x27;-&#x27; || c == &#x27;_&#x27;;</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>       }))</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>     throw std::runtime_error(&quot;Invalid WBC motion id&quot;);</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>   reference_num_frames_ = wbc[&quot;reference_num_frames&quot;].as&lt;int&gt;();</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>   reference_root_body_index_ = wbc[&quot;reference_root_body_index&quot;].as&lt;int&gt;();</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>   if (reference_num_frames_ &lt;= 0 || reference_num_frames_ &gt; 100000 || reference_root_body_index_ &lt; 0 ||</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>       reference_root_body_index_ &gt;= static_cast&lt;int&gt;(kReferenceBodyCount))</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>     throw std::runtime_error(&quot;Invalid WBC reference frame count or root body index&quot;);</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a> }</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a> </span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a> void RLWbc::initializeModel() {</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>   model_ = std::make_unique&lt;RknnModel&gt;(rknnModelPath(joinPath(config_dir_, &quot;policy.onnx&quot;)));</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>   if (model_-&gt;inputCount() != 2 || model_-&gt;outputCount() != 1)</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     throw std::runtime_error(&quot;WBC RKNN model must have exactly two inputs and exactly one output&quot;);</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>   policy_input_index_ = model_-&gt;inputIndex(policy_input_name_);</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>   command_input_index_ = model_-&gt;inputIndex(command_input_name_);</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>   if (command_input_index_ &lt; 0)</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>     command_input_index_ = model_-&gt;inputIndex(command_input_name_ == &quot;command_short&quot; ? &quot;command&quot; : &quot;command_short&quot;);</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>   output_index_ = model_-&gt;outputIndex(output_name_);</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>   if (policy_input_index_ &lt; 0 || command_input_index_ &lt; 0 || policy_input_index_ == command_input_index_ || output_index_ &lt; 0)</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>     throw std::runtime_error(&quot;WBC RKNN input/output names do not match policy, command_short, action&quot;);</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>   if (model_-&gt;inputElements(policy_input_index_) != kPolicyInputSize ||</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>       model_-&gt;inputElements(command_input_index_) != kCommandInputSize ||</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>       model_-&gt;outputElements(output_index_) != kJointCount)</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>     throw std::runtime_error(&quot;WBC RKNN tensor sizes do not match policy[399], command_short[240], action[21]&quot;);</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a> </span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>   reference_model_ = std::make_unique&lt;RknnModel&gt;(rknnModelPath(joinPath(config_dir_, &quot;reference_motion.onnx&quot;)));</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>   if (reference_model_-&gt;inputCount() != 1 || reference_model_-&gt;inputIndex(&quot;time_step&quot;) != 0 ||</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>       reference_model_-&gt;inputElements() != 1 || reference_model_-&gt;outputCount() != kReferenceOutputs.size())</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>     throw std::runtime_error(&quot;WBC reference RKNN must have time_step[1,1] and six reference outputs&quot;);</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>   for (std::size_t i = 0; i &lt; kReferenceOutputs.size(); ++i)</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>   {</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>     const int index = reference_model_-&gt;outputIndex(kReferenceOutputs[i]);</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>     if (index &lt; 0 || reference_model_-&gt;outputElements(index) != kReferenceOutputSizes[i])</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>       throw std::runtime_error(std::string(&quot;WBC reference RKNN output size/name mismatch: &quot;) + kReferenceOutputs[i]);</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>     reference_output_indices_[i] = index;</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>   }</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a> }</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a> </span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a> bool RLWbc::captureFrame(RobotFrame&amp; frame, std::array&lt;double, 4&gt;* orientation_wxyz, std::string&amp; error,</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>                          int64_t* observation_stamp) {</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>   luvbot_control_interfaces::msg::PolicyObservation sensor;</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>   {</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>     std::lock_guard&lt;std::mutex&gt; lock(observation_mutex_);</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>     const double age =</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>         std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - observation_received_at_).count();</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>     const double stamp_age = (node_-&gt;now().nanoseconds() - observation_stamp_ns_) * 1e-9;</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>     if (!observation_received_ || age &gt; sensor_timeout_sec_ || stamp_age &lt; 0.0 || stamp_age &gt; sensor_timeout_sec_ ||</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>         !policy_observation_.inference_enabled)</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>     {</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>       error = &quot;fresh, inference-enabled PolicyObservation is required&quot;;</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>       return false;</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>     }</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>     sensor = policy_observation_;</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>     if (observation_stamp) *observation_stamp = observation_stamp_ns_;</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>   }</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>   try</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>   {</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>     const std::array&lt;double, 4&gt; orientation = normalize(</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>         {{sensor.imu.orientation.w, sensor.imu.orientation.x, sensor.imu.orientation.y, sensor.imu.orientation.z}});</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>     const auto gravity = rotateInverse(orientation, {{0.0, 0.0, -1.0}});</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>     const double angular_velocity[] = {sensor.imu.angular_velocity.x, sensor.imu.angular_velocity.y,</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>                                        sensor.imu.angular_velocity.z};</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>     for (std::size_t i = 0; i &lt; 3; ++i)</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>     {</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>       frame.angular_velocity[i] = static_cast&lt;float&gt;(angular_velocity[i]);</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>       frame.projected_gravity[i] = static_cast&lt;float&gt;(gravity[i]);</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>     }</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>     frame.joint_position.resize(kJointCount);</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>     frame.joint_velocity.resize(kJointCount);</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>     for (std::size_t i = 0; i &lt; kJointCount; ++i)</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>     {</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>       frame.joint_position[i] = static_cast&lt;float&gt;(sensor.joints.position[i]) - default_joint_positions_[i];</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>       frame.joint_velocity[i] = static_cast&lt;float&gt;(sensor.joints.velocity[i]);</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>     }</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>     if (orientation_wxyz) *orientation_wxyz = orientation;</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>   } catch (const std::exception&amp; exception)</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>   {</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>     error = exception.what();</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>     return false;</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>   }</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>   if (!finiteVector(frame.joint_position) || !finiteVector(frame.joint_velocity))</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>   {</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>     error = &quot;non-finite WBC sensor input&quot;;</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>     return false;</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>   }</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>   return true;</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a> }</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a> </span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a> RLWbc::ReferenceFrame RLWbc::inferReferenceFrame(int index) {</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>   const float time_step = static_cast&lt;float&gt;(std::max(0, std::min(index, reference_num_frames_ - 1)));</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>   if (!reference_model_-&gt;run(&amp;time_step, 1))</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>     throw std::runtime_error(&quot;WBC reference RKNN inference failed: &quot; + reference_model_-&gt;lastError());</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>   ReferenceFrame frame;</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>   frame.joint_position = reference_model_-&gt;output(reference_output_indices_[0]);</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>   const auto&amp; positions = reference_model_-&gt;output(reference_output_indices_[2]);</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>   const auto&amp; orientations = reference_model_-&gt;output(reference_output_indices_[3]);</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a>   for (std::size_t i = 0; i &lt; 3; ++i) frame.root_position[i] = positions[reference_root_body_index_ * 3 + i];</span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>   double norm_squared = 0.0;</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a>   for (std::size_t i = 0; i &lt; 4; ++i)</span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a>   {</span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a>     frame.root_orientation[i] = orientations[reference_root_body_index_ * 4 + i];</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>     norm_squared += frame.root_orientation[i] * frame.root_orientation[i];</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>   }</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>   if (!std::isfinite(norm_squared) || std::abs(norm_squared - 1.0) &gt; 0.1)</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>     throw std::runtime_error(&quot;WBC reference RKNN returned an invalid root quaternion&quot;);</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>   frame.root_orientation = normalize(frame.root_orientation);</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>   return frame;</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a> }</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a> </span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a> std::vector&lt;float&gt; RLWbc::makePolicyInput() const {</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>   std::vector&lt;float&gt; input;</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>   input.reserve(kPolicyInputSize);</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>   for (int field = 0; field &lt; 4; ++field)</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>   {</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>     for (int offset : history_steps_)</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>     {</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a>       const RobotFrame&amp; frame = state_history_.at(static_cast&lt;std::size_t&gt;(offset));</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>       if (field == 0)</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>         input.insert(input.end(), frame.angular_velocity.begin(), frame.angular_velocity.end());</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>       else if (field == 1)</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>         input.insert(input.end(), frame.projected_gravity.begin(), frame.projected_gravity.end());</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>       else if (field == 2)</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>         input.insert(input.end(), frame.joint_position.begin(), frame.joint_position.end());</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>       else</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>         input.insert(input.end(), frame.joint_velocity.begin(), frame.joint_velocity.end());</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>     }</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>   }</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>   for (const auto&amp; action : action_history_) input.insert(input.end(), action.begin(), action.end());</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>   if (input.size() != kPolicyInputSize) throw std::runtime_error(&quot;constructed WBC policy input is not 399 elements&quot;);</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>   return input;</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a> }</span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a> </span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a> std::vector&lt;float&gt; RLWbc::makeCommandInput(const std::array&lt;double, 4&gt;&amp; robot_orientation, int reference_index,</span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>                                          bool reset_anchor) {</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>   std::vector&lt;int&gt; indices;</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a>   std::vector&lt;ReferenceFrame&gt; references;</span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a>   indices.reserve(future_steps_.size());</span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a>   references.reserve(future_steps_.size());</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>   for (int offset : future_steps_)</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>   {</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>     const int index = std::max(0, std::min(reference_index + offset, reference_num_frames_ - 1));</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a>     const auto previous = std::find(indices.begin(), indices.end(), index);</span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a>     // Reuse only duplicate clamped frames within this control cycle.</span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>     if (previous == indices.end())</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>       references.push_back(inferReferenceFrame(index));</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a>     else</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a>       references.push_back(references[static_cast&lt;std::size_t&gt;(previous - indices.begin())]);</span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a>     indices.push_back(index);</span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>   }</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>   std::vector&lt;float&gt; input;</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a>   input.reserve(kCommandInputSize);</span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>   const auto&amp; current = references[3];  // future_steps[3] is the current reference frame.</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>   if (reset_anchor)</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a>     yaw_anchor_wxyz_ = multiply(yawQuaternion(robot_orientation), conjugate(yawQuaternion(current.root_orientation)));</span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a>   const auto reference_yaw = yawQuaternion(current.root_orientation);</span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a>   // Signal-major layout: 8 positions, 8 rotation matrices&#x27; first two rows, 8 joint vectors.</span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a>   for (const auto&amp; future : references)</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>   {</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a>     const auto local = rotateInverse(reference_yaw,</span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>         {{future.root_position[0] - current.root_position[0],</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>           future.root_position[1] - current.root_position[1], future.root_position[2]}});</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>     for (double value : local) input.push_back(static_cast&lt;float&gt;(value));</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>   }</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a>   const auto robot_inverse = conjugate(normalize(robot_orientation));</span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a>   for (const auto&amp; future : references)</span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>   {</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a>     appendRotationFirstTwoRows(multiply(multiply(robot_inverse, yaw_anchor_wxyz_), future.root_orientation), input);</span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>   }</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a>   for (const auto&amp; future : references)</span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>   {</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>     const auto&amp; joints = future.joint_position;</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>     input.insert(input.end(), joints.begin(), joints.end());</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a>   }</span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a>   if (input.size() != kCommandInputSize) throw std::runtime_error(&quot;constructed WBC command input is not 240 elements&quot;);</span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a>   return input;</span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a> }</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a> </span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a> bool RLWbc::inferAndPublish(double elapsed_sec, bool commit_action, std::string&amp; error) {</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>   const auto inference_started = std::chrono::steady_clock::now();</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>   RobotFrame frame;</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a>   std::array&lt;double, 4&gt; orientation;</span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a>   int64_t input_stamp = 0;</span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>   if (!captureFrame(frame, &amp;orientation, error, &amp;input_stamp)) return false;</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>   state_history_.push_front(std::move(frame));</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a>   while (state_history_.size() &gt; 17) state_history_.pop_back();</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a> </span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a>   try</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>   {</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a>     const std::vector&lt;float&gt; policy_input = makePolicyInput();</span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a>     const int reference_index = std::min(reference_num_frames_ - 1,</span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a>         static_cast&lt;int&gt;(std::max(0.0, elapsed_sec - start_hold_sec_) / control_dt_));</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a>     const std::vector&lt;float&gt; command_input = makeCommandInput(orientation, reference_index, !commit_action);</span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a>     std::vector&lt;const float*&gt; inputs(model_-&gt;inputCount(), nullptr);</span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a>     std::vector&lt;std::size_t&gt; sizes(model_-&gt;inputCount(), 0);</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a>     inputs[policy_input_index_] = policy_input.data();</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a>     sizes[policy_input_index_] = policy_input.size();</span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>     inputs[command_input_index_] = command_input.data();</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>     sizes[command_input_index_] = command_input.size();</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>     if (!model_-&gt;run(inputs, sizes))</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>     {</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a>       error = model_-&gt;lastError();</span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a>       return false;</span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>     }</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>     auto action = model_-&gt;output(output_index_);</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a>     if (action.size() != kJointCount || !finiteVector(action))</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a>     {</span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a>       error = &quot;WBC policy returned an invalid action&quot;;</span>
+<span id="A-L374" class="line"><a href="#A-L374"> 374</a>       return false;</span>
+<span id="A-L375" class="line"><a href="#A-L375"> 375</a>     }</span>
+<span id="A-L376" class="line"><a href="#A-L376"> 376</a>     // Reject late results and observations invalidated during inference.</span>
+<span id="A-L377" class="line"><a href="#A-L377"> 377</a>     RobotFrame latest_frame;</span>
+<span id="A-L378" class="line"><a href="#A-L378"> 378</a>     if (!captureFrame(latest_frame, nullptr, error)) return false;</span>
+<span id="A-L379" class="line"><a href="#A-L379"> 379</a>     const double inference_sec =</span>
+<span id="A-L380" class="line"><a href="#A-L380"> 380</a>         std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - inference_started).count();</span>
+<span id="A-L381" class="line"><a href="#A-L381"> 381</a>     const double input_age = (node_-&gt;now().nanoseconds() - input_stamp) * 1e-9;</span>
+<span id="A-L382" class="line"><a href="#A-L382"> 382</a>     if (input_age &lt; 0.0 || input_age &gt; sensor_timeout_sec_ ||</span>
+<span id="A-L383" class="line"><a href="#A-L383"> 383</a>         inference_sec &gt; std::min(control_dt_, std::min(sensor_timeout_sec_, command_validity_ms_ / 1000.0)))</span>
+<span id="A-L384" class="line"><a href="#A-L384"> 384</a>     {</span>
+<span id="A-L385" class="line"><a href="#A-L385"> 385</a>       error = &quot;WBC inference exceeded command validity budget&quot;;</span>
+<span id="A-L386" class="line"><a href="#A-L386"> 386</a>       return false;</span>
+<span id="A-L387" class="line"><a href="#A-L387"> 387</a>     }</span>
+<span id="A-L388" class="line"><a href="#A-L388"> 388</a>     for (float&amp; value : action) value = std::max(-clip_actions_, std::min(value, clip_actions_));</span>
+<span id="A-L389" class="line"><a href="#A-L389"> 389</a>     posCmd_.target_positions.resize(kJointCount);</span>
+<span id="A-L390" class="line"><a href="#A-L390"> 390</a>     for (std::size_t i = 0; i &lt; kJointCount; ++i)</span>
+<span id="A-L391" class="line"><a href="#A-L391"> 391</a>       posCmd_.target_positions[i] = static_cast&lt;double&gt;(action[i]) * action_scale_[i] + default_joint_positions_[i];</span>
+<span id="A-L392" class="line"><a href="#A-L392"> 392</a>     publishPolicyCommand();</span>
+<span id="A-L393" class="line"><a href="#A-L393"> 393</a>     if (commit_action)</span>
+<span id="A-L394" class="line"><a href="#A-L394"> 394</a>     {</span>
+<span id="A-L395" class="line"><a href="#A-L395"> 395</a>       action_history_.push_front(action);</span>
+<span id="A-L396" class="line"><a href="#A-L396"> 396</a>       while (action_history_.size() &gt; static_cast&lt;std::size_t&gt;(previous_action_steps_)) action_history_.pop_back();</span>
+<span id="A-L397" class="line"><a href="#A-L397"> 397</a>     }</span>
+<span id="A-L398" class="line"><a href="#A-L398"> 398</a>     return true;</span>
+<span id="A-L399" class="line"><a href="#A-L399"> 399</a>   } catch (const std::exception&amp; exception)</span>
+<span id="A-L400" class="line"><a href="#A-L400"> 400</a>   {</span>
+<span id="A-L401" class="line"><a href="#A-L401"> 401</a>     error = exception.what();</span>
+<span id="A-L402" class="line"><a href="#A-L402"> 402</a>     return false;</span>
+<span id="A-L403" class="line"><a href="#A-L403"> 403</a>   }</span>
+<span id="A-L404" class="line"><a href="#A-L404"> 404</a> }</span>
+<span id="A-L405" class="line"><a href="#A-L405"> 405</a> </span>
+<span id="A-L406" class="line"><a href="#A-L406"> 406</a> void RLWbc::prepareCallback(const std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Request&gt; request,</span>
+<span id="A-L407" class="line"><a href="#A-L407"> 407</a>                             std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response) {</span>
+<span id="A-L408" class="line"><a href="#A-L408"> 408</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="A-L409" class="line"><a href="#A-L409"> 409</a>   response-&gt;motion_id = request-&gt;motion_id;</span>
+<span id="A-L410" class="line"><a href="#A-L410"> 410</a>   response-&gt;robot_cfg_path = robot_cfg_path_;</span>
+<span id="A-L411" class="line"><a href="#A-L411"> 411</a>   if (request-&gt;command == luvbot_control_interfaces::srv::ControlWbcMotion::Request::CANCEL)</span>
+<span id="A-L412" class="line"><a href="#A-L412"> 412</a>   {</span>
+<span id="A-L413" class="line"><a href="#A-L413"> 413</a>     active_ = false;</span>
+<span id="A-L414" class="line"><a href="#A-L414"> 414</a>     prepared_ = false;</span>
+<span id="A-L415" class="line"><a href="#A-L415"> 415</a>     response-&gt;success = true;</span>
+<span id="A-L416" class="line"><a href="#A-L416"> 416</a>     response-&gt;message = &quot;WBC motion cancelled&quot;;</span>
+<span id="A-L417" class="line"><a href="#A-L417"> 417</a>     return;</span>
+<span id="A-L418" class="line"><a href="#A-L418"> 418</a>   }</span>
+<span id="A-L419" class="line"><a href="#A-L419"> 419</a>   if (request-&gt;command != luvbot_control_interfaces::srv::ControlWbcMotion::Request::START)</span>
+<span id="A-L420" class="line"><a href="#A-L420"> 420</a>   {</span>
+<span id="A-L421" class="line"><a href="#A-L421"> 421</a>     response-&gt;message = &quot;unsupported WBC command&quot;;</span>
+<span id="A-L422" class="line"><a href="#A-L422"> 422</a>     return;</span>
+<span id="A-L423" class="line"><a href="#A-L423"> 423</a>   }</span>
+<span id="A-L424" class="line"><a href="#A-L424"> 424</a>   if (active_ || prepared_)</span>
+<span id="A-L425" class="line"><a href="#A-L425"> 425</a>   {</span>
+<span id="A-L426" class="line"><a href="#A-L426"> 426</a>     response-&gt;message = &quot;a WBC motion is already prepared or active&quot;;</span>
+<span id="A-L427" class="line"><a href="#A-L427"> 427</a>     return;</span>
+<span id="A-L428" class="line"><a href="#A-L428"> 428</a>   }</span>
+<span id="A-L429" class="line"><a href="#A-L429"> 429</a>   if (request-&gt;motion_id != motion_id_)</span>
+<span id="A-L430" class="line"><a href="#A-L430"> 430</a>   {</span>
+<span id="A-L431" class="line"><a href="#A-L431"> 431</a>     response-&gt;message = &quot;unknown WBC motion_id&quot;;</span>
+<span id="A-L432" class="line"><a href="#A-L432"> 432</a>     return;</span>
+<span id="A-L433" class="line"><a href="#A-L433"> 433</a>   }</span>
+<span id="A-L434" class="line"><a href="#A-L434"> 434</a>   RobotFrame initial_frame;</span>
+<span id="A-L435" class="line"><a href="#A-L435"> 435</a>   std::string error;</span>
+<span id="A-L436" class="line"><a href="#A-L436"> 436</a>   if (!captureFrame(initial_frame, nullptr, error))</span>
+<span id="A-L437" class="line"><a href="#A-L437"> 437</a>   {</span>
+<span id="A-L438" class="line"><a href="#A-L438"> 438</a>     response-&gt;message = &quot;cannot prepare WBC: &quot; + error;</span>
+<span id="A-L439" class="line"><a href="#A-L439"> 439</a>     return;</span>
+<span id="A-L440" class="line"><a href="#A-L440"> 440</a>   }</span>
+<span id="A-L441" class="line"><a href="#A-L441"> 441</a>   state_history_.assign(17, initial_frame);</span>
+<span id="A-L442" class="line"><a href="#A-L442"> 442</a>   action_history_.assign(static_cast&lt;std::size_t&gt;(previous_action_steps_), std::vector&lt;float&gt;(kJointCount, 0.0f));</span>
+<span id="A-L443" class="line"><a href="#A-L443"> 443</a>   done_published_ = false;</span>
+<span id="A-L444" class="line"><a href="#A-L444"> 444</a>   if (!inferAndPublish(0.0, false, error))</span>
+<span id="A-L445" class="line"><a href="#A-L445"> 445</a>   {</span>
+<span id="A-L446" class="line"><a href="#A-L446"> 446</a>     response-&gt;message = &quot;WBC pre-inference failed: &quot; + error;</span>
+<span id="A-L447" class="line"><a href="#A-L447"> 447</a>     return;</span>
+<span id="A-L448" class="line"><a href="#A-L448"> 448</a>   }</span>
+<span id="A-L449" class="line"><a href="#A-L449"> 449</a>   prepared_ = true;</span>
+<span id="A-L450" class="line"><a href="#A-L450"> 450</a>   response-&gt;success = true;</span>
+<span id="A-L451" class="line"><a href="#A-L451"> 451</a>   response-&gt;message = &quot;WBC motion prepared&quot;;</span>
+<span id="A-L452" class="line"><a href="#A-L452"> 452</a>   response-&gt;motion_id = motion_id_;</span>
+<span id="A-L453" class="line"><a href="#A-L453"> 453</a>   response-&gt;duration_sec = start_hold_sec_ + reference_num_frames_ * control_dt_;</span>
+<span id="A-L454" class="line"><a href="#A-L454"> 454</a> }</span>
+<span id="A-L455" class="line"><a href="#A-L455"> 455</a> </span>
+<span id="A-L456" class="line"><a href="#A-L456"> 456</a> void RLWbc::activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {</span>
+<span id="A-L457" class="line"><a href="#A-L457"> 457</a>   std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="A-L458" class="line"><a href="#A-L458"> 458</a>   if (!msg-&gt;data)</span>
+<span id="A-L459" class="line"><a href="#A-L459"> 459</a>   {</span>
+<span id="A-L460" class="line"><a href="#A-L460"> 460</a>     active_ = false;</span>
+<span id="A-L461" class="line"><a href="#A-L461"> 461</a>     prepared_ = false;</span>
+<span id="A-L462" class="line"><a href="#A-L462"> 462</a>     return;</span>
+<span id="A-L463" class="line"><a href="#A-L463"> 463</a>   }</span>
+<span id="A-L464" class="line"><a href="#A-L464"> 464</a>   if (!prepared_)</span>
+<span id="A-L465" class="line"><a href="#A-L465"> 465</a>   {</span>
+<span id="A-L466" class="line"><a href="#A-L466"> 466</a>     RCLCPP_ERROR(node_-&gt;get_logger(), &quot;Ignoring control/policy/wbc/active=true without a prepared motion&quot;);</span>
+<span id="A-L467" class="line"><a href="#A-L467"> 467</a>     return;</span>
+<span id="A-L468" class="line"><a href="#A-L468"> 468</a>   }</span>
+<span id="A-L469" class="line"><a href="#A-L469"> 469</a>   motion_start_ = std::chrono::steady_clock::now();</span>
+<span id="A-L470" class="line"><a href="#A-L470"> 470</a>   active_ = true;</span>
+<span id="A-L471" class="line"><a href="#A-L471"> 471</a>   prepared_ = false;</span>
+<span id="A-L472" class="line"><a href="#A-L472"> 472</a> }</span>
+<span id="A-L473" class="line"><a href="#A-L473"> 473</a> </span>
+<span id="A-L474" class="line"><a href="#A-L474"> 474</a> void RLWbc::stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) {</span>
+<span id="A-L475" class="line"><a href="#A-L475"> 475</a>   const int64_t stamp_ns = rclcpp::Time(msg-&gt;header.stamp).nanoseconds();</span>
+<span id="A-L476" class="line"><a href="#A-L476"> 476</a>   const double age = (node_-&gt;now().nanoseconds() - stamp_ns) * 1e-9;</span>
+<span id="A-L477" class="line"><a href="#A-L477"> 477</a>   const bool valid = validatePolicyObservation(*msg, joint_names_, &quot;WBC&quot;);</span>
+<span id="A-L478" class="line"><a href="#A-L478"> 478</a>   std::lock_guard&lt;std::mutex&gt; lock(observation_mutex_);</span>
+<span id="A-L479" class="line"><a href="#A-L479"> 479</a>   if (!valid || stamp_ns &lt;= 0 || age &lt; 0.0 || age &gt; sensor_timeout_sec_ ||</span>
+<span id="A-L480" class="line"><a href="#A-L480"> 480</a>       (observation_received_ &amp;&amp; stamp_ns &lt;= observation_stamp_ns_))</span>
+<span id="A-L481" class="line"><a href="#A-L481"> 481</a>   {</span>
+<span id="A-L482" class="line"><a href="#A-L482"> 482</a>     observation_received_ = false;</span>
+<span id="A-L483" class="line"><a href="#A-L483"> 483</a>     return;</span>
+<span id="A-L484" class="line"><a href="#A-L484"> 484</a>   }</span>
+<span id="A-L485" class="line"><a href="#A-L485"> 485</a>   policy_observation_ = *msg;</span>
+<span id="A-L486" class="line"><a href="#A-L486"> 486</a>   observation_received_at_ = std::chrono::steady_clock::now();</span>
+<span id="A-L487" class="line"><a href="#A-L487"> 487</a>   observation_stamp_ns_ = stamp_ns;</span>
+<span id="A-L488" class="line"><a href="#A-L488"> 488</a>   observation_received_ = true;</span>
+<span id="A-L489" class="line"><a href="#A-L489"> 489</a> }</span>
+<span id="A-L490" class="line"><a href="#A-L490"> 490</a> </span>
+<span id="A-L491" class="line"><a href="#A-L491"> 491</a> void RLWbc::publishDone(bool success, const char* reason) {</span>
+<span id="A-L492" class="line"><a href="#A-L492"> 492</a>   if (done_published_) return;</span>
+<span id="A-L493" class="line"><a href="#A-L493"> 493</a>   done_published_ = true;</span>
+<span id="A-L494" class="line"><a href="#A-L494"> 494</a>   std_msgs::msg::Bool done;</span>
+<span id="A-L495" class="line"><a href="#A-L495"> 495</a>   done.data = success;</span>
+<span id="A-L496" class="line"><a href="#A-L496"> 496</a>   done_pub_-&gt;publish(done);</span>
+<span id="A-L497" class="line"><a href="#A-L497"> 497</a>   RCLCPP_INFO(node_-&gt;get_logger(), &quot;WBC motion &#x27;%s&#x27; stopped: %s&quot;, motion_id_.c_str(), reason);</span>
+<span id="A-L498" class="line"><a href="#A-L498"> 498</a> }</span>
+<span id="A-L499" class="line"><a href="#A-L499"> 499</a> </span>
+<span id="A-L500" class="line"><a href="#A-L500"> 500</a> void RLWbc::runLoop() {</span>
+<span id="A-L501" class="line"><a href="#A-L501"> 501</a>   rclcpp::WallRate rate(50.0);</span>
+<span id="A-L502" class="line"><a href="#A-L502"> 502</a>   while (loop_running_.load() &amp;&amp; rclcpp::ok())</span>
+<span id="A-L503" class="line"><a href="#A-L503"> 503</a>   {</span>
+<span id="A-L504" class="line"><a href="#A-L504"> 504</a>     {</span>
+<span id="A-L505" class="line"><a href="#A-L505"> 505</a>       std::lock_guard&lt;std::mutex&gt; lock(mutex_);</span>
+<span id="A-L506" class="line"><a href="#A-L506"> 506</a>       if (active_)</span>
+<span id="A-L507" class="line"><a href="#A-L507"> 507</a>       {</span>
+<span id="A-L508" class="line"><a href="#A-L508"> 508</a>         const double elapsed = std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - motion_start_).count();</span>
+<span id="A-L509" class="line"><a href="#A-L509"> 509</a>         const double duration = start_hold_sec_ + reference_num_frames_ * control_dt_;</span>
+<span id="A-L510" class="line"><a href="#A-L510"> 510</a>         RobotFrame current_frame;</span>
+<span id="A-L511" class="line"><a href="#A-L511"> 511</a>         std::string state_error;</span>
+<span id="A-L512" class="line"><a href="#A-L512"> 512</a>         if (!captureFrame(current_frame, nullptr, state_error))</span>
+<span id="A-L513" class="line"><a href="#A-L513"> 513</a>         {</span>
+<span id="A-L514" class="line"><a href="#A-L514"> 514</a>           active_ = false;</span>
+<span id="A-L515" class="line"><a href="#A-L515"> 515</a>           publishDone(false, state_error.c_str());</span>
+<span id="A-L516" class="line"><a href="#A-L516"> 516</a>         }</span>
+<span id="A-L517" class="line"><a href="#A-L517"> 517</a>         else if (elapsed &gt;= duration)</span>
+<span id="A-L518" class="line"><a href="#A-L518"> 518</a>         {</span>
+<span id="A-L519" class="line"><a href="#A-L519"> 519</a>           active_ = false;</span>
+<span id="A-L520" class="line"><a href="#A-L520"> 520</a>           publishDone(true, &quot;completed&quot;);</span>
+<span id="A-L521" class="line"><a href="#A-L521"> 521</a>         }</span>
+<span id="A-L522" class="line"><a href="#A-L522"> 522</a>         else</span>
+<span id="A-L523" class="line"><a href="#A-L523"> 523</a>         {</span>
+<span id="A-L524" class="line"><a href="#A-L524"> 524</a>           std::string error;</span>
+<span id="A-L525" class="line"><a href="#A-L525"> 525</a>           if (!inferAndPublish(elapsed, true, error))</span>
+<span id="A-L526" class="line"><a href="#A-L526"> 526</a>           {</span>
+<span id="A-L527" class="line"><a href="#A-L527"> 527</a>             active_ = false;</span>
+<span id="A-L528" class="line"><a href="#A-L528"> 528</a>             RCLCPP_ERROR(node_-&gt;get_logger(), &quot;WBC inference failed: %s&quot;, error.c_str());</span>
+<span id="A-L529" class="line"><a href="#A-L529"> 529</a>             publishDone(false, &quot;runtime failure&quot;);</span>
+<span id="A-L530" class="line"><a href="#A-L530"> 530</a>           }</span>
+<span id="A-L531" class="line"><a href="#A-L531"> 531</a>         }</span>
+<span id="A-L532" class="line"><a href="#A-L532"> 532</a>       }</span>
+<span id="A-L533" class="line"><a href="#A-L533"> 533</a>     }</span>
+<span id="A-L534" class="line"><a href="#A-L534"> 534</a>     rate.sleep();</span>
+<span id="A-L535" class="line"><a href="#A-L535"> 535</a>   }</span>
+<span id="A-L536" class="line"><a href="#A-L536"> 536</a> }</span></pre></html>

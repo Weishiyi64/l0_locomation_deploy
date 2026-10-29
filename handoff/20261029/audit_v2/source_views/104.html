@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/include/legged_controllers/TextMotionController.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/include/legged_controllers/TextMotionController.h</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #pragma once</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;array&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &lt;atomic&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;chrono&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;cstdint&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;deque&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;memory&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;mutex&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;string&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> #include &lt;vector&gt;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> </span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> #include &lt;legged_controllers/IHardwareLayer.h&gt;</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> </span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> namespace legged {</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> // Parsing runs in a separate ROS callback group. Only step() writes playback</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> // state and joint commands; callbacks hand over an immutable, complete motion.</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> class TextMotionController {</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>  public:</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   struct Event {</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     std::string request_id;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     std::string state;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     std::string detail;</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   };</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> </span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   bool configure(const std::vector&lt;std::string&gt;&amp; joints, const std::string&amp; mapping_file, std::string&amp; error);</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   Event submitJson(const std::string&amp; payload, bool allowed);</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>   Event cancel(const std::string&amp; request_id);</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   void setAllowed(bool allowed);</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>   Event step(const std::vector&lt;double&gt;&amp; base, const std::vector&lt;JointMotorCommand&gt;&amp; previous, bool allowed);</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   bool getJointPosition(std::size_t index, double&amp; q) const;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>   bool busy() const { return busy_.load(); }</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   bool active() const { return active_.load(); }</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   static std::string encodeEvent(const Event&amp; event);</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a> </span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>  private:</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   using Pose = std::array&lt;double, 9&gt;;</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   struct Trajectory {</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>     std::string id;</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>     std::int64_t expires_at_ms{0};</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>     std::array&lt;bool, 9&gt; mask;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     std::vector&lt;Pose&gt; frames;</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   };</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>   Event finish(const char* state, const char* detail);</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>   bool seen(const std::string&amp; id) const;</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   void remember(const std::string&amp; id);</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a> </span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>   std::array&lt;std::size_t, 9&gt; indices_;</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   Pose lower_, upper_, q_, entry_, release_;</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>   std::mutex mutex_;</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>   std::shared_ptr&lt;const Trajectory&gt; pending_;</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>   std::shared_ptr&lt;const Trajectory&gt; current_;</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>   std::deque&lt;std::string&gt; recent_ids_;</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   std::string slot_id_;</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>   bool cancelled_{false};</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>   std::atomic&lt;bool&gt; busy_{false};</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>   std::atomic&lt;bool&gt; active_{false};</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>   std::atomic&lt;bool&gt; allowed_{false};</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>   std::atomic&lt;std::uint64_t&gt; gate_generation_{0};</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>   std::chrono::steady_clock::time_point started_, releasing_at_;</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>   bool releasing_{false};</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>   bool cancelled_release_{false};</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>   double release_alpha_{0.0};</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a> };</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> }  // namespace legged</span></pre></html>

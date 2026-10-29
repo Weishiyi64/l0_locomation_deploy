@@ -1,0 +1,27 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/launch/text_wbc.launch.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/launch/text_wbc.launch.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> from launch import LaunchDescription</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> from launch.launch_description_sources import PythonLaunchDescriptionSource</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> from launch.substitutions import LaunchConfiguration, PathJoinSubstitution</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> from launch_ros.substitutions import FindPackageShare</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> </span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> def generate_launch_description():</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a>     return LaunchDescription([</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>         DeclareLaunchArgument(&#x27;hpm_mode&#x27;, default_value=&#x27;real&#x27;),</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>         DeclareLaunchArgument(&#x27;isolated_ros_domain&#x27;, default_value=&#x27;173&#x27;),</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>         DeclareLaunchArgument(&#x27;subpolicy&#x27;, default_value=&#x27;l0_v5_amp_10281&#x27;),</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>         DeclareLaunchArgument(&#x27;wbc_lora_bundle&#x27;, default_value=&#x27;text_wbc_bundle&#x27;),</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>         DeclareLaunchArgument(&#x27;wbc_json_base_action&#x27;, default_value=&#x27;A-C04_mod&#x27;),</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>         DeclareLaunchArgument(&#x27;wbc_policies&#x27;, default_value=&#x27;[A-C04_mod, L0_Hugme, L0_act_cute_1]&#x27;),</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>         IncludeLaunchDescription(PythonLaunchDescriptionSource(PathJoinSubstitution([</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>             FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;launch&#x27;, &#x27;sim2real.launch.py&#x27;])), launch_arguments={</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>                 &#x27;robot_type&#x27;: &#x27;l0_v5&#x27;, &#x27;subpolicy&#x27;: LaunchConfiguration(&#x27;subpolicy&#x27;),</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>                 &#x27;wbc_enabled&#x27;: &#x27;true&#x27;, &#x27;wbc_mode&#x27;: &#x27;lora&#x27;,</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>                 &#x27;wbc_lora_bundle&#x27;: LaunchConfiguration(&#x27;wbc_lora_bundle&#x27;),</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>                 &#x27;wbc_json_base_action&#x27;: LaunchConfiguration(&#x27;wbc_json_base_action&#x27;),</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>                 &#x27;wbc_policies&#x27;: LaunchConfiguration(&#x27;wbc_policies&#x27;),</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>                 &#x27;hpm_mode&#x27;: LaunchConfiguration(&#x27;hpm_mode&#x27;),</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>                 &#x27;isolated_ros_domain&#x27;: LaunchConfiguration(&#x27;isolated_ros_domain&#x27;),</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>                 &#x27;rviz&#x27;: &#x27;false&#x27;, &#x27;radar_control_enabled&#x27;: &#x27;false&#x27;, &#x27;battery_enabled&#x27;: &#x27;false&#x27;,</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>             }.items()),</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     ])</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,373 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/navigation_route.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/navigation_route.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> &quot;&quot;&quot;Training A* route construction and shared deployment waypoint tracking.&quot;&quot;&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> import math</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> import xml.etree.ElementTree as ET</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> </span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> import numpy as np</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> from astar_global_planner import AStarPlanner</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> from sim2sim_path_planner import RecoveryAStarPlanner, refresh_committed_path, sample_guidance_path</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> </span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> </span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> class GoalPlanningError(RuntimeError):</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>     pass</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> </span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> def plan_configured_astar_route(</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>     root_xy: np.ndarray,</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>     goal_xy: np.ndarray,</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     planner,</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     waypoint_spacing_m: float,</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     preferred_direction=None,</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> ) -&gt; np.ndarray:</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     &quot;&quot;&quot;净空简化后按固定前视距离采样；必要避障拐点与近终点除外。&quot;&quot;&quot;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     if not math.isfinite(waypoint_spacing_m) or waypoint_spacing_m &lt;= 0:</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>         raise ValueError(&quot;A*路线点间距必须为有限正数&quot;)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     if not np.isfinite(root_xy).all():</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>         raise ValueError(f&quot;起点不是有限坐标：{root_xy}&quot;)</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     if not np.isfinite(goal_xy).all() or not planner.segment_is_free(goal_xy, goal_xy):</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>         raise ValueError(f&quot;目标位于地图外或膨胀障碍内：{goal_xy}&quot;)</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     if not planner.segment_is_free(root_xy, root_xy):</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>         exits = (</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>             planner.recovery_exits(</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>                 root_xy,</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>                 goal_xy,</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>                 max_distance=waypoint_spacing_m,</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>                 preferred_direction=preferred_direction,</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>             )</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>             if isinstance(planner, RecoveryAStarPlanner)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>             else []</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>         )</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>         for endpoint in exits:</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>             try:</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>                 route = _plan_clearance_route(</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>                     endpoint,</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>                     goal_xy,</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>                     planner,</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>                     waypoint_spacing_m,</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>                     preferred_direction=preferred_direction,</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>                 )</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>             except GoalPlanningError:</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>                 continue</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>             # Keep the checked escape connector intact: never shortcut past it.</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>             print(</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>                 f&quot;[RECOVERY] 起点净空不足：{np.asarray(root_xy).round(3)} → &quot;</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>                 f&quot;退出点 {endpoint.round(3)}；先退出，再接回原目标路线。&quot;</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>             )</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>             return np.concatenate((np.asarray(root_xy, dtype=np.float32)[None], route))</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>         raise GoalPlanningError(f&quot;起点净空不足且未找到可验证的退出路线：{root_xy}&quot;)</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>     return _plan_clearance_route(</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>         root_xy,</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>         goal_xy,</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         planner,</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         waypoint_spacing_m,</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>         preferred_direction=preferred_direction,</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>     )</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a> </span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> def _plan_clearance_route(</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>     root_xy,</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>     goal_xy,</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     planner,</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     waypoint_spacing_m,</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>     *,</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>     exact_first_lookahead=True,</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     preferred_direction=None,</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a> ):</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>     &quot;&quot;&quot;Normal route; every segment must satisfy the unchanged inflated grid.&quot;&quot;&quot;</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     root_xy, goal_xy = np.asarray(root_xy, dtype=np.float64), np.asarray(goal_xy, dtype=np.float64)</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>     if np.array_equal(root_xy, goal_xy):</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         if not planner.segment_is_free(root_xy, goal_xy):</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>             raise GoalPlanningError(&quot;A*路线端点或连线缺少净空；请重新选择目标&quot;)</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>         return np.stack((root_xy, goal_xy)).astype(np.float32)</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>     if np.linalg.norm(goal_xy - root_xy) &lt;= waypoint_spacing_m + 1.0e-6 and planner.segment_is_free(root_xy, goal_xy):</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>         return np.stack((root_xy, goal_xy)).astype(np.float32)</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>     if exact_first_lookahead and isinstance(planner, RecoveryAStarPlanner):</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>         endpoint = planner.safe_lookahead_endpoint(</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>             root_xy,</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>             goal_xy,</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>             distance=waypoint_spacing_m,</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>             preferred_direction=preferred_direction,</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>         )</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>         if endpoint is not None and np.linalg.norm(endpoint - goal_xy) &gt; 1.0e-5:</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>             tail = _plan_clearance_route(</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>                 endpoint,</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>                 goal_xy,</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>                 planner,</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>                 waypoint_spacing_m,</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>                 exact_first_lookahead=False,</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>             )</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>             result = np.concatenate((root_xy.astype(np.float32)[None], tail))</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>             if all(planner.segment_is_free(start, end) for start, end in zip(result[:-1], result[1:])):</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>                 return result</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>     dense_path = planner.plan(root_xy, goal_xy)</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>     if dense_path is None:</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>         raise GoalPlanningError(&quot;当前起点到配置目标点不存在A*路径&quot;)</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>     # Include exact endpoints in shortcutting, so grid-center connections do not</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>     # become tiny first/last tracking targets. Never relocate a requested goal.</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>     dense_path = np.concatenate((root_xy[None], dense_path, goal_xy[None]))</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>     keep = np.r_[True, np.any(np.diff(dense_path, axis=0) != 0.0, axis=1)]</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>     dense_path = dense_path[keep]</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>     if len(dense_path) == 1:</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         return np.repeat(dense_path, 2, axis=0).astype(np.float32)</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>     # Greedy farthest-visible shortcuts remove the artificial alternating</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>     # axial/diagonal bends of an 8-connected grid, but cannot cut through walls.</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>     vertices = [dense_path[0]]</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>     current = 0</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>     while current &lt; len(dense_path) - 1:</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>         for candidate in range(len(dense_path) - 1, current, -1):</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>             if planner.segment_is_free(dense_path[current], dense_path[candidate]):</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>                 vertices.append(dense_path[candidate])</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>                 current = candidate</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>                 break</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>         else:</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>             raise GoalPlanningError(&quot;A*路线端点或连线缺少净空；请重新选择目标&quot;)</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>     try:</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         result = sample_guidance_path(vertices, planner, waypoint_spacing_m)</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>     except ValueError as exc:</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         raise GoalPlanningError(str(exc)) from exc</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>     if not all(planner.segment_is_free(start, end) for start, end in zip(result[:-1], result[1:])):</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>         raise GoalPlanningError(&quot;A*路线端点或连线缺少净空；请重新选择目标&quot;)</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>     return result</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a> </span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> </span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a> class FlatGroundPlanner:</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>     &quot;&quot;&quot;Explicit obstacle-free deployment assumption; no sensor map input.&quot;&quot;&quot;</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a> </span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     def segment_is_free(self, start, end):</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>         return bool(np.isfinite((start, end)).all())</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a> </span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>     def start_is_free(self, xy):</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>         return bool(np.isfinite(xy).all())</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a> </span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>     def plan(self, start, goal):</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>         points = np.asarray([start, goal], dtype=float)</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>         low = np.floor(points.min(axis=0) / 0.1) * 0.1 - 0.2</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>         high = np.ceil(points.max(axis=0) / 0.1) * 0.1 + 0.2</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>         width, height = np.ceil((high - low) / 0.1).astype(int) + 1</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>         if width * height &gt; 2_000_000:</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>             raise ValueError(&#x27;Flat-ground planning extent exceeds 2 million cells&#x27;)</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>         grid = np.zeros((height, width), dtype=np.uint8)</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>         return AStarPlanner(grid, 0.1, tuple(low), prevent_corner_cutting=True).plan(start, goal)</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a> </span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a> </span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a> def load_house_planner(scene):</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>     if str(scene) == &#x27;flat&#x27;:</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>         return FlatGroundPlanner()</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>     obstacles = []</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>     for geom in ET.parse(scene).getroot().findall(&#x27;geom&#x27;):</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>         x, y, _ = map(float, geom.attrib[&#x27;pos&#x27;].split())</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>         hx, hy, _ = map(float, geom.attrib[&#x27;size&#x27;].split())</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>         obstacles.append(dict(shape=&#x27;box&#x27;, x=x, y=y, size_x=2 * hx, size_y=2 * hy))</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>     return RecoveryAStarPlanner(obstacles, (10.0, 10.0), 0.1)</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a> </span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a> </span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a> class NavigationRoute:</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>     def __init__(self, planner, goal):</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>         self.planner, self.goal = planner, goal</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>         self.path = None</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>         self.index = 0</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>         self.last_plan = -math.inf</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>         self.revision = 0</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>         self.error = &#x27;&#x27;</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>         self.mode = &#x27;Nav&#x27;</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>         self.complete = False</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>         self.hold_steps = 0</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>         self.arrived_since = None</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>         self.preview = np.zeros(4, dtype=np.float32)</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a> </span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>     def replan(self, xy, now, force=False):</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>         self.last_plan = now</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         # Finish a certified recovery connector before considering another side.</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>         if (</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>             not force</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>             and self.path is not None</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>             and 1 &lt;= self.index &lt; len(self.path)</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>             and not self.planner.start_is_free(xy)</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>             and self.planner.recovery_segment_is_safe(xy, self.path[self.index])</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>         ):</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>             return False</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>         preferred = None if self.path is None else self.path[self.index] - self.path[self.index - 1]</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>         try:</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>             refreshed = None</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>             if not force and self.path is not None:</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>                 refreshed = refresh_committed_path(self.path, self.index, xy, self.planner, 1.0)</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>             if refreshed is None:</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>                 refreshed = plan_configured_astar_route(</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>                     xy, np.array([self.goal.x, self.goal.y]), self.planner, 1.0, preferred</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>                 )</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>             self.path = refreshed</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>             self.index = 1</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>             self.error = &#x27;&#x27;</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>         except (GoalPlanningError, ValueError) as exc:</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>             self.path, self.index, self.error = None, 0, str(exc)</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>             self.hold_steps = 0</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>         self.revision += 1</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>         return True</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a> </span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>     def update(self, pose, speed, now):</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>         xy = np.asarray(pose[:2], dtype=float)</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a> </span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>         def evaluate():</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>             recovering = not self.complete and self.mode == &#x27;Nav&#x27; and not self.planner.start_is_free(xy)</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>             return update_route_command(</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>                 self.path,</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>                 self.index,</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>                 xy,</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>                 pose[2],</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>                 self.goal.heading or 0.0,</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>                 self.goal,</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>                 heading_enabled=self.goal.heading is not None,</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>                 linear_speed=self.goal.speed,</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>                 angular_speed=self.goal.turn_speed,</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>                 recovering=recovering,</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>                 planner=self.planner,</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>                 planar_speed_mps=speed,</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>             )</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a> </span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>         self.index, self.mode, command, rearmed, force = evaluate()</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>         if rearmed:</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>             self.complete, self.hold_steps = False, 0</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>         # Same order as sim2sim: arrival/waypoint advance -&gt; replan -&gt; recompute -&gt; preview.</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>         if (</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>             not self.complete</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>             and (self.path is None or self.mode == &#x27;Nav&#x27;)</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>             and (force or now &lt; self.last_plan or now - self.last_plan &gt;= 1.0 - 1e-9)</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>         ):</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>             if self.replan(xy, now, force=force):</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>                 self.index, self.mode, command, _, _ = evaluate()</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>         # Deployment settling period: stop translation before final heading control.</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>         waiting_for_face = False</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>         if self.path is None or not self.goal.position_locked:</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>             self.arrived_since = None</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>         elif self.goal.heading is not None:</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>             if self.arrived_since is None or now &lt; self.arrived_since:</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>                 self.arrived_since = now</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>             waiting_for_face = now - self.arrived_since &lt; 1.0 - 1e-9</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>         if waiting_for_face:</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>             command = np.zeros(5, dtype=np.float32)</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>             self.mode = &#x27;Hold&#x27;</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>         if self.complete:</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>             command = np.zeros(5, dtype=np.float32)</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>         self.preview = future_waypoints_in_body(</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>             self.path, self.index, xy, pose[2], &#x27;Hold&#x27; if self.complete else self.mode</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a>         )</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a>         if self.path is not None and not self.complete:</span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>             reached = (</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>                 not waiting_for_face</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>                 and self.index == len(self.path) - 1</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>                 and self.goal.position_locked</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>                 and (self.goal.heading is None or self.goal.heading_locked)</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>             )</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>             self.hold_steps = self.hold_steps + 1 if reached else 0</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>             required = max(1, round((1.5 if self.goal.heading is not None else 4.0) * 5))</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a>             self.complete = self.hold_steps &gt;= required</span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>         return command, self.mode</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a> </span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a> </span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a> def update_route_command(</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>     path_xy,</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>     waypoint_index,</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>     root_xy,</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>     yaw,</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>     target_yaw,</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>     arrival,</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>     *,</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a>     heading_enabled,</span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a>     linear_speed,</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>     angular_speed,</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>     waypoint_radius=0.2,</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>     recovering=False,</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>     planner=None,</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>     planar_speed_mps=0.0,</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>     decision_period_s=0.2,</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a> ):</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>     &quot;&quot;&quot;模拟全局规划上游，并报告已越点但不可安全跳点的失效路线。&quot;&quot;&quot;</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>     if path_xy is None:</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>         # No route is a waiting state, not a zero-length completed goal.</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>         return 0, &quot;Hold&quot;, np.zeros(5, dtype=np.float32), False, False</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>     if len(path_xy) &lt; 2 or not 1 &lt;= waypoint_index &lt; len(path_xy):</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>         raise ValueError(&quot;A*路径索引无效&quot;)</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a> </span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>     # A fast robot can cross a waypoint between two 5 Hz planner ticks without</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>     # ever entering its switching ball. Distance-only advancement would then</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>     # keep commanding the now-behind point until the next 1 Hz global replan.</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>     # Crossing the endpoint-normal plane of the incoming segment also means the</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>     # waypoint has been passed. The clearance check below still prevents this</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>     # shortcut from cutting through a mandatory obstacle corner.</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a>     def waypoint_reached_or_passed(index):</span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a>         target = path_xy[index]</span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a>         reached = np.linalg.norm(target - root_xy) &lt;= waypoint_radius</span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>         incoming = target - path_xy[index - 1]</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>         passed = np.dot(root_xy - target, incoming) &gt;= 0.0 and np.dot(incoming, incoming) &gt; 1.0e-12</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a>         return bool(reached or passed)</span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a> </span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a>     # Refresh an intermediate target before the robot can cross it during the</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>     # next 5 Hz hold. This keeps the published point ahead without changing the</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>     # final goal&#x27;s strict 0.2 m arrival condition.</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>     anticipation_radius = waypoint_radius + max(0.0, float(planar_speed_mps)) * max(0.0, float(decision_period_s))</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a> </span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a>     def intermediate_is_due(index):</span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>         return bool(</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>             index &lt; len(path_xy) - 1</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a>             and (np.linalg.norm(path_xy[index] - root_xy) &lt;= anticipation_radius or waypoint_reached_or_passed(index))</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a>         )</span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a> </span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>     intermediate_due = intermediate_is_due(waypoint_index)</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>     # Prefer the cached forward point when it is still directly reachable. A</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a>     # blocked connector is rebuilt from the live pose while the old point is</span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>     # still ahead, rather than after it has become a reverse command.</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>     cached_recovery_is_safe = bool(</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a>         recovering</span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a>         and isinstance(planner, RecoveryAStarPlanner)</span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a>         and planner.recovery_segment_is_safe(root_xy, path_xy[waypoint_index])</span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a>     )</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>     replan_required = bool(recovering and not cached_recovery_is_safe)</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a>     while not recovering and intermediate_due and waypoint_index &lt; len(path_xy) - 1:</span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>         if planner is not None and not planner.segment_is_free(root_xy, path_xy[waypoint_index + 1]):</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>             # This is a clearance-critical bend, not a redundant point.  The</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>             # speed anticipation radius must not repeatedly rebuild the route</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>             # before the robot reaches it. Replan only after the point is</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a>             # actually reached/passed and the outgoing connector is still</span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a>             # unavailable from the live pose.</span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>             replan_required = waypoint_reached_or_passed(waypoint_index)</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a>             break</span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>         waypoint_index += 1</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a>         intermediate_due = intermediate_is_due(waypoint_index)</span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>     error = math.atan2(math.sin(target_yaw - yaw), math.cos(target_yaw - yaw))</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>     distance = float(np.linalg.norm(path_xy[-1] - root_xy))</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>     if waypoint_index == len(path_xy) - 1 and not recovering:</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a>         previous = (arrival.position_locked, arrival.heading_locked)</span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a>         arrival.update(float(root_xy[0]), float(root_xy[1]), yaw)</span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a>         rearmed = (previous[0] and not arrival.position_locked) or (previous[1] and not arrival.heading_locked)</span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a>     else:</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a>         # Passing near the final point cannot skip unfinished waypoints.</span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a>         arrival.position_locked = arrival.heading_locked = False</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>         rearmed = False</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>     command = np.zeros(5, dtype=np.float32)</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a>     if not arrival.position_locked:</span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a>         phase = &quot;Nav&quot;</span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>         delta = path_xy[waypoint_index] - root_xy</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>         c, s = math.cos(yaw), math.sin(yaw)</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a>         command[:3] = (c * delta[0] + s * delta[1], -s * delta[0] + c * delta[1], np.clip(linear_speed, 0.3, 1.2))</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a>     elif heading_enabled and not arrival.heading_locked:</span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a>         phase = &quot;Face&quot;</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>         command[3:] = (error, np.clip(abs(angular_speed), 1.57, 3.14))</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a>     else:</span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a>         phase = &quot;Hold&quot;</span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a>     return waypoint_index, phase, command, rearmed, replan_required</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a> </span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a> </span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a> def future_waypoints_in_body(path_xy, waypoint_index, root_xy, yaw, phase):</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a>     &quot;&quot;&quot;Return the next two A* targets in one base frame; pad with the endpoint.&quot;&quot;&quot;</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a>     if path_xy is None or phase != &quot;Nav&quot;:</span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>         return np.zeros(4, dtype=np.float32)</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>     if not 0 &lt;= waypoint_index &lt; len(path_xy):</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>         raise ValueError(&quot;Cannot preview an invalid A* waypoint index&quot;)</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>     indices = np.minimum(waypoint_index + np.array([1, 2]), len(path_xy) - 1)</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a>     relative = path_xy[indices] - root_xy</span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a>     c, s = math.cos(yaw), math.sin(yaw)</span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>     return (</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>         np.stack((c * relative[:, 0] + s * relative[:, 1], -s * relative[:, 0] + c * relative[:, 1]), axis=-1)</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a>         .astype(np.float32)</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a>         .reshape(4)</span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a>     )</span></pre></html>

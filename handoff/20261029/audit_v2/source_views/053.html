@@ -1,0 +1,648 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/export_wbc_lora.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/export_wbc_lora.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Export native L0 WBC LoRA as one dynamic ONNX, FP16 adapters and RK3588 probes.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Per-action full checkpoints are optional; Base and compact LoRA remain required.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> &quot;&quot;&quot;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> import argparse</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import copy</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import json</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import math</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import shutil</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import tempfile</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> from pathlib import Path</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import numpy as np</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> import yaml</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> from wbc_lora_assets import (ADAPTER_FORMAT, GRAPH_FORMAT, ID_PATTERN, asset_path,</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>                              fingerprint, graph_feeds, load_adapter, sha256)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> </span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> DIMS = [(1024, 639), (1024, 1024), (1024, 1024), (1024, 1423),</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>         (1024, 1024), (1024, 1024), (21, 1024)]</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> NORMALIZED_LAYERS = (0, 1, 3, 4, 5)</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> def write_json(path, value):</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> </span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> def checkpoint(path):</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     # These are the explicitly selected local training delivery checkpoints.</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     import torch</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     return torch.load(path, map_location=&quot;cpu&quot;, weights_only=False)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> </span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> </span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> def array(tensor):</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     import torch</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     if not isinstance(tensor, torch.Tensor) or tensor.dtype != torch.float32 or not torch.isfinite(tensor).all():</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         raise ValueError(&quot;Expected a finite float32 training tensor&quot;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     return tensor.detach().cpu().numpy().copy()</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> </span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> def statistics(state):</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     result = {}</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     for name in (&quot;policy&quot;, &quot;command_short&quot;):</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>         count = state[name + &quot;.count&quot;]</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         if not np.isfinite(float(count)) or float(count) &lt;= 0:</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>             raise ValueError(&quot;Invalid normalization count&quot;)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>         mean = state[name + &quot;.sum&quot;] / count</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>         std = (state[name + &quot;.ssq&quot;] / count - mean.square()).clamp_min(1e-5).sqrt()</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>         result[name] = (array(mean), array(std))</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     return result</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> </span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> def normalization_hash(stats):</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     return fingerprint({k: {&quot;mean&quot;: v[0].tolist(), &quot;std&quot;: v[1].tolist()} for k, v in stats.items()})</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a> </span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> </span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> def actor_forward(actor, linear_names, norm_names, stats, policy, command):</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     import torch</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>     from torch.nn import functional as F</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     p = (torch.from_numpy(policy) - torch.from_numpy(stats[&quot;policy&quot;][0])) / torch.from_numpy(stats[&quot;policy&quot;][1])</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     c = (torch.from_numpy(command) - torch.from_numpy(stats[&quot;command_short&quot;][0])) / torch.from_numpy(stats[&quot;command_short&quot;][1])</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     value, norm_index = torch.cat((p, c)), 0</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     for index, name in enumerate(linear_names):</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>         if index == 3:</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>             value = torch.cat((p, value))</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>         value = F.linear(value, actor[name + &quot;.weight&quot;], actor[name + &quot;.bias&quot;])</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         if index in NORMALIZED_LAYERS:</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>             norm = norm_names[norm_index]</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             value = F.mish(F.layer_norm(value, (1024,), actor[norm + &quot;.weight&quot;], actor[norm + &quot;.bias&quot;], eps=1e-5))</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>             norm_index += 1</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     return value.detach().numpy()</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> </span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> </span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a> def topology(base, model):</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     from onnx import numpy_helper</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     actor = base[&quot;actor&quot;]</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     linears = [k[:-7] for k, v in actor.items() if k.endswith(&quot;.weight&quot;) and v.ndim == 2]</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     norms = [k[:-7] for k, v in actor.items() if k.endswith(&quot;.weight&quot;) and v.ndim == 1]</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     if [tuple(actor[k + &quot;.weight&quot;].shape) for k in linears] != DIMS or len(norms) != 5:</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         raise ValueError(&quot;Unsupported native L0 actor topology&quot;)</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     initializers = {x.name: numpy_helper.to_array(x) for x in model.graph.initializer}</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     matmuls = [n for n in model.graph.node if n.op_type == &quot;MatMul&quot;]</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     ln_nodes = [n for n in model.graph.node if n.op_type == &quot;LayerNormalization&quot;]</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     if len(matmuls) != 7 or len(ln_nodes) != 5 or len([n for n in model.graph.node if n.op_type == &quot;Mish&quot;]) != 5:</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         raise ValueError(&quot;Expected the native seven-Linear / five-LayerNorm / five-Mish graph&quot;)</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     bindings, norm_bindings = [], []</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     for name in linears:</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         weight = array(actor[name + &quot;.weight&quot;]).T</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         matches = [n for n in matmuls if n.input[1] in initializers and</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>                    np.array_equal(initializers[n.input[1]], weight)]</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         if len(matches) != 1:</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>             raise ValueError(f&quot;Cannot uniquely bind ONNX Linear to checkpoint: {name}&quot;)</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         node = matches[0]</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         consumers = [n for n in model.graph.node if node.output[0] in n.input]</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         if len(consumers) != 1 or consumers[0].op_type != &quot;Add&quot;:</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>             raise ValueError(&quot;Unsupported Linear bias topology&quot;)</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>         bias = consumers[0]</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         other = next(x for x in bias.input if x != node.output[0])</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>         if other not in initializers or not np.array_equal(initializers[other], array(actor[name + &quot;.bias&quot;])):</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>             raise ValueError(&quot;Base ONNX bias differs from checkpoint&quot;)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         bindings.append((node.name, bias.name, node.output[0]))</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>     if any(not n.name for n in matmuls + ln_nodes) or len({n.name for n in model.graph.node}) != len(model.graph.node):</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         raise ValueError(&quot;Native graph node names must be unique and non-empty&quot;)</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     for norm_index, (name, node) in enumerate(zip(norms, ln_nodes)):</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>         bias_name = bindings[NORMALIZED_LAYERS[norm_index]][1]</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>         bias_node = next(n for n in model.graph.node if n.name == bias_name)</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>         if node.input[0] != bias_node.output[0]:</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>             raise ValueError(&quot;LayerNorm/Linear connectivity differs from the native actor&quot;)</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         for index, suffix in ((1, &quot;.weight&quot;), (2, &quot;.bias&quot;)):</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>             if not np.array_equal(initializers[node.input[index]], array(actor[name + suffix])):</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>                 raise ValueError(&quot;Base ONNX LayerNorm differs from checkpoint&quot;)</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         norm_bindings.append(node.name)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     stats = statistics(base[&quot;vecnorms&quot;])</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     for name, (mean, std) in stats.items():</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         sub = next(n for n in model.graph.node if n.op_type == &quot;Sub&quot; and n.input[0] == name)</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         div = next(n for n in model.graph.node if n.op_type == &quot;Div&quot; and n.input[0] == sub.output[0])</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         if not np.array_equal(initializers[sub.input[1]], mean) or not np.array_equal(initializers[div.input[1]], std):</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>             raise ValueError(&quot;Base ONNX normalization differs from checkpoint&quot;)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     return linears, norms, bindings, norm_bindings, stats</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a> </span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a> </span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a> def schema_for(linears, norms, actor):</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     result = []</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>     for i, name in enumerate(linears):</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         for suffix, short in ((&quot;.lora_A&quot;, &quot;a&quot;), (&quot;.lora_B&quot;, &quot;b&quot;), (&quot;.bias&quot;, &quot;bias&quot;)):</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>             shape = [16, DIMS[i][1]] if short == &quot;a&quot; else [DIMS[i][0], 16] if short == &quot;b&quot; else [DIMS[i][0]]</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>             result.append({&quot;name&quot;: f&quot;lora_{i}_{short}&quot;, &quot;actor_key&quot;: name + suffix, &quot;shape&quot;: shape})</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     for i, name in enumerate(norms):</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         for suffix, short in ((&quot;.weight&quot;, &quot;gamma&quot;), (&quot;.bias&quot;, &quot;beta&quot;)):</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>             result.append({&quot;name&quot;: f&quot;norm_{i}_{short}&quot;, &quot;actor_key&quot;: name + suffix, &quot;shape&quot;: list(actor[name + suffix].shape)})</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     return result</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> </span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> </span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a> def residual_nodes(prefix, value, base_output, index):</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     from onnx import helper</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     a, b = f&quot;lora_{index}_a&quot;, f&quot;lora_{index}_b&quot;</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>     return [</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         helper.make_node(&quot;Transpose&quot;, [a], [prefix + &quot;at&quot;], perm=[1, 0]),</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>         helper.make_node(&quot;Transpose&quot;, [b], [prefix + &quot;bt&quot;], perm=[1, 0]),</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         helper.make_node(&quot;MatMul&quot;, [value, prefix + &quot;at&quot;], [prefix + &quot;low&quot;]),</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>         helper.make_node(&quot;MatMul&quot;, [prefix + &quot;low&quot;, prefix + &quot;bt&quot;], [prefix + &quot;delta&quot;]),</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>         helper.make_node(&quot;Add&quot;, [base_output, prefix + &quot;delta&quot;], [prefix + &quot;sum&quot;]),</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>     ]</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a> </span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a> </span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a> def affine_norm_nodes(prefix, input_value, output_value, index, original=None):</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     from onnx import helper</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>     node = copy.deepcopy(original) if original is not None else helper.make_node(</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>         &quot;LayerNormalization&quot;, [input_value, prefix + &quot;ones&quot;, prefix + &quot;zeros&quot;], [prefix + &quot;normalized&quot;], epsilon=1e-5)</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>     node.input[:] = [input_value, prefix + &quot;ones&quot;, prefix + &quot;zeros&quot;]</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     node.output[0] = prefix + &quot;normalized&quot;</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     return [node, helper.make_node(&quot;Mul&quot;, [node.output[0], f&quot;norm_{index}_gamma&quot;], [prefix + &quot;scaled&quot;]),</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>             helper.make_node(&quot;Add&quot;, [prefix + &quot;scaled&quot;, f&quot;norm_{index}_beta&quot;], [output_value])]</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a> </span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> </span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a> def dynamic_model(source, schema, bindings, norm_bindings):</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     from onnx import helper, numpy_helper</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     model = copy.deepcopy(source)</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     linear_by_node = {entry[0]: (i, entry) for i, entry in enumerate(bindings)}</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     bias_by_node = {entry[1]: (i, entry) for i, entry in enumerate(bindings)}</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     norms = {name: i for i, name in enumerate(norm_bindings)}</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     nodes, constants = [], []</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     for node in model.graph.node:</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>         if node.name in linear_by_node:</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>             i, _ = linear_by_node[node.name]</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>             nodes.append(node)</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>             nodes.extend(residual_nodes(f&quot;wbc_lora_{i}_&quot;, node.input[0], node.output[0], i))</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>         elif node.name in bias_by_node:</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>             i, entry = bias_by_node[node.name]</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>             node.input[:] = [f&quot;wbc_lora_{i}_sum&quot;, f&quot;lora_{i}_bias&quot;]</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>             nodes.append(node)</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>         elif node.name in norms:</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>             i = norms[node.name]</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>             prefix = f&quot;wbc_norm_{i}_&quot;</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>             constants += [numpy_helper.from_array(np.ones(1024, np.float32), prefix + &quot;ones&quot;),</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>                           numpy_helper.from_array(np.zeros(1024, np.float32), prefix + &quot;zeros&quot;)]</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>             nodes.extend(affine_norm_nodes(prefix, node.input[0], node.output[0], i, node))</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>         else:</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>             nodes.append(node)</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     del model.graph.node[:]</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     model.graph.node.extend(nodes)</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     used = {x for n in nodes for x in n.input}</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     kept = [x for x in model.graph.initializer if x.name in used] + constants</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>     del model.graph.initializer[:]</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     model.graph.initializer.extend(kept)</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     del model.graph.value_info[:]</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>     for p in schema:</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>         model.graph.input.append(helper.make_tensor_value_info(p[&quot;name&quot;], 1, p[&quot;shape&quot;]))</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>     return model</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a> </span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a> </span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a> def probe_model(base_actor, linears, index, schema):</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>     from onnx import helper, numpy_helper</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>     prefix, value = f&quot;probe_{index}_&quot;, &quot;x&quot;</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>     nodes = [helper.make_node(&quot;MatMul&quot;, [value, &quot;base_weight&quot;], [prefix + &quot;base&quot;])]</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     nodes += residual_nodes(prefix, value, prefix + &quot;base&quot;, index)</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>     nodes += [helper.make_node(&quot;Add&quot;, [prefix + &quot;sum&quot;, f&quot;lora_{index}_bias&quot;], [prefix + &quot;linear&quot;])]</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>     constants = [numpy_helper.from_array(array(base_actor[linears[index] + &quot;.weight&quot;]).T.copy(), &quot;base_weight&quot;)]</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>     names = [f&quot;lora_{index}_{s}&quot; for s in (&quot;a&quot;, &quot;b&quot;, &quot;bias&quot;)]</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>     if index in NORMALIZED_LAYERS:</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>         norm_index = NORMALIZED_LAYERS.index(index)</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>         names += [f&quot;norm_{norm_index}_{s}&quot; for s in (&quot;gamma&quot;, &quot;beta&quot;)]</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>         constants += [numpy_helper.from_array(np.ones(1024, np.float32), prefix + &quot;ones&quot;),</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>                       numpy_helper.from_array(np.zeros(1024, np.float32), prefix + &quot;zeros&quot;)]</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>         nodes += affine_norm_nodes(prefix, prefix + &quot;linear&quot;, prefix + &quot;affine&quot;, norm_index)</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>         nodes += [helper.make_node(&quot;Mish&quot;, [prefix + &quot;affine&quot;], [&quot;action&quot;])]</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     else:</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>         nodes += [helper.make_node(&quot;Identity&quot;, [prefix + &quot;linear&quot;], [&quot;action&quot;])]</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>     inputs = [{&quot;name&quot;: &quot;x&quot;, &quot;shape&quot;: [DIMS[index][1]], &quot;dtype&quot;: &quot;float32&quot;, &quot;role&quot;: &quot;observation&quot;}]</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>     inputs += [{&quot;name&quot;: p[&quot;name&quot;], &quot;shape&quot;: p[&quot;shape&quot;], &quot;dtype&quot;: &quot;float32&quot;, &quot;role&quot;: &quot;adapter&quot;}</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>                for p in schema if p[&quot;name&quot;] in names]</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>     graph = helper.make_graph(nodes, f&quot;WBC LoRA layer {index}&quot;,</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>         [helper.make_tensor_value_info(x[&quot;name&quot;], 1, x[&quot;shape&quot;]) for x in inputs],</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>         [helper.make_tensor_value_info(&quot;action&quot;, 1, [DIMS[index][0]])], constants)</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>     model = helper.make_model(graph, opset_imports=[helper.make_opsetid(&quot;&quot;, 19)])</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>     model.ir_version = 9</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>     return model, inputs</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a> </span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a> </span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a> def adapter_state(adapter, base, base_hash, linears, schema):</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>     import torch</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>     if adapter.get(&quot;format&quot;) != &quot;mimic_lite_lora_adapter_v2&quot; or adapter.get(&quot;base_sha256&quot;) != base_hash:</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>         raise ValueError(&quot;Adapter format/Base checksum mismatch&quot;)</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>     if adapter[&quot;rank&quot;] != 16 or adapter[&quot;alpha&quot;] != 16 or adapter[&quot;layers&quot;] != linears:</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>         raise ValueError(&quot;Adapter layers/rank/alpha mismatch&quot;)</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>     values = adapter[&quot;actor&quot;]</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>     expected = {p[&quot;actor_key&quot;] for p in schema}</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>     extra = set(values) - expected</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>     if any(not name.endswith(&quot;actor_std&quot;) for name in extra) or not expected &lt;= set(values):</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>         raise ValueError(&quot;Unexpected/missing actor adapter parameters&quot;)</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>     for p in schema:</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>         if list(values[p[&quot;actor_key&quot;]].shape) != p[&quot;shape&quot;]:</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>             raise ValueError(&quot;Adapter tensor shape mismatch&quot;)</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>         array(values[p[&quot;actor_key&quot;]])</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>     if normalization_hash(statistics(adapter[&quot;vecnorms&quot;])) != normalization_hash(statistics(base[&quot;vecnorms&quot;])):</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>         raise ValueError(&quot;Adapter normalization differs from the shared Base graph&quot;)</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     merged = {k: v.detach().cpu().clone() for k, v in base[&quot;actor&quot;].items()}</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     for p in schema:</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>         if not p[&quot;actor_key&quot;].endswith((&quot;.lora_A&quot;, &quot;.lora_B&quot;)):</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>             merged[p[&quot;actor_key&quot;]] = values[p[&quot;actor_key&quot;]].detach().cpu().clone()</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     for name in linears:</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>         merged[name + &quot;.weight&quot;] += values[name + &quot;.lora_B&quot;] @ values[name + &quot;.lora_A&quot;]</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     return merged</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a> </span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a> </span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a> def export_adapter(directory, action, adapter, graph, parameter_source=&quot;lora&quot;):</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>     payload, tensors = bytearray(), []</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>     for p in graph[&quot;parameters&quot;]:</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>         payload.extend(b&quot;\0&quot; * ((-len(payload)) % 64))</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>         value = array(adapter[&quot;actor&quot;][p[&quot;actor_key&quot;]])</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>         with np.errstate(over=&quot;ignore&quot;):</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>             value = value.astype(&quot;&lt;f2&quot;)</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>         if not np.isfinite(value).all():</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>             raise ValueError(&quot;Adapter value is not representable in FP16&quot;)</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>         data = value.tobytes(order=&quot;C&quot;)</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>         tensors.append(dict(p, offset_bytes=len(payload), size_bytes=len(data)))</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>         payload.extend(data)</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>     directory.mkdir(parents=True)</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>     (directory / &quot;weights.bin&quot;).write_bytes(payload)</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>     manifest = {&quot;format&quot;: ADAPTER_FORMAT, &quot;action_id&quot;: action, &quot;rank&quot;: 16, &quot;alpha&quot;: 16,</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>                 &quot;parameter_source&quot;: parameter_source,</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>                 **{k: graph[k] for k in (&quot;base_checkpoint_sha256&quot;, &quot;normalization_sha256&quot;, &quot;parameter_schema_sha256&quot;)},</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>                 &quot;weights&quot;: {&quot;path&quot;: &quot;weights.bin&quot;, &quot;dtype&quot;: &quot;float16-le&quot;, &quot;size_bytes&quot;: len(payload),</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>                             &quot;sha256&quot;: sha256(directory / &quot;weights.bin&quot;)}, &quot;tensors&quot;: tensors}</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>     write_json(directory / &quot;manifest.json&quot;, manifest)</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a> </span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a> </span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a> def action_config(config, reference_meta, action):</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>     from prepare_wbc_deploy import joint_values, HISTORY_STEPS, FUTURE_STEPS</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>     names = config[&quot;policy_joint_names&quot;]</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>     if names != reference_meta[&quot;joint_names&quot;].split(&quot;,&quot;) or names != config[&quot;joint_names_simulation&quot;] or len(names) != 21:</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>         raise ValueError(&quot;Reference/policy joint order mismatch&quot;)</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>     robot = {&quot;policy_type&quot;: &quot;rl_wbc&quot;, &quot;policy_name&quot;: &quot;base_lora&quot;, &quot;policy_frequency&quot;: 50,</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>              &quot;lowlevel_frequency&quot;: 500, &quot;num_actions&quot;: 21, &quot;joint_order_mj&quot;: names, &quot;joint_order_isaac&quot;: names,</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>              &quot;default_joint_angles&quot;: joint_values(config[&quot;default_joint_pos&quot;], names, &quot;default_joint_pos&quot;),</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>              &quot;kps&quot;: joint_values(config[&quot;joint_kp&quot;], names, &quot;joint_kp&quot;),</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>              &quot;kds&quot;: joint_values(config[&quot;joint_kd&quot;], names, &quot;joint_kd&quot;),</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>              &quot;action_scale&quot;: config[&quot;action_scale&quot;], &quot;clip_actions&quot;: config.get(&quot;clip_actions&quot;, 1000000.0)}</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>     if len(robot[&quot;action_scale&quot;]) != 21 or not np.isfinite(robot[&quot;action_scale&quot;]).all() or min(robot[&quot;action_scale&quot;]) &lt;= 0:</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>         raise ValueError(&quot;Invalid action scales&quot;)</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>     if min(robot[&quot;kps&quot;] + robot[&quot;kds&quot;]) &lt; 0 or not math.isfinite(robot[&quot;clip_actions&quot;]) or robot[&quot;clip_actions&quot;] &lt;= 0:</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>         raise ValueError(&quot;Invalid gains/clipping&quot;)</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>     return {&quot;RobotCfg&quot;: robot, &quot;WbcCfg&quot;: {&quot;motion_id&quot;: action, &quot;control_dt&quot;: 0.02, &quot;start_hold_sec&quot;: 1.0,</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>         &quot;reference_num_frames&quot;: int(reference_meta[&quot;num_frames&quot;]),</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>         &quot;reference_root_body_index&quot;: reference_meta[&quot;body_names&quot;].split(&quot;,&quot;).index(&quot;base_link&quot;),</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>         &quot;history_steps&quot;: HISTORY_STEPS, &quot;future_steps&quot;: FUTURE_STEPS, &quot;previous_action_steps&quot;: 3,</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>         &quot;policy_input_name&quot;: &quot;policy&quot;, &quot;command_input_name&quot;: &quot;command_short&quot;, &quot;output_name&quot;: &quot;action&quot;}}</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a> </span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a> </span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a> def fp16_initializers(model):</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>     &quot;&quot;&quot;Store native float initializers in FP16 while retaining the FP32 graph ABI.&quot;&quot;&quot;</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>     import onnx</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>     from onnx import helper, numpy_helper</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a> </span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>     model = copy.deepcopy(model)</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>     names = {x.name for x in model.graph.initializer}</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>     names.update(x for n in model.graph.node for x in list(n.input) + list(n.output))</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>     prefix = &quot;wbc_fp16_storage_&quot;</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>     if any(name.startswith(prefix) for name in names):</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>         raise ValueError(&quot;Model already contains FP16 storage casts&quot;)</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>     if any(a.type in (onnx.AttributeProto.GRAPH, onnx.AttributeProto.GRAPHS)</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>            for node in model.graph.node for a in node.attribute):</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>         raise ValueError(&quot;FP16 storage conversion does not support subgraphs&quot;)</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>     casts = []</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>     for index, tensor in enumerate(model.graph.initializer):</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>         if tensor.data_location == onnx.TensorProto.EXTERNAL:</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>             raise ValueError(&quot;External tensor data is not supported&quot;)</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>         if tensor.data_type != onnx.TensorProto.FLOAT:</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>             continue</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>         original_name = tensor.name</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>         values = numpy_helper.to_array(tensor)</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>         with np.errstate(over=&quot;ignore&quot;):</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>             reduced = values.astype(np.float16)</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>         if not np.isfinite(values).all() or not np.isfinite(reduced).all():</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>             raise ValueError(f&quot;Initializer cannot be represented in FP16: {original_name}&quot;)</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>         storage_name = prefix + str(index)</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>         tensor.CopyFrom(numpy_helper.from_array(reduced, storage_name))</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>         casts.append(helper.make_node(&quot;Cast&quot;, [storage_name], [original_name],</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>                                       name=storage_name + &quot;_cast&quot;, to=onnx.TensorProto.FLOAT))</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>     nodes = casts + list(model.graph.node)</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>     del model.graph.node[:]</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>     model.graph.node.extend(nodes)</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>     onnx.checker.check_model(model, full_check=True)</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>     return model</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a> </span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a> </span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a> def finalize_fp16(stage, graph, report):</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>     &quot;&quot;&quot;Convert and verify the final delivery against the existing FP32 oracles.&quot;&quot;&quot;</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>     import onnx</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>     import onnxruntime as ort</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>     from convert_onnx_to_rknn_rk3588_wbc_reference import check_reference_model</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>     from wbc_lora_assets import check_graph, read_json</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a> </span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>     options = ort.SessionOptions()</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>     options.intra_op_num_threads = options.inter_op_num_threads = 1</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>     final_report = {&quot;initializer_dtype&quot;: &quot;float16&quot;, &quot;application_dtype&quot;: &quot;float32&quot;,</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>                     &quot;policy_max_abs_error&quot;: 0.05, &quot;reference_max_abs_error&quot;: 0.02,</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>                     &quot;graphs&quot;: [], &quot;references&quot;: []}</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>     for manifest_name, current in [(&quot;base_manifest.json&quot;, graph)] + [</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>             (name, read_json(stage / name)) for name in graph[&quot;probes&quot;]]:</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a>         path = asset_path(stage, current[&quot;model&quot;][&quot;onnx&quot;])</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a>         onnx.save(fp16_initializers(onnx.load(str(path), load_external_data=False)), str(path))</span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>         current[&quot;model&quot;][&quot;sha256&quot;] = sha256(path)</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>         current[&quot;initializer_dtype&quot;] = &quot;float16&quot;</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>         write_json(stage / manifest_name, current)</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>         check_graph(path, stage / manifest_name)</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>         session = ort.InferenceSession(str(path), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a>         errors, first_feed, first_output = [], None, None</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>         with np.load(stage / current[&quot;verification_data&quot;]) as observations, \</span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a>                 np.load(stage / current[&quot;verification_expected&quot;]) as expected:</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>             for action in current[&quot;actions&quot;]:</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a>                 action_id = action[&quot;action_id&quot;]</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a>                 packed = load_adapter(asset_path(stage, action[&quot;adapter_manifest&quot;]), current, action_id)</span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a>                 maximum = 0.0</span>
+<span id="C-L356" class="line"><a href="#C-L356"> 356</a>                 for i, target in enumerate(expected[action_id]):</span>
+<span id="C-L357" class="line"><a href="#C-L357"> 357</a>                     feed = graph_feeds(current, {key: observations[key][i] for key in observations.files}, packed)</span>
+<span id="C-L358" class="line"><a href="#C-L358"> 358</a>                     actual = session.run([&quot;action&quot;], feed)[0]</span>
+<span id="C-L359" class="line"><a href="#C-L359"> 359</a>                     error = float(np.max(np.abs(actual - target)))</span>
+<span id="C-L360" class="line"><a href="#C-L360"> 360</a>                     if not np.isfinite(actual).all() or not np.isfinite(error) or error &gt; 0.05:</span>
+<span id="C-L361" class="line"><a href="#C-L361"> 361</a>                         raise ValueError(f&quot;Final FP16 policy/probe tolerance exceeded: {manifest_name}/{action_id}: {error}&quot;)</span>
+<span id="C-L362" class="line"><a href="#C-L362"> 362</a>                     maximum = max(maximum, error)</span>
+<span id="C-L363" class="line"><a href="#C-L363"> 363</a>                     if first_feed is None:</span>
+<span id="C-L364" class="line"><a href="#C-L364"> 364</a>                         first_feed, first_output = feed, actual.copy()</span>
+<span id="C-L365" class="line"><a href="#C-L365"> 365</a>                 errors.append({&quot;action_id&quot;: action_id, &quot;max_abs&quot;: maximum})</span>
+<span id="C-L366" class="line"><a href="#C-L366"> 366</a>         np.testing.assert_array_equal(session.run([&quot;action&quot;], first_feed)[0], first_output)</span>
+<span id="C-L367" class="line"><a href="#C-L367"> 367</a>         final_report[&quot;graphs&quot;].append({&quot;manifest&quot;: manifest_name, &quot;actions&quot;: errors,</span>
+<span id="C-L368" class="line"><a href="#C-L368"> 368</a>                                        &quot;switch_repeatability&quot;: &quot;passed&quot;})</span>
+<span id="C-L369" class="line"><a href="#C-L369"> 369</a>         print(f&quot;FP16 verified: {manifest_name}, {len(errors)} actions&quot;, flush=True)</span>
+<span id="C-L370" class="line"><a href="#C-L370"> 370</a>     for action in graph[&quot;actions&quot;]:</span>
+<span id="C-L371" class="line"><a href="#C-L371"> 371</a>         path = asset_path(stage, action[&quot;reference_onnx&quot;])</span>
+<span id="C-L372" class="line"><a href="#C-L372"> 372</a>         original = ort.InferenceSession(str(path), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L373" class="line"><a href="#C-L373"> 373</a>         onnx.save(fp16_initializers(onnx.load(str(path), load_external_data=False)), str(path))</span>
+<span id="C-L374" class="line"><a href="#C-L374"> 374</a>         _, _, meta = check_reference_model(path)</span>
+<span id="C-L375" class="line"><a href="#C-L375"> 375</a>         converted = ort.InferenceSession(str(path), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L376" class="line"><a href="#C-L376"> 376</a>         count, maximum = int(meta[&quot;num_frames&quot;]), 0.0</span>
+<span id="C-L377" class="line"><a href="#C-L377"> 377</a>         for frame in [-1] + list(range(count)) + [count]:</span>
+<span id="C-L378" class="line"><a href="#C-L378"> 378</a>             feed = {&quot;time_step&quot;: np.asarray([[frame]], dtype=np.float32)}</span>
+<span id="C-L379" class="line"><a href="#C-L379"> 379</a>             for actual, target in zip(converted.run(None, feed), original.run(None, feed)):</span>
+<span id="C-L380" class="line"><a href="#C-L380"> 380</a>                 error = float(np.max(np.abs(actual - target)))</span>
+<span id="C-L381" class="line"><a href="#C-L381"> 381</a>                 if not np.isfinite(actual).all() or not np.isfinite(error) or error &gt; 0.02:</span>
+<span id="C-L382" class="line"><a href="#C-L382"> 382</a>                     raise ValueError(f&quot;Final FP16 reference tolerance exceeded: {action[&#x27;action_id&#x27;]}/{frame}: {error}&quot;)</span>
+<span id="C-L383" class="line"><a href="#C-L383"> 383</a>                 maximum = max(maximum, error)</span>
+<span id="C-L384" class="line"><a href="#C-L384"> 384</a>         action[&quot;reference_onnx_sha256&quot;] = sha256(path)</span>
+<span id="C-L385" class="line"><a href="#C-L385"> 385</a>         final_report[&quot;references&quot;].append({&quot;action_id&quot;: action[&quot;action_id&quot;], &quot;frames_checked&quot;: count + 2,</span>
+<span id="C-L386" class="line"><a href="#C-L386"> 386</a>                                             &quot;max_abs&quot;: maximum})</span>
+<span id="C-L387" class="line"><a href="#C-L387"> 387</a>     # Probe catalogs share the same action/reference identities as the policy.</span>
+<span id="C-L388" class="line"><a href="#C-L388"> 388</a>     for name in graph[&quot;probes&quot;]:</span>
+<span id="C-L389" class="line"><a href="#C-L389"> 389</a>         probe = read_json(stage / name)</span>
+<span id="C-L390" class="line"><a href="#C-L390"> 390</a>         probe[&quot;actions&quot;] = copy.deepcopy(graph[&quot;actions&quot;])</span>
+<span id="C-L391" class="line"><a href="#C-L391"> 391</a>         write_json(stage / name, probe)</span>
+<span id="C-L392" class="line"><a href="#C-L392"> 392</a>     report[&quot;fp16_delivery&quot;] = final_report</span>
+<span id="C-L393" class="line"><a href="#C-L393"> 393</a> </span>
+<span id="C-L394" class="line"><a href="#C-L394"> 394</a> </span>
+<span id="C-L395" class="line"><a href="#C-L395"> 395</a> def export_delivery(source, output, actions, samples=33, base_actions=(), fp16=False):</span>
+<span id="C-L396" class="line"><a href="#C-L396"> 396</a>     import onnx</span>
+<span id="C-L397" class="line"><a href="#C-L397"> 397</a>     import onnxruntime as ort</span>
+<span id="C-L398" class="line"><a href="#C-L398"> 398</a>     import torch</span>
+<span id="C-L399" class="line"><a href="#C-L399"> 399</a>     from convert_onnx_to_rknn_rk3588_wbc_reference import check_reference_model</span>
+<span id="C-L400" class="line"><a href="#C-L400"> 400</a>     source, output = Path(source).resolve(), Path(output).resolve()</span>
+<span id="C-L401" class="line"><a href="#C-L401"> 401</a>     index = json.loads((source / &quot;emotion_index.json&quot;).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L402" class="line"><a href="#C-L402"> 402</a>     if actions is None:</span>
+<span id="C-L403" class="line"><a href="#C-L403"> 403</a>         actions = [entry[&quot;motion&quot;] for entry in index]</span>
+<span id="C-L404" class="line"><a href="#C-L404"> 404</a>     if not actions or len(set(actions)) != len(actions) or any(not ID_PATTERN.fullmatch(x) for x in actions):</span>
+<span id="C-L405" class="line"><a href="#C-L405"> 405</a>         raise ValueError(&quot;Select unique valid action IDs&quot;)</span>
+<span id="C-L406" class="line"><a href="#C-L406"> 406</a>     if len(set(base_actions)) != len(base_actions) or not set(base_actions) &lt;= set(actions):</span>
+<span id="C-L407" class="line"><a href="#C-L407"> 407</a>         raise ValueError(&quot;--base-actions must be a unique subset of --actions&quot;)</span>
+<span id="C-L408" class="line"><a href="#C-L408"> 408</a>     base_actions = set(base_actions)</span>
+<span id="C-L409" class="line"><a href="#C-L409"> 409</a>     if samples &lt; 20:</span>
+<span id="C-L410" class="line"><a href="#C-L410"> 410</a>         raise ValueError(&quot;At least 20 verification samples are required&quot;)</span>
+<span id="C-L411" class="line"><a href="#C-L411"> 411</a>     if output.exists() and (not output.is_dir() or any(output.iterdir())):</span>
+<span id="C-L412" class="line"><a href="#C-L412"> 412</a>         raise ValueError(&quot;Output must be absent or an empty directory&quot;)</span>
+<span id="C-L413" class="line"><a href="#C-L413"> 413</a>     entries = {x[&quot;motion&quot;]: x for x in index}</span>
+<span id="C-L414" class="line"><a href="#C-L414"> 414</a>     if len(entries) != len(index):</span>
+<span id="C-L415" class="line"><a href="#C-L415"> 415</a>         raise ValueError(&quot;Duplicate source action IDs&quot;)</span>
+<span id="C-L416" class="line"><a href="#C-L416"> 416</a>     if any(x not in entries for x in actions):</span>
+<span id="C-L417" class="line"><a href="#C-L417"> 417</a>         raise ValueError(&quot;Unknown source action ID&quot;)</span>
+<span id="C-L418" class="line"><a href="#C-L418"> 418</a>     base_path, onnx_path = source / &quot;base/base_ckpt.pt&quot;, source / &quot;base/policy.onnx&quot;</span>
+<span id="C-L419" class="line"><a href="#C-L419"> 419</a>     base_hash = sha256(base_path)</span>
+<span id="C-L420" class="line"><a href="#C-L420"> 420</a>     base = checkpoint(base_path)[&quot;policy&quot;]</span>
+<span id="C-L421" class="line"><a href="#C-L421"> 421</a>     model = onnx.load(str(onnx_path))</span>
+<span id="C-L422" class="line"><a href="#C-L422"> 422</a>     onnx.checker.check_model(model)</span>
+<span id="C-L423" class="line"><a href="#C-L423"> 423</a>     if {x.name: [d.dim_value for d in x.type.tensor_type.shape.dim] for x in model.graph.input} != {</span>
+<span id="C-L424" class="line"><a href="#C-L424"> 424</a>             &quot;policy&quot;: [399], &quot;command_short&quot;: [240]}:</span>
+<span id="C-L425" class="line"><a href="#C-L425"> 425</a>         raise ValueError(&quot;Unexpected Base ONNX interface&quot;)</span>
+<span id="C-L426" class="line"><a href="#C-L426"> 426</a>     linears, norms, bindings, norm_bindings, stats = topology(base, model)</span>
+<span id="C-L427" class="line"><a href="#C-L427"> 427</a>     config = yaml.safe_load((source / &quot;base/policy.yaml&quot;).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L428" class="line"><a href="#C-L428"> 428</a>     schema = schema_for(linears, norms, base[&quot;actor&quot;])</span>
+<span id="C-L429" class="line"><a href="#C-L429"> 429</a>     # Bias and LayerNorm inputs are complete parameters, never zero increments.</span>
+<span id="C-L430" class="line"><a href="#C-L430"> 430</a>     base_adapter = {&quot;actor&quot;: {</span>
+<span id="C-L431" class="line"><a href="#C-L431"> 431</a>         p[&quot;actor_key&quot;]: torch.zeros(p[&quot;shape&quot;], dtype=torch.float32)</span>
+<span id="C-L432" class="line"><a href="#C-L432"> 432</a>         if p[&quot;actor_key&quot;].endswith((&quot;.lora_A&quot;, &quot;.lora_B&quot;)) else base[&quot;actor&quot;][p[&quot;actor_key&quot;]]</span>
+<span id="C-L433" class="line"><a href="#C-L433"> 433</a>         for p in schema}}</span>
+<span id="C-L434" class="line"><a href="#C-L434"> 434</a>     base_parameters = {p[&quot;name&quot;]: array(base_adapter[&quot;actor&quot;][p[&quot;actor_key&quot;]]) for p in schema}</span>
+<span id="C-L435" class="line"><a href="#C-L435"> 435</a>     graph = {&quot;format&quot;: GRAPH_FORMAT, &quot;kind&quot;: &quot;policy&quot;, &quot;rank&quot;: 16, &quot;alpha&quot;: 16,</span>
+<span id="C-L436" class="line"><a href="#C-L436"> 436</a>              &quot;base_checkpoint_sha256&quot;: base_hash, &quot;normalization_sha256&quot;: normalization_hash(stats),</span>
+<span id="C-L437" class="line"><a href="#C-L437"> 437</a>              &quot;parameter_schema_sha256&quot;: fingerprint(schema), &quot;parameters&quot;: schema,</span>
+<span id="C-L438" class="line"><a href="#C-L438"> 438</a>              &quot;target_precision&quot;: &quot;float16&quot;, &quot;application_dtype&quot;: &quot;float32&quot;,</span>
+<span id="C-L439" class="line"><a href="#C-L439"> 439</a>              &quot;source_onnx_sha256&quot;: sha256(onnx_path),</span>
+<span id="C-L440" class="line"><a href="#C-L440"> 440</a>              &quot;inputs&quot;: [{&quot;name&quot;: x.name, &quot;shape&quot;: [d.dim_value for d in x.type.tensor_type.shape.dim],</span>
+<span id="C-L441" class="line"><a href="#C-L441"> 441</a>                          &quot;dtype&quot;: &quot;float32&quot;, &quot;role&quot;: &quot;observation&quot;} for x in model.graph.input] +</span>
+<span id="C-L442" class="line"><a href="#C-L442"> 442</a>                        [{&quot;name&quot;: p[&quot;name&quot;], &quot;shape&quot;: p[&quot;shape&quot;], &quot;dtype&quot;: &quot;float32&quot;, &quot;role&quot;: &quot;adapter&quot;} for p in schema],</span>
+<span id="C-L443" class="line"><a href="#C-L443"> 443</a>              &quot;outputs&quot;: [{&quot;name&quot;: &quot;action&quot;, &quot;shape&quot;: [21], &quot;dtype&quot;: &quot;float32&quot;}],</span>
+<span id="C-L444" class="line"><a href="#C-L444"> 444</a>              &quot;verification_data&quot;: &quot;verification_inputs.npz&quot;, &quot;actions&quot;: [], &quot;probes&quot;: []}</span>
+<span id="C-L445" class="line"><a href="#C-L445"> 445</a>     rng = np.random.default_rng(0)</span>
+<span id="C-L446" class="line"><a href="#C-L446"> 446</a>     observations = {k: np.asarray(mean + std * rng.uniform(-0.25, 0.25, (samples, len(mean))), np.float32)</span>
+<span id="C-L447" class="line"><a href="#C-L447"> 447</a>                     for k, (mean, std) in stats.items()}</span>
+<span id="C-L448" class="line"><a href="#C-L448"> 448</a>     for k, (mean, _) in stats.items():</span>
+<span id="C-L449" class="line"><a href="#C-L449"> 449</a>         observations[k][0] = mean</span>
+<span id="C-L450" class="line"><a href="#C-L450"> 450</a>     output.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L451" class="line"><a href="#C-L451"> 451</a>     with tempfile.TemporaryDirectory(prefix=&quot;.wbc_lora_&quot;, dir=output.parent) as temporary:</span>
+<span id="C-L452" class="line"><a href="#C-L452"> 452</a>         stage = Path(temporary)</span>
+<span id="C-L453" class="line"><a href="#C-L453"> 453</a>         dynamic = dynamic_model(model, schema, bindings, norm_bindings)</span>
+<span id="C-L454" class="line"><a href="#C-L454"> 454</a>         onnx.checker.check_model(dynamic)</span>
+<span id="C-L455" class="line"><a href="#C-L455"> 455</a>         onnx.save(dynamic, str(stage / &quot;base_lora.onnx&quot;))</span>
+<span id="C-L456" class="line"><a href="#C-L456"> 456</a>         graph[&quot;model&quot;] = {&quot;onnx&quot;: &quot;base_lora.onnx&quot;, &quot;sha256&quot;: sha256(stage / &quot;base_lora.onnx&quot;), &quot;rknn&quot;: &quot;base_lora.rknn&quot;, &quot;rknn_record&quot;: &quot;base_lora.rknn.json&quot;}</span>
+<span id="C-L457" class="line"><a href="#C-L457"> 457</a>         np.savez(stage / graph[&quot;verification_data&quot;], **observations)</span>
+<span id="C-L458" class="line"><a href="#C-L458"> 458</a>         options = ort.SessionOptions()</span>
+<span id="C-L459" class="line"><a href="#C-L459"> 459</a>         options.intra_op_num_threads = options.inter_op_num_threads = 1</span>
+<span id="C-L460" class="line"><a href="#C-L460"> 460</a>         session = ort.InferenceSession(str(stage / &quot;base_lora.onnx&quot;), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L461" class="line"><a href="#C-L461"> 461</a>         original_session = ort.InferenceSession(str(onnx_path), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L462" class="line"><a href="#C-L462"> 462</a>         report = {&quot;samples_per_action&quot;: samples, &quot;inputs&quot;: &quot;synthetic normalized-range conversion samples, not robot rollout&quot;,</span>
+<span id="C-L463" class="line"><a href="#C-L463"> 463</a>                   &quot;base_checkpoint_sha256&quot;: base_hash, &quot;base_actions&quot;: sorted(base_actions), &quot;actions&quot;: [], &quot;probes&quot;: [],</span>
+<span id="C-L464" class="line"><a href="#C-L464"> 464</a>                   &quot;rknn_conversion&quot;: &quot;not_run&quot;, &quot;rk3588_gate&quot;: &quot;not_run&quot;}</span>
+<span id="C-L465" class="line"><a href="#C-L465"> 465</a>         adapters, actors, expected_actions = {}, {}, {}</span>
+<span id="C-L466" class="line"><a href="#C-L466"> 466</a>         for action in actions:</span>
+<span id="C-L467" class="line"><a href="#C-L467"> 467</a>             entry = entries[action]</span>
+<span id="C-L468" class="line"><a href="#C-L468"> 468</a>             parameter_source = &quot;base&quot; if action in base_actions else &quot;lora&quot;</span>
+<span id="C-L469" class="line"><a href="#C-L469"> 469</a>             checkpoint_verification = &quot;not_applicable&quot;</span>
+<span id="C-L470" class="line"><a href="#C-L470"> 470</a>             expected_source = &quot;base/policy.onnx&quot;</span>
+<span id="C-L471" class="line"><a href="#C-L471"> 471</a>             if action in base_actions:</span>
+<span id="C-L472" class="line"><a href="#C-L472"> 472</a>                 # Explicit opt-in only. Missing/bad tuned assets never imply Base mode.</span>
+<span id="C-L473" class="line"><a href="#C-L473"> 473</a>                 adapter, final = base_adapter, base</span>
+<span id="C-L474" class="line"><a href="#C-L474"> 474</a>             else:</span>
+<span id="C-L475" class="line"><a href="#C-L475"> 475</a>                 adapter_path = asset_path(source, entry[&quot;adapter&quot;])</span>
+<span id="C-L476" class="line"><a href="#C-L476"> 476</a>                 if sha256(adapter_path) != entry[&quot;adapter_sha256&quot;]:</span>
+<span id="C-L477" class="line"><a href="#C-L477"> 477</a>                     raise ValueError(f&quot;Source adapter checksum mismatch: {adapter_path}&quot;)</span>
+<span id="C-L478" class="line"><a href="#C-L478"> 478</a>                 adapter = checkpoint(adapter_path)</span>
+<span id="C-L479" class="line"><a href="#C-L479"> 479</a>                 merged = adapter_state(adapter, base, base_hash, linears, schema)</span>
+<span id="C-L480" class="line"><a href="#C-L480"> 480</a>                 # Use an FP32 merged actor as the oracle for the dynamic graph</span>
+<span id="C-L481" class="line"><a href="#C-L481"> 481</a>                 # and FP16 payload, without retaining a full checkpoint per action.</span>
+<span id="C-L482" class="line"><a href="#C-L482"> 482</a>                 final = {&quot;actor&quot;: merged}</span>
+<span id="C-L483" class="line"><a href="#C-L483"> 483</a>                 expected_source = &quot;base_plus_lora_actor&quot;</span>
+<span id="C-L484" class="line"><a href="#C-L484"> 484</a>                 checkpoint_verification = &quot;not_provided&quot;</span>
+<span id="C-L485" class="line"><a href="#C-L485"> 485</a>                 if entry.get(&quot;checkpoint&quot;) is not None:</span>
+<span id="C-L486" class="line"><a href="#C-L486"> 486</a>                     final_path = asset_path(source, entry[&quot;checkpoint&quot;])</span>
+<span id="C-L487" class="line"><a href="#C-L487"> 487</a>                     checkpoint_verification = &quot;missing&quot;</span>
+<span id="C-L488" class="line"><a href="#C-L488"> 488</a>                     if final_path.exists():</span>
+<span id="C-L489" class="line"><a href="#C-L489"> 489</a>                         # Existing optional checkpoints must still pass all checks.</span>
+<span id="C-L490" class="line"><a href="#C-L490"> 490</a>                         if sha256(final_path) != entry.get(&quot;checkpoint_sha256&quot;):</span>
+<span id="C-L491" class="line"><a href="#C-L491"> 491</a>                             raise ValueError(f&quot;Source checkpoint checksum mismatch: {final_path}&quot;)</span>
+<span id="C-L492" class="line"><a href="#C-L492"> 492</a>                         final = checkpoint(final_path)[&quot;policy&quot;]</span>
+<span id="C-L493" class="line"><a href="#C-L493"> 493</a>                         for key, value in merged.items():</span>
+<span id="C-L494" class="line"><a href="#C-L494"> 494</a>                             if key.endswith(&quot;actor_std&quot;):</span>
+<span id="C-L495" class="line"><a href="#C-L495"> 495</a>                                 continue</span>
+<span id="C-L496" class="line"><a href="#C-L496"> 496</a>                             if key not in final[&quot;actor&quot;] or not torch.allclose(value, final[&quot;actor&quot;][key], atol=2e-6, rtol=1e-5):</span>
+<span id="C-L497" class="line"><a href="#C-L497"> 497</a>                                 raise ValueError(f&quot;Adapter does not reconstruct final actor: {key}&quot;)</span>
+<span id="C-L498" class="line"><a href="#C-L498"> 498</a>                         if normalization_hash(statistics(final[&quot;vecnorms&quot;])) != graph[&quot;normalization_sha256&quot;]:</span>
+<span id="C-L499" class="line"><a href="#C-L499"> 499</a>                             raise ValueError(&quot;Final checkpoint normalization mismatch&quot;)</span>
+<span id="C-L500" class="line"><a href="#C-L500"> 500</a>                         expected_source = &quot;final_checkpoint_actor&quot;</span>
+<span id="C-L501" class="line"><a href="#C-L501"> 501</a>                         checkpoint_verification = &quot;passed&quot;</span>
+<span id="C-L502" class="line"><a href="#C-L502"> 502</a>             adapter_dir = stage / &quot;adapters&quot; / action</span>
+<span id="C-L503" class="line"><a href="#C-L503"> 503</a>             export_adapter(adapter_dir, action, adapter, graph, parameter_source)</span>
+<span id="C-L504" class="line"><a href="#C-L504"> 504</a>             parameters = {p[&quot;name&quot;]: array(adapter[&quot;actor&quot;][p[&quot;actor_key&quot;]]) for p in schema}</span>
+<span id="C-L505" class="line"><a href="#C-L505"> 505</a>             packed = load_adapter(adapter_dir / &quot;manifest.json&quot;, graph, expected_action_id=action)</span>
+<span id="C-L506" class="line"><a href="#C-L506"> 506</a>             if action in base_actions:</span>
+<span id="C-L507" class="line"><a href="#C-L507"> 507</a>                 for p in schema:</span>
+<span id="C-L508" class="line"><a href="#C-L508"> 508</a>                     np.testing.assert_array_equal(packed[p[&quot;name&quot;]], base_parameters[p[&quot;name&quot;]].astype(&quot;&lt;f2&quot;).astype(np.float32))</span>
+<span id="C-L509" class="line"><a href="#C-L509"> 509</a>             maximum, packed_maximum, expected_rows = 0.0, 0.0, []</span>
+<span id="C-L510" class="line"><a href="#C-L510"> 510</a>             for i in range(samples):</span>
+<span id="C-L511" class="line"><a href="#C-L511"> 511</a>                 obs = {k: v[i] for k, v in observations.items()}</span>
+<span id="C-L512" class="line"><a href="#C-L512"> 512</a>                 expected = actor_forward(final[&quot;actor&quot;], linears, norms, stats, obs[&quot;policy&quot;], obs[&quot;command_short&quot;])</span>
+<span id="C-L513" class="line"><a href="#C-L513"> 513</a>                 if action in base_actions:</span>
+<span id="C-L514" class="line"><a href="#C-L514"> 514</a>                     original = original_session.run([&quot;action&quot;], obs)[0]</span>
+<span id="C-L515" class="line"><a href="#C-L515"> 515</a>                     np.testing.assert_allclose(expected, original, atol=2e-5, rtol=1e-5)</span>
+<span id="C-L516" class="line"><a href="#C-L516"> 516</a>                     expected = original  # Base expectations come from the original Base ONNX.</span>
+<span id="C-L517" class="line"><a href="#C-L517"> 517</a>                 expected_rows.append(expected.copy())</span>
+<span id="C-L518" class="line"><a href="#C-L518"> 518</a>                 actual = session.run([&quot;action&quot;], graph_feeds(graph, obs, parameters))[0]</span>
+<span id="C-L519" class="line"><a href="#C-L519"> 519</a>                 reduced = session.run([&quot;action&quot;], graph_feeds(graph, obs, packed))[0]</span>
+<span id="C-L520" class="line"><a href="#C-L520"> 520</a>                 np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=1e-5)</span>
+<span id="C-L521" class="line"><a href="#C-L521"> 521</a>                 if not np.isfinite(reduced).all() or np.max(np.abs(reduced - expected)) &gt; 0.05:</span>
+<span id="C-L522" class="line"><a href="#C-L522"> 522</a>                     raise ValueError(&quot;FP16 adapter payload exceeded policy precision tolerance&quot;)</span>
+<span id="C-L523" class="line"><a href="#C-L523"> 523</a>                 maximum = max(maximum, float(np.max(np.abs(actual - expected))))</span>
+<span id="C-L524" class="line"><a href="#C-L524"> 524</a>                 packed_maximum = max(packed_maximum, float(np.max(np.abs(reduced - expected))))</span>
+<span id="C-L525" class="line"><a href="#C-L525"> 525</a>             reference = asset_path(source, entry[&quot;motion_onnx&quot;])</span>
+<span id="C-L526" class="line"><a href="#C-L526"> 526</a>             if entry.get(&quot;motion_onnx_sha256&quot;) and sha256(reference) != entry[&quot;motion_onnx_sha256&quot;]:</span>
+<span id="C-L527" class="line"><a href="#C-L527"> 527</a>                 raise ValueError(f&quot;Source reference checksum mismatch: {reference}&quot;)</span>
+<span id="C-L528" class="line"><a href="#C-L528"> 528</a>             _, _, meta = check_reference_model(reference)</span>
+<span id="C-L529" class="line"><a href="#C-L529"> 529</a>             action_dir = stage / &quot;actions&quot; / action</span>
+<span id="C-L530" class="line"><a href="#C-L530"> 530</a>             action_dir.mkdir(parents=True)</span>
+<span id="C-L531" class="line"><a href="#C-L531"> 531</a>             shutil.copyfile(reference, action_dir / &quot;reference_motion.onnx&quot;)</span>
+<span id="C-L532" class="line"><a href="#C-L532"> 532</a>             cfg = action_config(config, meta, action)</span>
+<span id="C-L533" class="line"><a href="#C-L533"> 533</a>             (action_dir / &quot;rl_config.yaml&quot;).write_text(yaml.safe_dump(cfg, sort_keys=False), encoding=&quot;utf-8&quot;)</span>
+<span id="C-L534" class="line"><a href="#C-L534"> 534</a>             graph[&quot;actions&quot;].append({&quot;action_id&quot;: action, &quot;parameter_source&quot;: parameter_source,</span>
+<span id="C-L535" class="line"><a href="#C-L535"> 535</a>                 &quot;adapter_manifest&quot;: f&quot;adapters/{action}/manifest.json&quot;,</span>
+<span id="C-L536" class="line"><a href="#C-L536"> 536</a>                 &quot;config&quot;: f&quot;actions/{action}/rl_config.yaml&quot;, &quot;config_sha256&quot;: sha256(action_dir / &quot;rl_config.yaml&quot;),</span>
+<span id="C-L537" class="line"><a href="#C-L537"> 537</a>                 &quot;reference_onnx&quot;: f&quot;actions/{action}/reference_motion.onnx&quot;, &quot;reference_onnx_sha256&quot;: sha256(reference),</span>
+<span id="C-L538" class="line"><a href="#C-L538"> 538</a>                 &quot;reference_rknn&quot;: f&quot;actions/{action}/reference_motion.rknn&quot;,</span>
+<span id="C-L539" class="line"><a href="#C-L539"> 539</a>                 &quot;reference_rknn_record&quot;: f&quot;actions/{action}/reference_motion.rknn.json&quot;})</span>
+<span id="C-L540" class="line"><a href="#C-L540"> 540</a>             report[&quot;actions&quot;].append({&quot;action_id&quot;: action, &quot;parameter_source&quot;: parameter_source,</span>
+<span id="C-L541" class="line"><a href="#C-L541"> 541</a>                 &quot;expected_source&quot;: expected_source, &quot;full_checkpoint_verification&quot;: checkpoint_verification,</span>
+<span id="C-L542" class="line"><a href="#C-L542"> 542</a>                 &quot;fp32_max_abs&quot;: maximum, &quot;fp16_payload_max_abs&quot;: packed_maximum})</span>
+<span id="C-L543" class="line"><a href="#C-L543"> 543</a>             adapters[action], actors[action] = packed, final[&quot;actor&quot;]</span>
+<span id="C-L544" class="line"><a href="#C-L544"> 544</a>             expected_actions[action] = np.stack(expected_rows)</span>
+<span id="C-L545" class="line"><a href="#C-L545"> 545</a>             print(f&quot;Exported {len(expected_actions)}/{len(actions)}: {action}&quot;, flush=True)</span>
+<span id="C-L546" class="line"><a href="#C-L546"> 546</a>         np.savez(stage / &quot;verification_expected.npz&quot;, **expected_actions)</span>
+<span id="C-L547" class="line"><a href="#C-L547"> 547</a>         graph[&quot;verification_expected&quot;] = &quot;verification_expected.npz&quot;</span>
+<span id="C-L548" class="line"><a href="#C-L548"> 548</a>         graph[&quot;verification_data_sha256&quot;] = sha256(stage / graph[&quot;verification_data&quot;])</span>
+<span id="C-L549" class="line"><a href="#C-L549"> 549</a>         graph[&quot;verification_expected_sha256&quot;] = sha256(stage / graph[&quot;verification_expected&quot;])</span>
+<span id="C-L550" class="line"><a href="#C-L550"> 550</a>         base_max = 0.0</span>
+<span id="C-L551" class="line"><a href="#C-L551"> 551</a>         for i in range(samples):</span>
+<span id="C-L552" class="line"><a href="#C-L552"> 552</a>             obs = {k: v[i] for k, v in observations.items()}</span>
+<span id="C-L553" class="line"><a href="#C-L553"> 553</a>             actual = session.run([&quot;action&quot;], graph_feeds(graph, obs, base_parameters))[0]</span>
+<span id="C-L554" class="line"><a href="#C-L554"> 554</a>             expected = original_session.run([&quot;action&quot;], obs)[0]</span>
+<span id="C-L555" class="line"><a href="#C-L555"> 555</a>             np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=1e-5)</span>
+<span id="C-L556" class="line"><a href="#C-L556"> 556</a>             base_max = max(base_max, float(np.max(np.abs(actual - expected))))</span>
+<span id="C-L557" class="line"><a href="#C-L557"> 557</a>         report[&quot;zero_adapter_base_max_abs&quot;] = base_max</span>
+<span id="C-L558" class="line"><a href="#C-L558"> 558</a>         obs = {k: v[1] for k, v in observations.items()}</span>
+<span id="C-L559" class="line"><a href="#C-L559"> 559</a>         first = session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[actions[0]]))[0]</span>
+<span id="C-L560" class="line"><a href="#C-L560"> 560</a>         for action in actions[1:]:</span>
+<span id="C-L561" class="line"><a href="#C-L561"> 561</a>             session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[action]))</span>
+<span id="C-L562" class="line"><a href="#C-L562"> 562</a>         again = session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[actions[0]]))[0]</span>
+<span id="C-L563" class="line"><a href="#C-L563"> 563</a>         if not np.array_equal(first, again):</span>
+<span id="C-L564" class="line"><a href="#C-L564"> 564</a>             raise ValueError(&quot;A-to-B-to-A inference is not repeatable&quot;)</span>
+<span id="C-L565" class="line"><a href="#C-L565"> 565</a>         report[&quot;a_to_b_to_a&quot;] = &quot;passed&quot; if len(actions) &gt; 1 else &quot;only_one_adapter_selected&quot;</span>
+<span id="C-L566" class="line"><a href="#C-L566"> 566</a>         report[&quot;base_switches&quot;] = []</span>
+<span id="C-L567" class="line"><a href="#C-L567"> 567</a>         for base_action in sorted(base_actions):</span>
+<span id="C-L568" class="line"><a href="#C-L568"> 568</a>             for tuned_action in (x for x in actions if x not in base_actions):</span>
+<span id="C-L569" class="line"><a href="#C-L569"> 569</a>                 for first_action, middle_action in ((tuned_action, base_action), (base_action, tuned_action)):</span>
+<span id="C-L570" class="line"><a href="#C-L570"> 570</a>                     first = session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[first_action]))[0]</span>
+<span id="C-L571" class="line"><a href="#C-L571"> 571</a>                     session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[middle_action]))</span>
+<span id="C-L572" class="line"><a href="#C-L572"> 572</a>                     again = session.run([&quot;action&quot;], graph_feeds(graph, obs, adapters[first_action]))[0]</span>
+<span id="C-L573" class="line"><a href="#C-L573"> 573</a>                     np.testing.assert_array_equal(first, again)</span>
+<span id="C-L574" class="line"><a href="#C-L574"> 574</a>                     report[&quot;base_switches&quot;].append({&quot;actions&quot;: [first_action, middle_action, first_action],</span>
+<span id="C-L575" class="line"><a href="#C-L575"> 575</a>                                                    &quot;cpu_same_input&quot;: &quot;passed&quot;, &quot;rk3588_resident&quot;: &quot;not_run&quot;})</span>
+<span id="C-L576" class="line"><a href="#C-L576"> 576</a>         for label, index in ((&quot;encoder&quot;, 0), (&quot;decoder&quot;, 3), (&quot;output&quot;, 6)):</span>
+<span id="C-L577" class="line"><a href="#C-L577"> 577</a>             probe, inputs = probe_model(base[&quot;actor&quot;], linears, index, schema)</span>
+<span id="C-L578" class="line"><a href="#C-L578"> 578</a>             onnx.checker.check_model(probe)</span>
+<span id="C-L579" class="line"><a href="#C-L579"> 579</a>             filename = f&quot;probe_{label}.onnx&quot;</span>
+<span id="C-L580" class="line"><a href="#C-L580"> 580</a>             onnx.save(probe, str(stage / filename))</span>
+<span id="C-L581" class="line"><a href="#C-L581"> 581</a>             probe_graph = copy.deepcopy(graph)</span>
+<span id="C-L582" class="line"><a href="#C-L582"> 582</a>             probe_graph.update(kind=&quot;probe&quot;, inputs=inputs,</span>
+<span id="C-L583" class="line"><a href="#C-L583"> 583</a>                 outputs=[{&quot;name&quot;: &quot;action&quot;, &quot;shape&quot;: [DIMS[index][0]], &quot;dtype&quot;: &quot;float32&quot;}],</span>
+<span id="C-L584" class="line"><a href="#C-L584"> 584</a>                 model={&quot;onnx&quot;: filename, &quot;sha256&quot;: sha256(stage / filename), &quot;rknn&quot;: f&quot;probe_{label}.rknn&quot;,</span>
+<span id="C-L585" class="line"><a href="#C-L585"> 585</a>                        &quot;rknn_record&quot;: f&quot;probe_{label}.rknn.json&quot;},</span>
+<span id="C-L586" class="line"><a href="#C-L586"> 586</a>                 verification_data=f&quot;probe_{label}_inputs.npz&quot;, probes=[])</span>
+<span id="C-L587" class="line"><a href="#C-L587"> 587</a>             probe_inputs = rng.uniform(-1, 1, (samples, DIMS[index][1])).astype(np.float32)</span>
+<span id="C-L588" class="line"><a href="#C-L588"> 588</a>             np.savez(stage / probe_graph[&quot;verification_data&quot;], x=probe_inputs)</span>
+<span id="C-L589" class="line"><a href="#C-L589"> 589</a>             probe_session = ort.InferenceSession(str(stage / filename), options, providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L590" class="line"><a href="#C-L590"> 590</a>             probe_errors, probe_expected = [], {}</span>
+<span id="C-L591" class="line"><a href="#C-L591"> 591</a>             from torch.nn import functional as F</span>
+<span id="C-L592" class="line"><a href="#C-L592"> 592</a>             for action in actions:</span>
+<span id="C-L593" class="line"><a href="#C-L593"> 593</a>                 maximum, expected_rows = 0.0, []</span>
+<span id="C-L594" class="line"><a href="#C-L594"> 594</a>                 for value in probe_inputs:</span>
+<span id="C-L595" class="line"><a href="#C-L595"> 595</a>                     actor = actors[action]</span>
+<span id="C-L596" class="line"><a href="#C-L596"> 596</a>                     expected = F.linear(torch.from_numpy(value), actor[linears[index] + &quot;.weight&quot;],</span>
+<span id="C-L597" class="line"><a href="#C-L597"> 597</a>                                         actor[linears[index] + &quot;.bias&quot;])</span>
+<span id="C-L598" class="line"><a href="#C-L598"> 598</a>                     if index in NORMALIZED_LAYERS:</span>
+<span id="C-L599" class="line"><a href="#C-L599"> 599</a>                         norm = norms[NORMALIZED_LAYERS.index(index)]</span>
+<span id="C-L600" class="line"><a href="#C-L600"> 600</a>                         expected = F.mish(F.layer_norm(expected, (1024,), actor[norm + &quot;.weight&quot;],</span>
+<span id="C-L601" class="line"><a href="#C-L601"> 601</a>                                                       actor[norm + &quot;.bias&quot;], eps=1e-5))</span>
+<span id="C-L602" class="line"><a href="#C-L602"> 602</a>                     expected_rows.append(expected.detach().numpy().copy())</span>
+<span id="C-L603" class="line"><a href="#C-L603"> 603</a>                     actual = probe_session.run([&quot;action&quot;], graph_feeds(probe_graph, {&quot;x&quot;: value}, adapters[action]))[0]</span>
+<span id="C-L604" class="line"><a href="#C-L604"> 604</a>                     error = float(np.max(np.abs(actual - expected.detach().numpy())))</span>
+<span id="C-L605" class="line"><a href="#C-L605"> 605</a>                     if not np.isfinite(actual).all() or error &gt; 0.05:</span>
+<span id="C-L606" class="line"><a href="#C-L606"> 606</a>                         raise ValueError(f&quot;FP16 adapter probe verification failed: {label}/{action}&quot;)</span>
+<span id="C-L607" class="line"><a href="#C-L607"> 607</a>                     maximum = max(maximum, error)</span>
+<span id="C-L608" class="line"><a href="#C-L608"> 608</a>                 probe_errors.append({&quot;action_id&quot;: action, &quot;fp16_payload_max_abs&quot;: maximum})</span>
+<span id="C-L609" class="line"><a href="#C-L609"> 609</a>                 probe_expected[action] = np.stack(expected_rows)</span>
+<span id="C-L610" class="line"><a href="#C-L610"> 610</a>             probe_graph[&quot;verification_expected&quot;] = f&quot;probe_{label}_expected.npz&quot;</span>
+<span id="C-L611" class="line"><a href="#C-L611"> 611</a>             np.savez(stage / probe_graph[&quot;verification_expected&quot;], **probe_expected)</span>
+<span id="C-L612" class="line"><a href="#C-L612"> 612</a>             probe_graph[&quot;verification_data_sha256&quot;] = sha256(stage / probe_graph[&quot;verification_data&quot;])</span>
+<span id="C-L613" class="line"><a href="#C-L613"> 613</a>             probe_graph[&quot;verification_expected_sha256&quot;] = sha256(stage / probe_graph[&quot;verification_expected&quot;])</span>
+<span id="C-L614" class="line"><a href="#C-L614"> 614</a>             write_json(stage / f&quot;probe_{label}_manifest.json&quot;, probe_graph)</span>
+<span id="C-L615" class="line"><a href="#C-L615"> 615</a>             graph[&quot;probes&quot;].append(f&quot;probe_{label}_manifest.json&quot;)</span>
+<span id="C-L616" class="line"><a href="#C-L616"> 616</a>             report[&quot;probes&quot;].append({&quot;name&quot;: label, &quot;linear_index&quot;: index, &quot;onnx_checker&quot;: &quot;passed&quot;,</span>
+<span id="C-L617" class="line"><a href="#C-L617"> 617</a>                                      &quot;cpu_verification&quot;: probe_errors})</span>
+<span id="C-L618" class="line"><a href="#C-L618"> 618</a>         if fp16:</span>
+<span id="C-L619" class="line"><a href="#C-L619"> 619</a>             finalize_fp16(stage, graph, report)</span>
+<span id="C-L620" class="line"><a href="#C-L620"> 620</a>         write_json(stage / &quot;base_manifest.json&quot;, graph)</span>
+<span id="C-L621" class="line"><a href="#C-L621"> 621</a>         write_json(stage / &quot;validation_report.json&quot;, report)</span>
+<span id="C-L622" class="line"><a href="#C-L622"> 622</a>         # Hash only the completed deployment assets, never the source checkpoints.</span>
+<span id="C-L623" class="line"><a href="#C-L623"> 623</a>         checksums = [f&quot;{sha256(path)}  {path.relative_to(stage).as_posix()}\n&quot;</span>
+<span id="C-L624" class="line"><a href="#C-L624"> 624</a>                      for path in sorted(stage.rglob(&quot;*&quot;)) if path.is_file()]</span>
+<span id="C-L625" class="line"><a href="#C-L625"> 625</a>         (stage / &quot;ASSETS.sha256&quot;).write_text(&quot;&quot;.join(checksums), encoding=&quot;utf-8&quot;)</span>
+<span id="C-L626" class="line"><a href="#C-L626"> 626</a>         if output.exists():</span>
+<span id="C-L627" class="line"><a href="#C-L627"> 627</a>             output.rmdir()</span>
+<span id="C-L628" class="line"><a href="#C-L628"> 628</a>         stage.rename(output)</span>
+<span id="C-L629" class="line"><a href="#C-L629"> 629</a>     print(json.dumps(report, indent=2))</span>
+<span id="C-L630" class="line"><a href="#C-L630"> 630</a>     return report</span>
+<span id="C-L631" class="line"><a href="#C-L631"> 631</a> </span>
+<span id="C-L632" class="line"><a href="#C-L632"> 632</a> </span>
+<span id="C-L633" class="line"><a href="#C-L633"> 633</a> def main():</span>
+<span id="C-L634" class="line"><a href="#C-L634"> 634</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L635" class="line"><a href="#C-L635"> 635</a>     parser.add_argument(&quot;source&quot;, type=Path)</span>
+<span id="C-L636" class="line"><a href="#C-L636"> 636</a>     parser.add_argument(&quot;output&quot;, type=Path)</span>
+<span id="C-L637" class="line"><a href="#C-L637"> 637</a>     selection = parser.add_mutually_exclusive_group(required=True)</span>
+<span id="C-L638" class="line"><a href="#C-L638"> 638</a>     selection.add_argument(&quot;--actions&quot;, nargs=&quot;+&quot;)</span>
+<span id="C-L639" class="line"><a href="#C-L639"> 639</a>     selection.add_argument(&quot;--all-actions&quot;, action=&quot;store_true&quot;, help=&quot;export every action in emotion_index.json&quot;)</span>
+<span id="C-L640" class="line"><a href="#C-L640"> 640</a>     parser.add_argument(&quot;--base-actions&quot;, nargs=&quot;+&quot;, default=[], help=&quot;subset of --actions using complete Base parameters&quot;)</span>
+<span id="C-L641" class="line"><a href="#C-L641"> 641</a>     parser.add_argument(&quot;--samples&quot;, type=int, default=33)</span>
+<span id="C-L642" class="line"><a href="#C-L642"> 642</a>     parser.add_argument(&quot;--fp16&quot;, action=&quot;store_true&quot;, help=&quot;also convert and verify Base/reference/probe FP16 storage&quot;)</span>
+<span id="C-L643" class="line"><a href="#C-L643"> 643</a>     args = parser.parse_args()</span>
+<span id="C-L644" class="line"><a href="#C-L644"> 644</a>     export_delivery(args.source, args.output, args.actions, args.samples, args.base_actions, args.fp16)</span>
+<span id="C-L645" class="line"><a href="#C-L645"> 645</a> </span>
+<span id="C-L646" class="line"><a href="#C-L646"> 646</a> </span>
+<span id="C-L647" class="line"><a href="#C-L647"> 647</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L648" class="line"><a href="#C-L648"> 648</a>     main()</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

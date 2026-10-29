@@ -1,0 +1,246 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/batch_convert_onnx_to_rknn_rk3588.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/batch_convert_onnx_to_rknn_rk3588.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Batch-build RK3588 FP16 WBC: one shared LoRA graph plus each action&#x27;s reference.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Detects base_manifest.json at the bundle root, or accepts --manifest explicitly.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> Without a manifest, retains the static policy/reference subdirectory traversal.</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> Conversions are sequential; adapters are validated, never compiled as policies.</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> &quot;&quot;&quot;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import argparse</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import json</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import os</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import shlex</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> import subprocess</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import sys</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> from pathlib import Path</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> from wbc_lora_assets import asset_path, check_graph, load_adapter, load_graph_manifest, read_json, rknn_build_config, sha256</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> </span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> CONVERTERS = (</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>     (&quot;policy.onnx&quot;, &quot;convert_onnx_to_rknn_rk3588_wbc_policy.py&quot;),</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     (&quot;reference_motion.onnx&quot;, &quot;convert_onnx_to_rknn_rk3588_wbc_reference.py&quot;),</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> )</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> </span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> def parse_args():</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     parser.add_argument(&quot;root&quot;, type=Path, help=&quot;absolute path whose subfolders contain ONNX models&quot;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     parser.add_argument(&quot;--skip-existing&quot;, action=&quot;store_true&quot;, help=&quot;manifest mode: skip only matching provenance; legacy static mode: skip existing files&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     parser.add_argument(&quot;--dry-run&quot;, action=&quot;store_true&quot;, help=&quot;show commands without converting&quot;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     parser.add_argument(&quot;--manifest&quot;, type=Path, help=&quot;explicit LoRA graph/deployment manifest&quot;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     parser.add_argument(&quot;--device-id&quot;, help=&quot;connected device ID; requires --target rk3588&quot;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     parser.add_argument(&quot;--target&quot;, help=&quot;runtime target platform, e.g. rk3588; otherwise toolkit simulator&quot;)</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     parser.add_argument(&quot;--build-only&quot;, action=&quot;store_true&quot;, help=&quot;export models; leave device validation to the formal C++ worker&quot;)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>     parser.add_argument(&quot;--policy-only&quot;, action=&quot;store_true&quot;, help=&quot;manifest mode: build only the shared policy/probe&quot;)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     parser.add_argument(&quot;--include-probes&quot;, action=&quot;store_true&quot;, help=&quot;manifest mode: also build the listed diagnostic probes&quot;)</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     parser.add_argument(&quot;--log-dir&quot;, type=Path, help=&quot;manifest mode: new directory for per-model logs, exit codes and summary JSON&quot;)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     args = parser.parse_args()</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     if args.build_only and (args.target or args.device_id):</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         parser.error(&quot;--build-only cannot be combined with --target/--device-id&quot;)</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     if not args.root.is_absolute():</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         parser.error(&quot;root must be an absolute path&quot;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     if not args.root.is_dir():</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         parser.error(f&quot;root directory does not exist: {args.root}&quot;)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     if args.policy_only and args.include_probes:</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         parser.error(&quot;--policy-only and --include-probes are mutually exclusive&quot;)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     if args.manifest is None and (args.root / &quot;base_manifest.json&quot;).is_file():</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>         args.manifest = args.root / &quot;base_manifest.json&quot;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>         print(f&quot;[AUTO manifest] {args.manifest}&quot;, flush=True)</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     if not args.manifest and (args.policy_only or args.include_probes or args.log_dir):</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         parser.error(&quot;--policy-only/--include-probes/--log-dir require a LoRA manifest&quot;)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     return args</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> </span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> def convert_manifest(args):</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     import importlib.metadata</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     manifest_path = args.manifest.resolve()</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     root = manifest_path.parent</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     if root != args.root.resolve():</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         raise ValueError(&quot;--manifest must be inside the selected root directory&quot;)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     graph = load_graph_manifest(manifest_path)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     check_graph(asset_path(root, graph[&quot;model&quot;][&quot;onnx&quot;]), manifest_path)</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     commands = [(asset_path(root, graph[&quot;model&quot;][&quot;onnx&quot;]), &quot;convert_onnx_to_rknn_rk3588_wbc_policy.py&quot;,</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>                  asset_path(root, graph[&quot;model&quot;][&quot;rknn&quot;]), manifest_path)]</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     if graph[&quot;kind&quot;] == &quot;policy&quot;:</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>         if not graph.get(&quot;actions&quot;) or len({a[&quot;action_id&quot;] for a in graph[&quot;actions&quot;]}) != len(graph[&quot;actions&quot;]):</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>             raise ValueError(&quot;LoRA manifest requires unique non-empty actions&quot;)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         for action in graph[&quot;actions&quot;]:</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>             load_adapter(asset_path(root, action[&quot;adapter_manifest&quot;]), graph, action[&quot;action_id&quot;])</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             for key, digest in ((&quot;config&quot;, &quot;config_sha256&quot;), (&quot;reference_onnx&quot;, &quot;reference_onnx_sha256&quot;)):</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>                 if sha256(asset_path(root, action[key])) != action[digest]:</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>                     raise ValueError(f&quot;Action source checksum mismatch: {action[&#x27;action_id&#x27;]}&quot;)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>             if not args.policy_only:</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>                 commands.append((asset_path(root, action[&quot;reference_onnx&quot;]),</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>                                  &quot;convert_onnx_to_rknn_rk3588_wbc_reference.py&quot;,</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>                                  asset_path(root, action[&quot;reference_rknn&quot;]), None))</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     if args.include_probes:</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         for relative in graph.get(&quot;probes&quot;, []):</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>             probe_path = asset_path(root, relative)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>             probe = load_graph_manifest(probe_path)</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>             if probe[&quot;kind&quot;] != &quot;probe&quot; or any(probe[k] != graph[k] for k in</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>                     (&quot;base_checkpoint_sha256&quot;, &quot;normalization_sha256&quot;, &quot;parameter_schema_sha256&quot;, &quot;actions&quot;)):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>                 raise ValueError(f&quot;Probe is not from this policy bundle: {probe_path}&quot;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>             check_graph(asset_path(root, probe[&quot;model&quot;][&quot;onnx&quot;]), probe_path)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>             commands.append((asset_path(root, probe[&quot;model&quot;][&quot;onnx&quot;]),</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>                              &quot;convert_onnx_to_rknn_rk3588_wbc_policy.py&quot;,</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>                              asset_path(root, probe[&quot;model&quot;][&quot;rknn&quot;]), probe_path))</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     if len({str(item[2]) for item in commands}) != len(commands):</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         raise ValueError(&quot;Duplicate RKNN output destinations in manifest&quot;)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     for source, converter, _, _ in commands:</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>         if not source.is_file() or not Path(__file__).with_name(converter).is_file():</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>             raise ValueError(f&quot;Missing ONNX or converter: {source} / {converter}&quot;)</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     log_dir = args.log_dir.resolve() if args.log_dir else None</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     if log_dir and not args.dry_run:</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         log_dir.mkdir(parents=True, exist_ok=False)</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>     summary = {&quot;manifest&quot;: str(manifest_path), &quot;graph_manifest_sha256&quot;: sha256(manifest_path),</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>                &quot;rknn_config&quot;: rknn_build_config(),</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>                &quot;target_platform&quot;: &quot;rk3588&quot;, &quot;build_only&quot;: args.build_only,</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>                &quot;formal_runtime&quot;: &quot;not_run&quot;, &quot;planned&quot;: len(commands), &quot;models&quot;: []}</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     failures = 0</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     for index, (source, converter, output, graph_path) in enumerate(commands, 1):</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         skip = False</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         provenance = Path(str(output) + &quot;.json&quot;)</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         if args.skip_existing and output.is_file() and provenance.is_file():</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>             try:</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>                 record = read_json(provenance)</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>             except (ValueError, OSError):</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>                 record = {}</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>             try:</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>                 toolkit = importlib.metadata.version(&quot;rknn-toolkit2&quot;)</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>             except importlib.metadata.PackageNotFoundError:</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>                 toolkit = &quot;unknown&quot;</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>             skip = (record.get(&quot;format&quot;) == &quot;wbc_rknn_conversion_v1&quot; and record.get(&quot;do_quantization&quot;) is False and</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>                     record.get(&quot;rknn_config&quot;) == rknn_build_config() and</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>                     record.get(&quot;source_sha256&quot;) == sha256(source) and</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>                     record.get(&quot;rknn_sha256&quot;) == sha256(output) and record.get(&quot;precision&quot;) == &quot;float16&quot; and</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>                     record.get(&quot;toolkit_version&quot;) == toolkit and toolkit != &quot;unknown&quot; and</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>                     record.get(&quot;target_platform&quot;) == &quot;rk3588&quot; and</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>                     record.get(&quot;converter_sha256&quot;) == sha256(Path(__file__).with_name(converter)) and</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>                     record.get(&quot;asset_helper_sha256&quot;) == sha256(Path(__file__).with_name(&quot;wbc_lora_assets.py&quot;)) and</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>                     record.get(&quot;target&quot;) == args.target and record.get(&quot;device_id&quot;) == args.device_id)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>             if not args.build_only:</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>                 skip = skip and record.get(&quot;verification_backend&quot;) in (&quot;target&quot;, &quot;toolkit_simulator&quot;)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>             if graph_path:</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>                 skip = skip and record.get(&quot;graph_manifest_sha256&quot;) == sha256(graph_path)</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>                 expected = [(a[&quot;action_id&quot;], sha256(asset_path(root, a[&quot;adapter_manifest&quot;]))) for a in graph[&quot;actions&quot;]]</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>                 verified = [(a[&quot;action_id&quot;], a[&quot;adapter_manifest_sha256&quot;]) for a in (record.get(&quot;verification&quot;) or {}).get(&quot;actions&quot;, [])]</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>                 if not args.build_only:</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>                     skip = skip and expected == verified</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         if skip:</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>             print(f&quot;[SKIP matching conversion; validation={record.get(&#x27;verification_backend&#x27;)}] {output}&quot;, flush=True)</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>             summary[&quot;models&quot;].append({&quot;output&quot;: str(output), &quot;status&quot;: &quot;skipped_matching_record&quot;})</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>             continue</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>         command = [sys.executable, &quot;-B&quot;, str(Path(__file__).resolve().parent / converter), str(source), &quot;-o&quot;, str(output)]</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         if args.build_only:</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>             command += [&quot;--build-only&quot;]</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         if graph_path:</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>             command += [&quot;--manifest&quot;, str(graph_path)]</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         if args.target:</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>             command += [&quot;--target&quot;, args.target]</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         if args.device_id:</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>             command += [&quot;--device-id&quot;, args.device_id]</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>         print(f&quot;[{&#x27;DRY-RUN&#x27; if args.dry_run else &#x27;RUN&#x27;}] {shlex.join(command)}&quot;, flush=True)</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         if args.dry_run:</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>             continue</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         entry = {&quot;source&quot;: str(source), &quot;output&quot;: str(output), &quot;command&quot;: command}</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>         try:</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>             if log_dir:</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>                 log_path = log_dir / f&quot;{index:02d}_{output.stem}.log&quot;</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>                 print(f&quot;[LOG] {log_path}&quot;, flush=True)</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>                 with log_path.open(&quot;x&quot;) as stream:</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>                     result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=False)</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>                 entry[&quot;log&quot;] = str(log_path)</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>                 log_path.with_suffix(&quot;.exitcode&quot;).write_text(str(result.returncode) + &quot;\n&quot;)</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>             else:</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>                 result = subprocess.run(command, check=False)</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>             entry.update(exit_code=result.returncode, status=&quot;converted&quot; if result.returncode == 0 else &quot;failed&quot;)</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>         except OSError as error:</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>             entry.update(exit_code=1, status=&quot;failed&quot;, error=str(error))</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>         summary[&quot;models&quot;].append(entry)</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>         if entry[&quot;exit_code&quot;]:</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>             failures += 1</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>             print(f&quot;[FAIL] {source}; remaining models not attempted&quot;, file=sys.stderr, flush=True)</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>             break</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     summary[&quot;failed&quot;] = failures</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     summary[&quot;not_attempted&quot;] = 0 if args.dry_run else len(commands) - len(summary[&quot;models&quot;])</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     if log_dir and not args.dry_run:</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>         (log_dir / &quot;conversion_summary.json&quot;).write_text(json.dumps(summary, indent=2) + &quot;\n&quot;)</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     print(f&quot;LoRA manifest conversions={len(commands)}, failed={failures}, dry_run={args.dry_run}&quot;)</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     return 1 if failures else 0</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a> </span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a> </span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a> def main():</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     args = parse_args()</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     if args.device_id and not args.target:</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>         raise ValueError(&quot;--device-id requires --target rk3588&quot;)</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     if args.manifest:</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>         return convert_manifest(args)</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     root = args.root.resolve()</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>     script_dir = Path(__file__).resolve().parent</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     scripts = {name: script_dir / filename for name, filename in CONVERTERS}</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     for name, script in scripts.items():</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>         if not script.is_file():</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>             print(f&quot;ERROR: converter for {name} not found: {script}&quot;, file=sys.stderr)</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>             return 2</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a> </span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     found = succeeded = failed = skipped = 0</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>     for directory, subdirs, filenames in os.walk(root):</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>         subdirs.sort()</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>         current_dir = Path(directory)</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>         if current_dir == root:  # Only process subfolders (including nested ones).</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>             continue</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>         present = set(filenames)</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>         for onnx_name, _ in CONVERTERS:</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>             if onnx_name not in present:</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>                 continue</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>             onnx_path = current_dir / onnx_name</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>             if not onnx_path.is_file():</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>                 continue</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>             found += 1</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>             output_path = onnx_path.with_suffix(&quot;.rknn&quot;)</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>             if args.skip_existing and output_path.is_file():</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>                 skipped += 1</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>                 print(f&quot;[SKIP] {output_path} already exists&quot;, flush=True)</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>                 continue</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> </span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>             command = [sys.executable, str(scripts[onnx_name]), str(onnx_path),</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>                        &quot;-o&quot;, str(output_path)]</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>             if args.build_only:</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>                 command.append(&quot;--build-only&quot;)</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>             if args.target:</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>                 command.extend([&quot;--target&quot;, args.target])</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>             if args.device_id:</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>                 command.extend([&quot;--device-id&quot;, args.device_id])</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>             print(f&quot;\n[{&#x27;DRY-RUN&#x27; if args.dry_run else &#x27;RUN&#x27;}] {shlex.join(command)}&quot;, flush=True)</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>             if args.dry_run:</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>                 continue</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a> </span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>             try:</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>                 result = subprocess.run(command, check=False)</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>             except OSError as exc:</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>                 print(f&quot;[FAIL] {onnx_path}: {exc}&quot;, file=sys.stderr, flush=True)</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>                 failed += 1</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>                 continue</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>             if result.returncode == 0:</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>                 succeeded += 1</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>                 print(f&quot;[OK] {output_path}&quot;, flush=True)</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>             else:</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>                 failed += 1</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>                 print(f&quot;[FAIL] {onnx_path} (exit code {result.returncode})&quot;,</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>                       file=sys.stderr, flush=True)</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a> </span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>     print(f&quot;\nSummary: found={found}, succeeded={succeeded}, &quot;</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>           f&quot;failed={failed}, skipped={skipped}, dry_run={args.dry_run}&quot;)</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>     if not found:</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>         print(&quot;No policy.onnx or reference_motion.onnx found in subfolders.&quot;, file=sys.stderr)</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>         return 1</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     return 1 if failed else 0</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a> </span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a> </span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     try:</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>         sys.exit(main())</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     except Exception as error:</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/include/wbc_io_probe.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/include/wbc_io_probe.h</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;csignal&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> // Offline diagnostic mode of the existing rl_controller executable.</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> // Called before ROS initialization; never publishes commands or starts hardware.</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> int runWbcIoProbe(int argc, char** argv, const volatile sig_atomic_t&amp; stop_requested);</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,270 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/wbc_lora_assets.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/wbc_lora_assets.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;wbc_lora_assets.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;openssl/evp.h&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;algorithm&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;array&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;cmath&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;cstdint&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;filesystem&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;fstream&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;iomanip&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;memory&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;set&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &lt;sstream&gt;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> </span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> namespace {</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> namespace fs = std::filesystem;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> void require(bool condition, const std::string&amp; message) {</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   if (!condition) throw std::runtime_error(&quot;WBC LoRA: &quot; + message);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> }</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> bool validId(const std::string&amp; id) {</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   return !id.empty() &amp;&amp; id.size() &lt;= 32 &amp;&amp; std::all_of(id.begin(), id.end(), [](char c) {</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     return (c &gt;= &#x27;a&#x27; &amp;&amp; c &lt;= &#x27;z&#x27;) || (c &gt;= &#x27;A&#x27; &amp;&amp; c &lt;= &#x27;Z&#x27;) ||</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>            (c &gt;= &#x27;0&#x27; &amp;&amp; c &lt;= &#x27;9&#x27;) || c == &#x27;_&#x27; || c == &#x27;-&#x27;;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   });</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> }</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> bool isHash(const std::string&amp; value) {</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   return value.size() == 64 &amp;&amp; value.find_first_not_of(&quot;0123456789abcdef&quot;) == std::string::npos;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> }</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> std::string digest(const void* data, std::size_t size) {</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   unsigned char out[EVP_MAX_MD_SIZE];</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   unsigned int length = 0;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   require(EVP_Digest(data, size, out, &amp;length, EVP_sha256(), nullptr) == 1, &quot;SHA256 failed&quot;);</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   std::ostringstream hex;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   for (unsigned i = 0; i &lt; length; ++i) hex &lt;&lt; std::hex &lt;&lt; std::setw(2) &lt;&lt; std::setfill(&#x27;0&#x27;) &lt;&lt; unsigned(out[i]);</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   return hex.str();</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> }</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> std::vector&lt;unsigned char&gt; readFile(const std::string&amp; path, std::size_t maximum) {</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   std::ifstream stream(path, std::ios::binary | std::ios::ate);</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   require(stream.good(), &quot;cannot open &quot; + path);</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   const auto length = stream.tellg();</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   require(length &gt; 0 &amp;&amp; static_cast&lt;std::uint64_t&gt;(length) &lt;= maximum, &quot;invalid size: &quot; + path);</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   std::vector&lt;unsigned char&gt; data(static_cast&lt;std::size_t&gt;(length));</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   stream.seekg(0);</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   require(bool(stream.read(reinterpret_cast&lt;char*&gt;(data.data()), data.size())), &quot;short read: &quot; + path);</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   return data;</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> }</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> std::string fileHash(const std::string&amp; path) {</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   std::ifstream stream(path, std::ios::binary);</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   require(stream.good(), &quot;cannot hash &quot; + path);</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   std::unique_ptr&lt;EVP_MD_CTX, decltype(&amp;EVP_MD_CTX_free)&gt; ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>   require(ctx &amp;&amp; EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) == 1, &quot;SHA256 init failed&quot;);</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>   std::array&lt;char, 65536&gt; chunk{};</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>   while (stream.read(chunk.data(), chunk.size()) || stream.gcount())</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     require(EVP_DigestUpdate(ctx.get(), chunk.data(), stream.gcount()) == 1, &quot;SHA256 update failed&quot;);</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   require(stream.eof(), &quot;hash read failed: &quot; + path);</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   unsigned char out[EVP_MAX_MD_SIZE];</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   unsigned int length = 0;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   require(EVP_DigestFinal_ex(ctx.get(), out, &amp;length) == 1, &quot;SHA256 final failed&quot;);</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   std::ostringstream hex;</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   for (unsigned i = 0; i &lt; length; ++i) hex &lt;&lt; std::hex &lt;&lt; std::setw(2) &lt;&lt; std::setfill(&#x27;0&#x27;) &lt;&lt; unsigned(out[i]);</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   return hex.str();</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> }</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> YAML::Node readManifest(const std::string&amp; path) {</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   const auto bytes = readFile(path, 4 * 1024 * 1024);</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   const auto value = YAML::Load(std::string(bytes.begin(), bytes.end()));</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   require(value.IsMap(), &quot;manifest must be a map: &quot; + path);</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   return value;</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> }</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> std::string asset(const std::string&amp; root, const std::string&amp; relative) {</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>   require(!relative.empty() &amp;&amp; !fs::path(relative).is_absolute(), &quot;expected relative asset path&quot;);</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   const auto base = fs::canonical(root);</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   const auto path = fs::canonical(base / relative);</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   const auto tail = path.lexically_relative(base);</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   require(!tail.empty() &amp;&amp; *tail.begin() != &quot;..&quot; &amp;&amp; fs::is_regular_file(path), &quot;asset escapes bundle: &quot; + relative);</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   return path.string();</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> }</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> std::vector&lt;std::size_t&gt; shape(const YAML::Node&amp; node) {</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   require(node.IsSequence() &amp;&amp; node.size() &gt; 0 &amp;&amp; node.size() &lt;= 4, &quot;invalid tensor rank&quot;);</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   std::vector&lt;std::size_t&gt; result;</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   for (const auto&amp; dim : node) {</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     const auto value = dim.as&lt;int&gt;();</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     require(value &gt; 0 &amp;&amp; value &lt;= 65536, &quot;invalid tensor dimension&quot;);</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     result.push_back(static_cast&lt;std::size_t&gt;(value));</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   }</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   return result;</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a> }</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> std::vector&lt;std::size_t&gt; withoutSingletons(std::vector&lt;std::size_t&gt; dims) {</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   dims.erase(std::remove(dims.begin(), dims.end(), 1), dims.end());</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   return dims;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> }</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> std::string checkedRknn(const std::string&amp; root, const std::string&amp; relative, const std::string&amp; source_hash) {</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   require(isHash(source_hash), &quot;invalid ONNX fingerprint&quot;);</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   const auto path = asset(root, relative);</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   const auto record = readManifest(asset(root, relative + &quot;.json&quot;));</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   require(record[&quot;format&quot;].as&lt;std::string&gt;() == &quot;wbc_rknn_conversion_v1&quot; &amp;&amp;</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>           record[&quot;source_sha256&quot;].as&lt;std::string&gt;() == source_hash &amp;&amp;</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>           record[&quot;rknn_sha256&quot;].as&lt;std::string&gt;() == fileHash(path) &amp;&amp;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>           record[&quot;precision&quot;].as&lt;std::string&gt;() == &quot;float16&quot; &amp;&amp; !record[&quot;do_quantization&quot;].as&lt;bool&gt;(),</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>           &quot;model/conversion record mismatch: &quot; + relative);</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   return path;</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a> }</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> float halfToFloat(std::uint16_t bits) {</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   const int sign = (bits &amp; 0x8000U) ? -1 : 1;</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   const int exponent = (bits &gt;&gt; 10U) &amp; 31U;</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   const int fraction = bits &amp; 1023U;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   require(exponent != 31, &quot;non-finite FP16 parameter&quot;);</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   return static_cast&lt;float&gt;(sign * std::ldexp(exponent ? 1024 + fraction : fraction,</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>                                              exponent ? exponent - 25 : -24));</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a> }</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a> }  // namespace</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a> </span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a> WbcLoraAssets::WbcLoraAssets(const std::string&amp; manifest, const std::vector&lt;std::string&gt;&amp; selected)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     : graph_(readManifest(manifest)), root_(fs::canonical(fs::path(manifest).parent_path()).string()) {</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>   require(graph_[&quot;format&quot;].as&lt;std::string&gt;() == &quot;wbc_lora_graph_v1&quot; &amp;&amp;</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>           graph_[&quot;kind&quot;].as&lt;std::string&gt;() == &quot;policy&quot; &amp;&amp; graph_[&quot;rank&quot;].as&lt;int&gt;() == 16 &amp;&amp;</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>           graph_[&quot;alpha&quot;].as&lt;int&gt;() == 16 &amp;&amp; graph_[&quot;target_precision&quot;].as&lt;std::string&gt;() == &quot;float16&quot;,</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>           &quot;unsupported graph contract (WBC Base is independent of AMP)&quot;);</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   for (const char* key : {&quot;base_checkpoint_sha256&quot;, &quot;source_onnx_sha256&quot;, &quot;normalization_sha256&quot;, &quot;parameter_schema_sha256&quot;})</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     require(isHash(graph_[key].as&lt;std::string&gt;()), std::string(&quot;invalid fingerprint: &quot;) + key);</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>   base_hash_ = graph_[&quot;base_checkpoint_sha256&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>   model_path_ = checkedRknn(root_, graph_[&quot;model&quot;][&quot;rknn&quot;].as&lt;std::string&gt;(), graph_[&quot;model&quot;][&quot;sha256&quot;].as&lt;std::string&gt;());</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>   require(readManifest(model_path_ + &quot;.json&quot;)[&quot;graph_manifest_sha256&quot;].as&lt;std::string&gt;() == fileHash(manifest),</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>           &quot;shared model was converted with another graph manifest&quot;);</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a> </span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>   std::map&lt;std::string, std::vector&lt;std::size_t&gt;&gt; expected;</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   const std::array&lt;std::size_t, 7&gt; widths{{639, 1024, 1024, 1423, 1024, 1024, 1024}};</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   for (std::size_t i = 0; i &lt; widths.size(); ++i) {</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     const auto prefix = &quot;lora_&quot; + std::to_string(i);</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     expected[prefix + &quot;_a&quot;] = {16, widths[i]};</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     expected[prefix + &quot;_b&quot;] = {i == 6 ? 21U : 1024U, 16};</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     expected[prefix + &quot;_bias&quot;] = {i == 6 ? 21U : 1024U};</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   }</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   for (int i = 0; i &lt; 5; ++i) {</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     expected[&quot;norm_&quot; + std::to_string(i) + &quot;_gamma&quot;] = {1024};</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     expected[&quot;norm_&quot; + std::to_string(i) + &quot;_beta&quot;] = {1024};</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   }</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>   const auto specs = graph_[&quot;parameters&quot;];</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   require(specs.IsSequence() &amp;&amp; specs.size() == 31, &quot;expected 31 complete adapter tensors&quot;);</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>   std::set&lt;std::string&gt; names;</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   std::ostringstream canonical;</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>   canonical &lt;&lt; &#x27;[&#x27;;</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   for (const auto&amp; spec : specs) {</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>     Tensor tensor;</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     tensor.name = spec[&quot;name&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>     tensor.actor_key = spec[&quot;actor_key&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>     tensor.shape = shape(spec[&quot;shape&quot;]);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     require(expected.count(tensor.name) &amp;&amp; tensor.shape == expected.at(tensor.name) &amp;&amp; names.insert(tensor.name).second,</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>             &quot;wrong or duplicate parameter: &quot; + tensor.name);</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>     require(!tensor.actor_key.empty() &amp;&amp; tensor.actor_key.find_first_not_of(</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>         &quot;abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.&quot;) == std::string::npos, &quot;invalid actor key&quot;);</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     if (!tensors_.empty()) canonical &lt;&lt; &#x27;,&#x27;;</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     canonical &lt;&lt; &quot;{\&quot;actor_key\&quot;:\&quot;&quot; &lt;&lt; tensor.actor_key &lt;&lt; &quot;\&quot;,\&quot;name\&quot;:\&quot;&quot; &lt;&lt; tensor.name &lt;&lt; &quot;\&quot;,\&quot;shape\&quot;:[&quot;;</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     tensor.elements = 1;</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     for (std::size_t i = 0; i &lt; tensor.shape.size(); ++i) {</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>       if (i) canonical &lt;&lt; &#x27;,&#x27;;</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>       canonical &lt;&lt; tensor.shape[i];</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>       tensor.elements *= tensor.shape[i];</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     }</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     canonical &lt;&lt; &quot;]}&quot;;</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     tensors_.push_back(std::move(tensor));</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>   }</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>   canonical &lt;&lt; &#x27;]&#x27;;</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>   const auto schema = canonical.str();</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>   require(digest(schema.data(), schema.size()) == graph_[&quot;parameter_schema_sha256&quot;].as&lt;std::string&gt;(),</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>           &quot;parameter schema fingerprint mismatch&quot;);</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>   require(!selected.empty() &amp;&amp; std::set&lt;std::string&gt;(selected.begin(), selected.end()).size() == selected.size(),</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>           &quot;empty/duplicate action selection&quot;);</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>   const auto actions = graph_[&quot;actions&quot;];</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>   require(actions.IsSequence(), &quot;missing action catalog&quot;);</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>   std::set&lt;std::string&gt; ids;</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>   for (const auto&amp; item : actions) {</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     const auto id = item[&quot;action_id&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     require(validId(id) &amp;&amp; ids.insert(id).second, &quot;invalid/duplicate action ID&quot;);</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     if (std::find(selected.begin(), selected.end(), id) == selected.end()) continue;</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>     Action action;</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     action.id = id;</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     action.parameter_source = item[&quot;parameter_source&quot;].as&lt;std::string&gt;(&quot;lora&quot;);</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     require(action.parameter_source == &quot;base&quot; || action.parameter_source == &quot;lora&quot;, &quot;invalid parameter source&quot;);</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>     action.config = asset(root_, item[&quot;config&quot;].as&lt;std::string&gt;());</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     require(fileHash(action.config) == item[&quot;config_sha256&quot;].as&lt;std::string&gt;(), &quot;config hash mismatch: &quot; + id);</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     action.reference = checkedRknn(root_, item[&quot;reference_rknn&quot;].as&lt;std::string&gt;(),</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>                                    item[&quot;reference_onnx_sha256&quot;].as&lt;std::string&gt;());</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     action.adapter = asset(root_, item[&quot;adapter_manifest&quot;].as&lt;std::string&gt;());</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>     action.adapter_hash = fileHash(action.adapter);</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     require(readManifest(action.adapter)[&quot;parameter_source&quot;].as&lt;std::string&gt;(&quot;lora&quot;) == action.parameter_source,</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>             &quot;graph/adapter parameter source mismatch&quot;);</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>     require(readManifest(action.adapter)[&quot;action_id&quot;].as&lt;std::string&gt;() == id &amp;&amp;</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>             readManifest(action.config)[&quot;WbcCfg&quot;][&quot;motion_id&quot;].as&lt;std::string&gt;() == id, &quot;action binding mismatch: &quot; + id);</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>     actions_.emplace(id, std::move(action));</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>   }</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   require(actions_.size() == selected.size(), &quot;selected action absent from manifest&quot;);</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a> }</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a> </span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a> void WbcLoraAssets::bindModel(const RknnModel&amp; model) {</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>   const auto inputs = graph_[&quot;inputs&quot;];</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>   require(inputs.IsSequence() &amp;&amp; inputs.size() == 33 &amp;&amp; model.inputCount() == 33 &amp;&amp; model.outputCount() == 1 &amp;&amp;</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>           model.outputIndex(&quot;action&quot;) == 0 &amp;&amp; model.outputElements(0) == 21, &quot;WBC shared model must have 33 inputs / action[21]&quot;);</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   std::set&lt;std::string&gt; seen;</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>   for (const auto&amp; item : inputs) {</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>     const auto name = item[&quot;name&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>     const auto dims = shape(item[&quot;shape&quot;]);</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     const auto role = item[&quot;role&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     const int index = model.inputIndex(name);</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     require(seen.insert(name).second &amp;&amp; index &gt;= 0 &amp;&amp; item[&quot;dtype&quot;].as&lt;std::string&gt;() == &quot;float32&quot;, &quot;invalid input: &quot; + name);</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>     require(withoutSingletons(model.inputShape(index)) == withoutSingletons(dims) &amp;&amp;</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>             (model.inputType(index) == RKNN_TENSOR_FLOAT16 || model.inputType(index) == RKNN_TENSOR_FLOAT32),</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>             &quot;RKNN input shape/type mismatch: &quot; + name);</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     if (name == &quot;policy&quot; || name == &quot;command_short&quot;) {</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>       require(role == &quot;observation&quot; &amp;&amp; dims == std::vector&lt;std::size_t&gt;{name == &quot;policy&quot; ? 399U : 240U}, &quot;wrong WBC observation ABI&quot;);</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>     } else {</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>       auto tensor = std::find_if(tensors_.begin(), tensors_.end(), [&amp;](const Tensor&amp; spec) { return spec.name == name; });</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>       require(role == &quot;adapter&quot; &amp;&amp; tensor != tensors_.end() &amp;&amp; tensor-&gt;shape == dims, &quot;unknown adapter input: &quot; + name);</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>       tensor-&gt;input_index = index;</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>     }</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>   }</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>   require(seen.count(&quot;policy&quot;) &amp;&amp; seen.count(&quot;command_short&quot;), &quot;missing WBC observations&quot;);</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>   for (const auto&amp; tensor : tensors_) require(tensor.input_index &gt;= 0, &quot;unbound parameter: &quot; + tensor.name);</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a> }</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a> </span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a> void WbcLoraAssets::allocate(Buffer&amp; buffer) const {</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>   buffer.parameters.resize(tensors_.size());</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>   for (std::size_t i = 0; i &lt; tensors_.size(); ++i) buffer.parameters[i].resize(tensors_[i].elements);</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a> }</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a> </span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a> void WbcLoraAssets::loadAdapter(const Action&amp; action, Buffer&amp; buffer) const {</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>   require(fileHash(action.adapter) == action.adapter_hash, &quot;adapter manifest changed since startup&quot;);</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>   const auto manifest = readManifest(action.adapter);</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>   require(manifest[&quot;format&quot;].as&lt;std::string&gt;() == &quot;wbc_lora_adapter_v1&quot; &amp;&amp;</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>           manifest[&quot;action_id&quot;].as&lt;std::string&gt;() == action.id, &quot;adapter identity mismatch&quot;);</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>   for (const char* key : {&quot;base_checkpoint_sha256&quot;, &quot;normalization_sha256&quot;, &quot;parameter_schema_sha256&quot;, &quot;rank&quot;, &quot;alpha&quot;})</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>     require(manifest[key].as&lt;std::string&gt;() == graph_[key].as&lt;std::string&gt;(), std::string(&quot;adapter mismatch: &quot;) + key);</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>   const auto weights = manifest[&quot;weights&quot;];</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>   const auto path = asset(fs::path(action.adapter).parent_path().string(), weights[&quot;path&quot;].as&lt;std::string&gt;());</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>   const auto payload = readFile(path, 4 * 1024 * 1024);</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>   require(weights[&quot;dtype&quot;].as&lt;std::string&gt;() == &quot;float16-le&quot; &amp;&amp; weights[&quot;size_bytes&quot;].as&lt;std::size_t&gt;() == payload.size() &amp;&amp;</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>           digest(payload.data(), payload.size()) == weights[&quot;sha256&quot;].as&lt;std::string&gt;(), &quot;invalid adapter payload&quot;);</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>   const auto records = manifest[&quot;tensors&quot;];</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>   require(records.IsSequence() &amp;&amp; records.size() == tensors_.size() &amp;&amp; buffer.parameters.size() == tensors_.size(),</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>           &quot;incomplete adapter buffer/schema&quot;);</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>   std::size_t end = 0;</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>   for (std::size_t i = 0; i &lt; tensors_.size(); ++i) {</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>     const auto&amp; spec = tensors_[i];</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     const auto record = records[i];</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>     const auto offset = record[&quot;offset_bytes&quot;].as&lt;std::size_t&gt;();</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>     const auto bytes = spec.elements * 2;</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>     require(record[&quot;name&quot;].as&lt;std::string&gt;() == spec.name &amp;&amp; record[&quot;actor_key&quot;].as&lt;std::string&gt;() == spec.actor_key &amp;&amp;</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>             shape(record[&quot;shape&quot;]) == spec.shape &amp;&amp; record[&quot;size_bytes&quot;].as&lt;std::size_t&gt;() == bytes &amp;&amp;</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>             offset &gt;= end &amp;&amp; offset % 64 == 0 &amp;&amp; offset &lt;= payload.size() &amp;&amp; bytes &lt;= payload.size() - offset &amp;&amp;</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>             buffer.parameters[i].size() == spec.elements, &quot;invalid adapter tensor: &quot; + spec.name);</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>     for (std::size_t j = 0; j &lt; spec.elements; ++j)</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>       buffer.parameters[i][j] = halfToFloat(static_cast&lt;std::uint16_t&gt;(payload[offset + j * 2]) |</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>                                            (static_cast&lt;std::uint16_t&gt;(payload[offset + j * 2 + 1]) &lt;&lt; 8U));</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>     end = offset + bytes;</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>   }</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>   require(end == payload.size(), &quot;trailing adapter payload&quot;);</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a> }</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a> </span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a> std::vector&lt;RknnModel::ParameterInput&gt; WbcLoraAssets::parameterInputs(const Buffer&amp; buffer) const {</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>   require(buffer.parameters.size() == tensors_.size(), &quot;incomplete staged adapter&quot;);</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>   std::vector&lt;RknnModel::ParameterInput&gt; inputs;</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>   inputs.reserve(tensors_.size());</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>   for (std::size_t i = 0; i &lt; tensors_.size(); ++i) {</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>     require(tensors_[i].input_index &gt;= 0 &amp;&amp; buffer.parameters[i].size() == tensors_[i].elements,</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>             &quot;unbound or incomplete parameter: &quot; + tensors_[i].name);</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>     const auto index = static_cast&lt;std::size_t&gt;(tensors_[i].input_index);</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>     inputs.push_back({index, buffer.parameters[i].data(), buffer.parameters[i].size()});</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>   }</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>   return inputs;</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a> }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

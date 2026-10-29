@@ -1,0 +1,27 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>records/board_build.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>records/board_build.sh</h1><p>基线 WORKSPACE_NEW；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> set -eo pipefail</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> text_wbc_ws=&quot;${1:?Supply the new board workspace}&quot;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> case &quot;$text_wbc_ws&quot; in</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>   /userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_*) ;;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   *) echo &#x27;Refusing to build in an existing production workspace&#x27; &gt;&amp;2; exit 2 ;;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> esac</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> source /opt/ros/humble/setup.bash</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> cd &quot;$text_wbc_ws&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> export PYTHONDONTWRITEBYTECODE=1 CMAKE_BUILD_PARALLEL_LEVEL=2</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> # colcon supplies make -j&lt;cpu_count&gt; unless MAKEFLAGS already specifies jobs.</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> export MAKEFLAGS=&#x27;-j2 -l2&#x27;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> mkdir -p records/build</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> if test -f records/build/colcon.log; then</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   cp -p records/build/colcon.log &quot;records/build/colcon.$(date +%Y%m%d_%H%M%S).log&quot;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> fi</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> if test -f records/build/exitcode; then unlink records/build/exitcode; fi</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> set +e</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> colcon build --executor sequential --packages-up-to legged_real legged_controllers \</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLEGGED_DEPLOY_BACKEND=RKNN \</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   -DRKNN_ROOT=&quot;$text_wbc_ws/src/l0_ros2_deploy_v2/legged_deploy/third_party/rknn_runtime&quot; \</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   &gt; records/build/colcon.log 2&gt;&amp;1</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> text_wbc_result=$?</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> printf &#x27;%s\n&#x27; &quot;$text_wbc_result&quot; &gt; records/build/exitcode</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> tail -45 records/build/colcon.log</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> exit &quot;$text_wbc_result&quot;</span></pre><h2 id="A">原版本 WORKSPACE</h2><p>该版本不存在此文件。</p></html>

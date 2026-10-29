@@ -1,0 +1,323 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/run_wbc_lora_io.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/run_wbc_lora_io.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Fixed-input WBC numerical probe; board inference uses the deployed C++ loader.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> prepare freezes selected rows of replay_models_10ms.py&#x27;s audited replay.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> local repeats its FP16-asset ONNX baseline. board invokes rl_controller&#x27;s</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> --wbc-io-probe mode, which shares WbcLoraAssets/RknnModel with the live worker.</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> No Python RKNN implementation or motor/ROS publishing is involved.</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> &quot;&quot;&quot;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import argparse</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import csv</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import json</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import os</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> from pathlib import Path</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import platform</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> import signal</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> import subprocess</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> import sys</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> import time</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> </span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> import numpy as np</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> import yaml</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> from wbc_lora_assets import (ID_PATTERN, asset_path, check_graph, graph_feeds,</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>                             load_adapter, load_graph_manifest, read_json, sha256)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> </span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> def save_json(path, value):</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + &quot;\n&quot;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> </span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> </span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> def new_directory(path):</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     path = Path(path).resolve()</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     path.mkdir(parents=True, exist_ok=False)</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     return path</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> </span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> </span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> def prepare(args):</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     replay = Path(args.replay).resolve()</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     metadata = read_json(replay.with_suffix(&#x27;.json&#x27;))</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     segments_path = replay.parent / &#x27;segments.json&#x27;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     if sha256(segments_path) != metadata[&#x27;input_files_sha256&#x27;][&#x27;segments.json&#x27;]:</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         raise ValueError(&#x27;Segments changed since the baseline replay&#x27;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     segments = json.loads(segments_path.read_text())</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     graph = load_graph_manifest(args.manifest)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     if (graph[&#x27;model&#x27;][&#x27;sha256&#x27;] != metadata[&#x27;base_onnx_sha256&#x27;] or</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>             graph[&#x27;base_checkpoint_sha256&#x27;] != metadata[&#x27;base_checkpoint_sha256&#x27;]):</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>         raise ValueError(&#x27;Model identity differs from the baseline replay&#x27;)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     catalog = {x[&#x27;action_id&#x27;]: x for x in graph[&#x27;actions&#x27;]}</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     root = Path(args.manifest).resolve().parent</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     data = np.load(replay, allow_pickle=False)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     indices, cases, assets, scales = [], [], {}, []</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     for block, action_id in enumerate(args.actions):</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         if not ID_PATTERN.fullmatch(action_id):</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>             raise ValueError(f&#x27;Invalid action ID: {action_id}&#x27;)</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         si, segment = next((i, s) for i, s in enumerate(segments) if s[&#x27;action_id&#x27;] == action_id)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>         start, end = segment[&#x27;start_index&#x27;], segment[&#x27;end_index&#x27;]</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         # Keep preparation plus samples after the approximate initial history.</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>         if args.samples &lt; 2 or args.samples - 1 &gt; end - start - 25:</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>             raise ValueError(&#x27;Need 2..(segment length - 24) samples per action&#x27;)</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         chosen = np.r_[start, np.linspace(start + 25, end - 1, args.samples - 1, dtype=int)]</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         config_path = asset_path(root, catalog[action_id][&#x27;config&#x27;])</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>         if sha256(config_path) != metadata[&#x27;action_assets&#x27;][action_id][&#x27;config_sha256&#x27;]:</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>             raise ValueError(f&#x27;Config changed: {action_id}&#x27;)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>         cfg = yaml.safe_load(config_path.read_text())[&#x27;RobotCfg&#x27;]</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>         if list(cfg[&#x27;joint_order_isaac&#x27;]) != data[&#x27;joint_names&#x27;].tolist():</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>             raise ValueError(&#x27;Joint order differs from baseline outputs&#x27;)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>         assets[action_id] = metadata[&#x27;action_assets&#x27;][action_id]</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         for index in chosen:</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>             cutoff = int(data[&#x27;command_stamp&#x27;][index]) - 10_000_000</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             if int(data[&#x27;observation_stamp&#x27;][index]) &gt; cutoff or int(data[&#x27;segment_id&#x27;][index]) != si:</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>                 raise ValueError(&#x27;Replay row violates the 10 ms cutoff or action identity&#x27;)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>             cases.append(dict(case_index=len(cases), action_id=action_id, block=block,</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>                               replay_index=int(index), segment=si,</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>                               command_stamp_ns=int(data[&#x27;command_stamp&#x27;][index]),</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>                               observation_stamp_ns=int(data[&#x27;observation_stamp&#x27;][index]),</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>                               observation_cutoff_ns=cutoff,</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>                               reference_frame=int(data[&#x27;reference_frame&#x27;][index])))</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>             indices.append(index)</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>             scales.append(cfg[&#x27;action_scale&#x27;])</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     if len(cases) &gt; 8192:</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         raise ValueError(&#x27;At most 8192 cases are supported&#x27;)</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     arrays = {key: data[key][indices] for key in (&#x27;policy&#x27;, &#x27;command_short&#x27;, &#x27;action_fp16&#x27;, &#x27;action_fp32&#x27;)}</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     arrays[&#x27;action_scale&#x27;] = np.asarray(scales, dtype=np.float64)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     arrays[&#x27;joint_names&#x27;] = data[&#x27;joint_names&#x27;]</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     if not all(np.isfinite(v).all() for k, v in arrays.items() if k != &#x27;joint_names&#x27;):</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         raise ValueError(&#x27;Non-finite input or baseline&#x27;)</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     output = new_directory(args.output_dir)</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     for key in (&#x27;policy&#x27;, &#x27;command_short&#x27;):</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         np.asarray(arrays[key], dtype=&#x27;&lt;f4&#x27;).tofile(output / (key + &#x27;.f32&#x27;))</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     np.savez_compressed(output / &#x27;baseline.npz&#x27;, **arrays)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>     request = dict(format=&#x27;wbc_policy_io_cases_v1&#x27;, cases=cases,</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>                    input_rule=metadata[&#x27;input_rule&#x27;],</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>                    scope=&#x27;Frozen inputs for policy-only numerical comparison; not live input-builder validation.&#x27;,</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>                    fp16_definition=metadata[&#x27;model_fp16&#x27;], fp32_definition=metadata[&#x27;model_fp32&#x27;],</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>                    reconstruction_caveats=metadata[&#x27;caveats&#x27;],</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>                    base_onnx_sha256=metadata[&#x27;base_onnx_sha256&#x27;],</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>                    base_checkpoint_sha256=metadata[&#x27;base_checkpoint_sha256&#x27;], action_assets=assets,</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>                    source_replay_sha256=sha256(replay), source_metadata_sha256=sha256(replay.with_suffix(&#x27;.json&#x27;)),</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>                    files_sha256={name: sha256(output / name) for name in</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>                                  (&#x27;policy.f32&#x27;, &#x27;command_short.f32&#x27;, &#x27;baseline.npz&#x27;)})</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     save_json(output / &#x27;cases.json&#x27;, request)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     print(f&#x27;Prepared {len(cases)} cases in {output}&#x27;, flush=True)</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> </span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a> </span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a> def load_cases(directory):</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     directory = Path(directory).resolve()</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     request = read_json(directory / &#x27;cases.json&#x27;)</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     if request[&#x27;format&#x27;] != &#x27;wbc_policy_io_cases_v1&#x27; or not 0 &lt; len(request[&#x27;cases&#x27;]) &lt;= 8192:</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>         raise ValueError(&#x27;Invalid case package&#x27;)</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     for name in (&#x27;policy.f32&#x27;, &#x27;command_short.f32&#x27;, &#x27;baseline.npz&#x27;):</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>         if sha256(directory / name) != request[&#x27;files_sha256&#x27;][name]:</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>             raise ValueError(f&#x27;Case checksum mismatch: {name}&#x27;)</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     with np.load(directory / &#x27;baseline.npz&#x27;, allow_pickle=False) as data:</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>         arrays = dict(data)</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     count = len(request[&#x27;cases&#x27;])</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     for key, width in ((&#x27;policy&#x27;, 399), (&#x27;command_short&#x27;, 240), (&#x27;action_fp16&#x27;, 21),</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>                        (&#x27;action_fp32&#x27;, 21), (&#x27;action_scale&#x27;, 21)):</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         if arrays[key].shape != (count, width) or not np.isfinite(arrays[key]).all():</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>             raise ValueError(f&#x27;Invalid tensor: {key}&#x27;)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     if arrays[&#x27;joint_names&#x27;].shape != (21,):</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>         raise ValueError(&#x27;Invalid joint names&#x27;)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     for key in (&#x27;policy&#x27;, &#x27;command_short&#x27;):</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>         binary = np.fromfile(directory / (key + &#x27;.f32&#x27;), dtype=&#x27;&lt;f4&#x27;)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         if not np.array_equal(binary, arrays[key].ravel()):</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>             raise ValueError(f&#x27;Binary input differs from baseline: {key}&#x27;)</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     for i, item in enumerate(request[&#x27;cases&#x27;]):</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>         if item[&#x27;case_index&#x27;] != i or not ID_PATTERN.fullmatch(item[&#x27;action_id&#x27;]):</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>             raise ValueError(&#x27;Invalid case index/action ID&#x27;)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     return request, arrays</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a> </span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a> </span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> def validate_assets(manifest, request):</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     manifest = Path(manifest).resolve()</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>     graph = load_graph_manifest(manifest)</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     if (graph[&#x27;model&#x27;][&#x27;sha256&#x27;] != request[&#x27;base_onnx_sha256&#x27;] or</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>             graph[&#x27;base_checkpoint_sha256&#x27;] != request[&#x27;base_checkpoint_sha256&#x27;]):</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         raise ValueError(&#x27;Requested baseline and deployed model differ&#x27;)</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>     catalog = {x[&#x27;action_id&#x27;]: x for x in graph[&#x27;actions&#x27;]}</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>     for action_id in {c[&#x27;action_id&#x27;] for c in request[&#x27;cases&#x27;]}:</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>         item = catalog[action_id]</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         adapter = asset_path(manifest.parent, item[&#x27;adapter_manifest&#x27;])</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>         load_adapter(adapter, graph, action_id)  # Reuse full tensor/hash validation.</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>         expected = request[&#x27;action_assets&#x27;][action_id]</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         if read_json(adapter)[&#x27;weights&#x27;][&#x27;sha256&#x27;] != expected[&#x27;weights_fp16_sha256&#x27;]:</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>             raise ValueError(f&#x27;Adapter differs from baseline: {action_id}&#x27;)</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         if sha256(asset_path(manifest.parent, item[&#x27;config&#x27;])) != expected[&#x27;config_sha256&#x27;]:</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>             raise ValueError(f&#x27;Action scale/config differs from baseline: {action_id}&#x27;)</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     return graph, catalog</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> </span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> </span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> def error_stats(error):</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     error = np.asarray(error, dtype=np.float64)</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     return dict(rmse=float(np.sqrt(np.mean(error ** 2))), max_abs=float(np.max(abs(error))),</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>                 p99_abs=float(np.percentile(abs(error), 99)))</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a> </span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> </span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a> def compare(output, request, arrays, actions):</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     if actions.shape != arrays[&#x27;action_fp16&#x27;].shape or not np.isfinite(actions).all():</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>         raise ValueError(&#x27;Incomplete/non-finite inference output; retain raw logs for diagnosis&#x27;)</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     residual16 = actions.astype(np.float64) - arrays[&#x27;action_fp16&#x27;]</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     residual32 = actions.astype(np.float64) - arrays[&#x27;action_fp32&#x27;]</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     scaled16 = residual16 * arrays[&#x27;action_scale&#x27;]</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     scaled32 = residual32 * arrays[&#x27;action_scale&#x27;]</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     np.savez_compressed(output / &#x27;outputs.npz&#x27;, action=actions, action_fp16=arrays[&#x27;action_fp16&#x27;],</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>                         action_fp32=arrays[&#x27;action_fp32&#x27;], residual_fp16=residual16,</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>                         residual_fp32=residual32, residual_fp16_scaled_rad=scaled16,</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>                         residual_fp32_scaled_rad=scaled32, joint_names=arrays[&#x27;joint_names&#x27;])</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     report = dict(samples=len(actions), output=&#x27;Raw policy action before clipping/scaling&#x27;,</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>                   scaled_residual=&#x27;(output - baseline) * action_scale, radians before clipping&#x27;,</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>                   vs_local_fp16=dict(raw_action=error_stats(residual16), scaled_rad=error_stats(scaled16)),</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>                   vs_original_fp32=dict(raw_action=error_stats(residual32), scaled_rad=error_stats(scaled32)))</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     report[&#x27;per_action&#x27;] = {}</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     for action_id in dict.fromkeys(c[&#x27;action_id&#x27;] for c in request[&#x27;cases&#x27;]):</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>         mask = np.array([c[&#x27;action_id&#x27;] == action_id for c in request[&#x27;cases&#x27;]])</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>         report[&#x27;per_action&#x27;][action_id] = dict(samples=int(mask.sum()),</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>             vs_fp16_scaled_rad=error_stats(scaled16[mask]), vs_fp32_scaled_rad=error_stats(scaled32[mask]))</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     repeats, first = [], {}</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     for i, c in enumerate(request[&#x27;cases&#x27;]):</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>         key = (c[&#x27;action_id&#x27;], c[&#x27;replay_index&#x27;])</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>         if key in first:</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>             j = first[key]</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>             if not all(np.array_equal(arrays[k][i], arrays[k][j]) for k in (&#x27;policy&#x27;, &#x27;command_short&#x27;)):</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>                 raise ValueError(&#x27;Repeated case has different input&#x27;)</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>             repeats.append(actions[i].astype(np.float64) - actions[j])</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>         else:</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>             first[key] = i</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     report[&#x27;repeated_identical_inputs&#x27;] = dict(pairs=len(repeats),</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>         raw_action=error_stats(repeats) if repeats else None)</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>     with (output / &#x27;per_joint.csv&#x27;).open(&#x27;w&#x27;, newline=&#x27;&#x27;) as stream:</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>         writer = csv.writer(stream)</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>         writer.writerow([&#x27;case_index&#x27;, &#x27;action_id&#x27;, &#x27;replay_index&#x27;, &#x27;joint&#x27;, &#x27;output&#x27;, &#x27;local_fp16&#x27;,</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>                          &#x27;original_fp32&#x27;, &#x27;residual_fp16&#x27;, &#x27;residual_fp32&#x27;,</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>                          &#x27;residual_fp16_scaled_rad&#x27;, &#x27;residual_fp32_scaled_rad&#x27;])</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>         for i, c in enumerate(request[&#x27;cases&#x27;]):</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>             for j, name in enumerate(arrays[&#x27;joint_names&#x27;]):</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>                 writer.writerow([i, c[&#x27;action_id&#x27;], c[&#x27;replay_index&#x27;], name, actions[i, j],</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>                                  arrays[&#x27;action_fp16&#x27;][i, j], arrays[&#x27;action_fp32&#x27;][i, j],</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>                                  residual16[i, j], residual32[i, j], scaled16[i, j], scaled32[i, j]])</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>     return report</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a> </span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a> </span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a> def run_local(args, output, request, arrays, graph, catalog):</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     import onnxruntime as ort</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     root = Path(args.manifest).resolve().parent</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     model = asset_path(root, graph[&#x27;model&#x27;][&#x27;onnx&#x27;])</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>     check_graph(model, args.manifest)</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>     options = ort.SessionOptions()</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     options.intra_op_num_threads = options.inter_op_num_threads = 1</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     session = ort.InferenceSession(str(model), options, providers=[&#x27;CPUExecutionProvider&#x27;])</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>     actions, active, parameters = [], None, None</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>     with (output / &#x27;actions.f32&#x27;).open(&#x27;wb&#x27;) as binary, (output / &#x27;frames.csv&#x27;).open(&#x27;w&#x27;, newline=&#x27;&#x27;) as stream:</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>         writer = csv.writer(stream)</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>         writer.writerow([&#x27;case_index&#x27;, &#x27;action_id&#x27;, &#x27;inference_ms&#x27;])</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>         for i, c in enumerate(request[&#x27;cases&#x27;]):</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>             if active != c[&#x27;action_id&#x27;]:</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>                 active = c[&#x27;action_id&#x27;]</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>                 parameters = load_adapter(asset_path(root, catalog[active][&#x27;adapter_manifest&#x27;]), graph, active)</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>             feeds = graph_feeds(graph, {k: arrays[k][i] for k in (&#x27;policy&#x27;, &#x27;command_short&#x27;)}, parameters)</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>             started = time.perf_counter()</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>             action = np.asarray(session.run([&#x27;action&#x27;], feeds)[0], dtype=&#x27;&lt;f4&#x27;).reshape(21)</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>             elapsed_ms = (time.perf_counter() - started) * 1000</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>             if not np.isfinite(action).all():</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>                 raise ValueError(f&#x27;Non-finite local output at case {i}&#x27;)</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>             binary.write(action.tobytes())</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>             binary.flush()</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>             writer.writerow([i, active, elapsed_ms])</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>             stream.flush()</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>             actions.append(action)</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>     return np.asarray(actions), dict(onnxruntime=ort.__version__, providers=session.get_providers(),</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>         arithmetic=&#x27;CPU FP32 computation with FP16 stored weights; not native RKNN FP16&#x27;)</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a> </span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a> </span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a> def run_board(args, output, request, arrays, graph, catalog):</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>     executable = Path(args.executable).resolve(strict=True)</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>     command = [str(executable), &#x27;--wbc-io-probe&#x27;, str(Path(args.manifest).resolve()),</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>                str(Path(args.cases).resolve()), str(output / &#x27;resident&#x27;)]</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>     model_root = Path(args.manifest).resolve().parent</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     model_path = asset_path(model_root, graph[&#x27;model&#x27;][&#x27;rknn&#x27;])</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     invocation = dict(command=command, executable_sha256=sha256(executable),</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>                       model_sha256=sha256(model_path),</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>                       conversion_record_sha256=sha256(Path(str(model_path) + &#x27;.json&#x27;)))</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     save_json(output / &#x27;invocation.json&#x27;, invocation)</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>     # The regular rl_controller executable retains its installed RPATH/runtime.</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     # No LD_LIBRARY_PATH override and no alternative Python RKNN loader.</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>     with (output / &#x27;runtime.log&#x27;).open(&#x27;w&#x27;) as log:</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>         try:</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>             returncode = process.wait(timeout=args.timeout_seconds)</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>         except BaseException:</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>             if process.poll() is None:</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>                 os.killpg(process.pid, signal.SIGINT)</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>                 try:</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>                     process.wait(timeout=10)</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>                 except subprocess.TimeoutExpired:</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>                     os.killpg(process.pid, signal.SIGKILL)</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>                     process.wait()</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>             raise</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>     if returncode:</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>         raise RuntimeError(f&#x27;rl_controller returned {returncode}; see runtime.log and resident/runtime.yaml&#x27;)</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>     runtime = yaml.safe_load((output / &#x27;resident/runtime.yaml&#x27;).read_text())</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>     count = len(request[&#x27;cases&#x27;])</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     switches = 1 + sum(a[&#x27;action_id&#x27;] != b[&#x27;action_id&#x27;] for a, b in zip(request[&#x27;cases&#x27;], request[&#x27;cases&#x27;][1:]))</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>     if (runtime[&#x27;status&#x27;] != &#x27;completed&#x27; or runtime[&#x27;completed_samples&#x27;] != count or</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>             runtime[&#x27;context_initializations&#x27;] != 1 or runtime[&#x27;runs&#x27;] != count or</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>             runtime[&#x27;parameter_prepares&#x27;] != switches or runtime[&#x27;commits&#x27;] != switches or runtime[&#x27;rollbacks&#x27;] != 0):</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>         raise ValueError(&#x27;Incomplete run or unexpected resident context/adapter counters&#x27;)</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>     with (output / &#x27;resident/frames.csv&#x27;).open() as stream:</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>         rows = list(csv.DictReader(stream))</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>     if len(rows) != count or any(int(row[&#x27;case_index&#x27;]) != i or row[&#x27;action_id&#x27;] != request[&#x27;cases&#x27;][i][&#x27;action_id&#x27;]</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>                                  for i, row in enumerate(rows)):</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>         raise ValueError(&#x27;Frame log does not match requested cases&#x27;)</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>     raw = np.fromfile(output / &#x27;resident/actions.f32&#x27;, dtype=&#x27;&lt;f4&#x27;)</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>     if raw.size != count * 21:</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>         raise ValueError(&#x27;Output byte count mismatch&#x27;)</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>     return raw.reshape(count, 21), runtime</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a> </span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a> </span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a> def main():</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>     sub = parser.add_subparsers(dest=&#x27;mode&#x27;, required=True)</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>     prepare_parser = sub.add_parser(&#x27;prepare&#x27;, help=&#x27;Freeze the audited 10 ms replay inputs and FP16/FP32 baselines&#x27;)</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>     prepare_parser.add_argument(&#x27;--replay&#x27;, required=True)</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     prepare_parser.add_argument(&#x27;--actions&#x27;, nargs=&#x27;+&#x27;, default=[&#x27;L0_peace_new_02_A&#x27;, &#x27;L0_angry_7&#x27;, &#x27;L0_strange_1&#x27;, &#x27;L0_peace_new_02_A&#x27;])</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>     prepare_parser.add_argument(&#x27;--samples&#x27;, type=int, default=33)</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>     for mode in (&#x27;local&#x27;, &#x27;board&#x27;):</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>         p = sub.add_parser(mode, help=&#x27;Run fixed inputs using &#x27; + (&#x27;ONNX CPU baseline&#x27; if mode == &#x27;local&#x27; else &#x27;the existing C++ RKNN loader&#x27;))</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>         p.add_argument(&#x27;--cases&#x27;, required=True)</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>         if mode == &#x27;board&#x27;:</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>             p.add_argument(&#x27;--executable&#x27;, required=True, help=&#x27;Installed RKNN rl_controller with --wbc-io-probe&#x27;)</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>             p.add_argument(&#x27;--timeout-seconds&#x27;, type=float, default=300)</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>     for p in sub.choices.values():</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>         p.add_argument(&#x27;--manifest&#x27;, required=True, help=&#x27;base_manifest.json&#x27;)</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>         p.add_argument(&#x27;--output-dir&#x27;, required=True, help=&#x27;New directory; existing results are never overwritten&#x27;)</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>     args = parser.parse_args()</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>     if args.mode == &#x27;prepare&#x27;:</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>         prepare(args)</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>         return 0</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>     output = new_directory(args.output_dir)</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>     report = dict(format=&#x27;wbc_policy_io_result_v1&#x27;, mode=args.mode, status=&#x27;initializing&#x27;,</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>                   python=sys.executable, python_version=platform.python_version(), numpy=np.__version__,</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>                   script_sha256=sha256(Path(__file__)), asset_helper_sha256=sha256(Path(__file__).with_name(&#x27;wbc_lora_assets.py&#x27;)))</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>     save_json(output / &#x27;report.json&#x27;, report)</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>     try:</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>         if args.mode == &#x27;board&#x27; and (not np.isfinite(args.timeout_seconds) or args.timeout_seconds &lt;= 0):</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>             raise ValueError(&#x27;Timeout must be finite and positive&#x27;)</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>         request, arrays = load_cases(args.cases)</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>         graph, catalog = validate_assets(args.manifest, request)</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>         report.update(cases_sha256=sha256(Path(args.cases) / &#x27;cases.json&#x27;),</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>                       manifest_sha256=sha256(args.manifest), input_files_sha256=request[&#x27;files_sha256&#x27;],</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>                       numerical_acceptance=&#x27;Metrics only; no engineering tolerance has been specified.&#x27;)</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>         runner = run_local if args.mode == &#x27;local&#x27; else run_board</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>         actions, runtime = runner(args, output, request, arrays, graph, catalog)</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>         report.update(runtime=runtime, comparison=compare(output, request, arrays, actions), status=&#x27;completed&#x27;)</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>     except (Exception, KeyboardInterrupt) as error:</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>         report.update(status=&#x27;failed&#x27;, error=f&#x27;{type(error).__name__}: {error}&#x27;)</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>         print(report[&#x27;error&#x27;], file=sys.stderr)</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>     save_json(output / &#x27;report.json&#x27;, report)</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>     print(json.dumps(dict(status=report[&#x27;status&#x27;], output_dir=str(output), comparison=report.get(&#x27;comparison&#x27;)), indent=2))</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>     return 0 if report[&#x27;status&#x27;] == &#x27;completed&#x27; else 1</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a> </span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a> </span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a> if __name__ == &#x27;__main__&#x27;:</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>     raise SystemExit(main())</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

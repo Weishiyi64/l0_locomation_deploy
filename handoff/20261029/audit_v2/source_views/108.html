@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/launch/text_motion.launch.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/launch/text_motion.launch.py</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> &quot;&quot;&quot;Start generation only; enable the existing robot controller separately.&quot;&quot;&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> from launch import LaunchDescription</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> from launch.actions import DeclareLaunchArgument</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> from launch.substitutions import LaunchConfiguration, PathJoinSubstitution</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> from launch_ros.actions import Node</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> from launch_ros.substitutions import FindPackageShare</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> </span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> def generate_launch_description():</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>     return LaunchDescription([</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>         DeclareLaunchArgument(&#x27;model_manifest&#x27;, description=&#x27;Manifest compiled from the current ONNX delivery&#x27;),</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>         DeclareLaunchArgument(&#x27;mapping_file&#x27;, default_value=PathJoinSubstitution([</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>             FindPackageShare(&#x27;system_command_arbiter&#x27;), &#x27;config&#x27;, &#x27;l0_v5.yaml&#x27;])),</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>         DeclareLaunchArgument(&#x27;backend&#x27;, default_value=&#x27;lite2&#x27;),</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>         Node(package=&#x27;legged_controllers&#x27;, executable=&#x27;text_motion_node&#x27;, output=&#x27;screen&#x27;,</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>              parameters=[{</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>                  &#x27;model_manifest&#x27;: LaunchConfiguration(&#x27;model_manifest&#x27;),</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>                  &#x27;mapping_file&#x27;: LaunchConfiguration(&#x27;mapping_file&#x27;),</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>                  &#x27;backend&#x27;: LaunchConfiguration(&#x27;backend&#x27;),</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>              }]),</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     ])</span></pre></html>

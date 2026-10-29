@@ -1,0 +1,56 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>records/check_python_inference.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>records/check_python_inference.sh</h1><p>基线 WORKSPACE_NEW；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> # Verify the installed generator using a synthetic snapshot; never execute WBC.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> set -eo pipefail</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> text_wbc_ws=&quot;${1:?Supply the new board workspace}&quot;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> case &quot;$text_wbc_ws&quot; in</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   /userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_*) ;;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>   *) echo &#x27;Use the isolated text WBC workspace&#x27; &gt;&amp;2; exit 2 ;;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> esac</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> source /opt/ros/humble/setup.bash</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> source &quot;$text_wbc_ws/install/setup.bash&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> export PYTHONDONTWRITEBYTECODE=1</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> text_wbc_run=&quot;$(mktemp -d &quot;$text_wbc_ws/records/python_check_$(date +%Y%m%d_%H%M%S)_XXXXXX&quot;)&quot;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> echo &quot;python_check=$text_wbc_run&quot;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> text_wbc_result=0</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> ros2 run legged_controllers text_wbc_generate \</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   --model &quot;$text_wbc_ws/model_sources/text_to_motion/compiled/manifest.json&quot; \</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   --bundle &quot;$text_wbc_ws/install/legged_deploy/share/legged_deploy/policy/l0_v5/text_wbc_bundle/base_manifest.json&quot; \</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   --mapping &quot;$text_wbc_ws/install/system_command_arbiter/share/system_command_arbiter/config/l0_v5.yaml&quot; \</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   --snapshot &quot;$text_wbc_ws/records/HOST_REFERENCE_SNAPSHOT.json&quot; \</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   --text &#x27;左手抬起&#x27; --seed 42 --output &quot;$text_wbc_run/motion.json&quot; \</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   &gt; &quot;$text_wbc_run/inference.log&quot; 2&gt;&amp;1 || text_wbc_result=$?</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> cat &quot;$text_wbc_run/inference.log&quot;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> /usr/bin/python3 -B - &quot;$text_wbc_run&quot; &quot;$text_wbc_result&quot; &lt;&lt;&#x27;PY&#x27;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> import json, math, sys</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> from pathlib import Path</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> run, code = Path(sys.argv[1]), int(sys.argv[2])</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> report = {&#x27;status&#x27;: &#x27;failed&#x27;, &#x27;exitcode&#x27;: code, &#x27;scope&#x27;: &#x27;NPU generation with synthetic snapshot; no ROS nodes or WBC execution&#x27;,</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>           &#x27;log&#x27;: str(run/&#x27;inference.log&#x27;)}</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> for line in (run/&#x27;inference.log&#x27;).read_text(errors=&#x27;replace&#x27;).splitlines():</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     try:</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>         event = json.loads(line)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     except ValueError:</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>         continue</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     if event.get(&#x27;state&#x27;) == &#x27;generating&#x27;:</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>         report[&#x27;environment&#x27;] = {k: event.get(k) for k in [&#x27;python_executable&#x27;, &#x27;python_version&#x27;, &#x27;rknn_runtime_library&#x27;]}</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> try:</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     if code:</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         raise RuntimeError(&#x27;Generator failed; see inference.log for stderr and exitcode&#x27;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     document = json.loads((run/&#x27;motion.json&#x27;).read_text())</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     frames = document[&#x27;frames&#x27;]</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     if document[&#x27;fps&#x27;] != 50 or len(frames) != document[&#x27;frame_count&#x27;] or len(frames) &lt; 2:</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         raise ValueError(&#x27;Invalid generated frame count/FPS&#x27;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     if any(len(f[&#x27;joint_positions&#x27;]) != 9 or not all(math.isfinite(v) for v in f[&#x27;joint_positions&#x27;]) for f in frames):</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         raise ValueError(&#x27;Invalid generated joint positions&#x27;)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     if document[&#x27;model_diagnostics&#x27;][&#x27;backend&#x27;] != &#x27;lite2&#x27;:</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         raise ValueError(&#x27;Expected board NPU backend&#x27;)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     report.update(status=&#x27;passed&#x27;, frame_count=len(frames), fps=50, backend=&#x27;lite2&#x27;,</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>                   token_ids=document[&#x27;model_diagnostics&#x27;][&#x27;token_ids&#x27;],</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>                   inference_ms=document[&#x27;model_diagnostics&#x27;][&#x27;inference_ms&#x27;])</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> except Exception as error:</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     report[&#x27;error&#x27;] = str(error)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     code = code or 1</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> (run/&#x27;REPORT.json&#x27;).write_text(json.dumps(report, ensure_ascii=False, indent=2)+&#x27;\n&#x27;)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> print(json.dumps(report, ensure_ascii=False, indent=2))</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> sys.exit(code)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a> PY</span></pre><h2 id="A">原版本 WORKSPACE</h2><p>该版本不存在此文件。</p></html>

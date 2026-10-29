@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/wbc-record-qos.yaml</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/wbc-record-qos.yaml</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> /control/policy/observation: &amp;sample</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a>   history: keep_last</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a>   depth: 200</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a>   reliability: best_effort</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>   durability: volatile</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> /control/policy/command/rl: *sample</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> /control/policy/command/wbc: *sample</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> /actuator/motor/state: *sample</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> /imu/data: *sample</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> /odom: *sample</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> /actuator/motor/command: &amp;event</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>   history: keep_last</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>   depth: 100</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   reliability: reliable</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   durability: volatile</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> /actuator/motor/enable: *event</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> /algorithm/brain/wbc_action_cmd: *event</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> /system/state_machine/wbc_action_fdb: *event</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> /control/policy/wbc/done: *event</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> /joy: *event</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> /control/policy/wbc/active: &amp;latched</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   history: keep_last</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   depth: 10</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   reliability: reliable</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   durability: transient_local</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> /hardware_status/motors_ready: *latched</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> /system/safety/emergency_stop: *sample</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> /system/safety/hardware_fault: *sample</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> /rosout: *sample</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

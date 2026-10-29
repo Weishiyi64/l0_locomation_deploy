@@ -1,0 +1,580 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/include/legged_controllers/LeggedController.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/include/legged_controllers/LeggedController.h</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> //</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> // Base class for legged controllers: shared FSM, policy mux, safety, head control, and action sequences.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> //</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #pragma once</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> </span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;legged_controllers/ActionSequence.h&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;legged_controllers/ArmSwingController.h&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;legged_controllers/ControllerTypes.h&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;legged_controllers/FaceFollow.h&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;legged_controllers/HeadScript.h&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;legged_controllers/IHardwareLayer.h&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;legged_controllers/JointCommandComposer.h&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &lt;legged_controllers/JoystickImitationActions.h&gt;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> #include &lt;legged_controllers/JoystickSequenceActions.h&gt;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> #include &lt;legged_controllers/PolicyMux.h&gt;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> #include &lt;legged_controllers/SequenceRuntime.h&gt;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> #include &lt;algorithm&gt;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> #include &lt;array&gt;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> #include &lt;atomic&gt;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> #include &lt;chrono&gt;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> #include &lt;deque&gt;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> #include &lt;functional&gt;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> #include &lt;geometry_msgs/msg/twist.hpp&gt;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> #include &lt;geometry_msgs/msg/twist_stamped.hpp&gt;</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> #include &lt;memory&gt;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> #include &lt;mutex&gt;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> #include &lt;sensor_msgs/msg/joint_state.hpp&gt;</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> #include &lt;sensor_msgs/msg/joy.hpp&gt;</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> #include &lt;sensor_msgs/msg/joy_feedback_array.hpp&gt;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> #include &lt;std_msgs/msg/bool.hpp&gt;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> #include &lt;std_msgs/msg/float64_multi_array.hpp&gt;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> #include &lt;std_msgs/msg/int64.hpp&gt;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> #include &lt;std_msgs/msg/string.hpp&gt;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> #include &lt;string&gt;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> #include &lt;unordered_map&gt;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> #include &lt;utility&gt;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> #include &lt;vector&gt;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> #include &lt;visualization_msgs/msg/marker_array.hpp&gt;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> #include &quot;legged_controllers/JoystickInput.h&quot;</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> #include &quot;legged_controllers/SafetyChecker.h&quot;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> #include &quot;legged_controllers/StateMachine.h&quot;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> #include &quot;legged_controllers/VelocityLimiter.h&quot;</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> #include &quot;legged_controllers/VisualizationPublisher.h&quot;</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> #include &quot;luvbot_control_interfaces/msg/policy_command.hpp&quot;</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> #include &quot;luvbot_control_interfaces/msg/policy_observation.hpp&quot;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> #include &quot;luvbot_control_interfaces/srv/control_wbc_motion.hpp&quot;</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> </span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a> namespace legged {</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> </span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> class LeggedController {</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>  private:</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   rclcpp::Node::SharedPtr nh_;</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   std::shared_ptr&lt;IHardwareLayer&gt; robot_hw_;</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> </span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>  public:</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   LeggedController(rclcpp::Node::SharedPtr controller_nh, std::shared_ptr&lt;IHardwareLayer&gt; robot_hw)</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>       : nh_(controller_nh),</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         robot_hw_(robot_hw),</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>         vizPeriod_(rclcpp::Duration(0, 0)),</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         joyFeedbackPeriod_(rclcpp::Duration(0, 0)),</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>         shifted_time(rclcpp::Duration(0, 0)) {}</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   virtual ~LeggedController() = default;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> </span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   virtual bool init(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   virtual void starting(const rclcpp::Time&amp; time);</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   virtual void update(const rclcpp::Time&amp; time, const rclcpp::Duration&amp; period);</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> </span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>  protected:</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   // Hooks for derived specialization</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   virtual void applyJointCommands(bool walking, bool allow_auxiliary_overlays, bool emergency);</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> </span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   virtual void ModePublish(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   virtual void checkSafety();  // Default uses SafetyChecker</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   /// Refresh the policy observation from robot_hw_ for safety and inference.</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   virtual void updatePolicyObservationFromHardware();</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   virtual void rvizVisualization();</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   void ModeSubscribe(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> </span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   void EmergencyStopCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   void JoyCallback(const sensor_msgs::msg::Joy::ConstSharedPtr msg);</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   void lowCmdRlCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   void lowCmdImitationCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   void lowCmdWbcCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   void wbcMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   void wbcActionCommandCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   void textWbcCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   void plannerCommandCallback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr msg);</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   void followFaceCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   void imitationMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   std::array&lt;double, 3&gt; readCurrentHeadRpyRad();</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   bool faceFollowAllowed() const;</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   void syncFaceFollowState(bool allowed, double wall_sec);</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a> </span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   geometry_msgs::msg::Twist computeJoystickTrim(const JoystickCommand&amp; command);</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   geometry_msgs::msg::Twist selectedOperatorVelocity(const geometry_msgs::msg::Twist&amp; joystick_velocity);</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>   geometry_msgs::msg::Twist computeCommandVelocity(const JoystickCommand&amp; command, double wall_sec);</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   void applyJoystickMotion(const JoystickCommand&amp; command, double wall_sec);</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   void processJoystickActions(const JoystickCommand&amp; command);</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   void processJoystickBackEmergencySequence(const JoystickCommand&amp; command);</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   void processJoystickImitationActions(const sensor_msgs::msg::Joy&amp; joy);</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   void processJoystickSequenceActions(const sensor_msgs::msg::Joy&amp; joy);</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   void enterWalkMode();</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   virtual void resetController();</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   void triggerEmergencyStop();</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   void updateSpeedMultiplier(double lt_axis_value);</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   void adjustStandbyKp(double delta);</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   void toggleCalibrationMode();</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   void calibrateByTag(const std::string&amp; tag, const std::string&amp; banner);</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   bool imitationActionActive() const;</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   bool canStartAmpDerivedAction(const char* context, const std::string&amp; action_label, bool require_walking,</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>                                 bool block_imitation_active) const;</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   bool startActionSequence();</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>   void stopActionSequence(const char* reason, double wall_sec);</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>   void finishActionSequenceNormally(double wall_sec);</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   void configureActionSequencePhase(const ActionSequencePhase&amp; phase, double wall_sec);</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>   void handleActionSequenceUpdate(const rclcpp::Time&amp; time);</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>   bool loadActionSequenceForPlayback(const std::string&amp; path, const char* context);</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>   bool triggerSequenceFromPath(const std::string&amp; sequence_path, const char* context,</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>                                const std::function&lt;void()&gt;&amp; after_start = nullptr);</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>   std::string displayControllerPath(const std::string&amp; path) const;</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>   bool prepareImitationPolicyForLoadedSequence(const char* context);</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>   bool fullCsvVelocityAllowed() const;</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   void logFullCsvVelocityBlocked(const char* context, const std::string&amp; target) const;</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   bool switchImitationPolicy(const std::string&amp; policy_name, const char* context);</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   void publishImitationActive(bool active, const char* reason = nullptr);</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   void dataInit(const std::vector&lt;std::string&gt;&amp; joint_names);</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>   bool loadWalkingGainProfile(const YAML::Node&amp; rc, const std::string&amp; profile_name, size_t expected_size,</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>                               JointGainProfile&amp; out) const;</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   void setPolicySource(PolicyCmdSource source, const char* reason = nullptr);</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   PolicyCmdSource walkStartPolicySource() const;</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   void selectPolicyInputs(bool walking, std::vector&lt;double&gt;&amp; q_snapshot, JointGainProfile&amp; active_gains) const;</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   void publishRlObsReset();</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   /// Switch policy mux to RL and reset RL observation history (no kp/kd ramp).</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>   void returnToRlWithoutGainRamp(const char* reason);</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   void beginSequenceReleaseHandoff(double wall_sec);</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>   void clearSequenceReleaseHandoff();</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   bool startWbcMotion(const std::string&amp; motion_id, int64_t timestamp_ms,</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>                       std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response);</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   bool finishWbcMotion(const char* reason, std::string&amp; message);</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   void abortWbcImmediately(const char* reason);</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>   void publishWbcActionFeedback(int64_t timestamp_ms, const std::string&amp; action_id, const char* status);</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   void publishActiveWbcActionTerminal(const char* status);</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   void updateWbcControlState();</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>   bool startPolicyHandoff(const PolicyInputs&amp; start, double duration_sec, const char* label);</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> </span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>  protected:</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>   rclcpp::Publisher&lt;luvbot_control_interfaces::msg::PolicyObservation&gt;::SharedPtr pubState_;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>   rclcpp::Publisher&lt;sensor_msgs::msg::JoyFeedbackArray&gt;::SharedPtr joyFeedbackPub_;</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>   rclcpp::Publisher&lt;std_msgs::msg::String&gt;::SharedPtr wbcActionFeedbackPub_;</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdWbc_;</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subWbcMotionDone_;</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subWbcActionCommand_;</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subTextWbcCancel_;</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>   rclcpp::Publisher&lt;std_msgs::msg::Int64&gt;::SharedPtr shotIdPub_;</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>   rclcpp::CallbackGroup::SharedPtr sequence_trigger_callback_group_;</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a> </span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdRl_;</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdImitation_;</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>   rclcpp::Subscription&lt;sensor_msgs::msg::Joy&gt;::SharedPtr subJoy_;</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subEmgstop_;</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>   rclcpp::Subscription&lt;geometry_msgs::msg::TwistStamped&gt;::SharedPtr plannerCommandSub_;</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subFollowFace_;</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a> </span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subImitationMotionDone_;</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a> </span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>   // State containers</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>   luvbot_control_interfaces::msg::PolicyObservation policy_observation_;</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>   sensor_msgs::msg::JointState rvizVisualPos_;</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>   std::vector&lt;std::string&gt; jointNames_;</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>   /// True for leg joints (name contains hip/knee/ankle).</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>   std::vector&lt;bool&gt; is_leg_joint_;</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>   /// True for arm joints (name contains shoulder/elbow/wrist).</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>   std::vector&lt;bool&gt; is_arm_joint_;</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>   /// True for head joints (name contains neck/head).</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>   std::vector&lt;bool&gt; is_head_joint_;</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a> </span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>   // Motion source components</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>   HeadScriptController headCtrl_;</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>   FaceFollowController faceFollowCtrl_;</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>   ArmSwingController armSwingCtrl_;</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>   PolicyMux policyMux_;</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>   SequenceRuntime sequenceRuntime_;</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>   JointCommandComposer jointCommandComposer_;</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a> </span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>   rclcpp::Time startingTime_;</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>   rclcpp::Time lastVizTick_;</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>   rclcpp::Duration vizPeriod_;</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   rclcpp::Time lastJoyFeedbackTick_;</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>   rclcpp::Duration joyFeedbackPeriod_;</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>   rclcpp::Duration shifted_time;  // controller time since startingTime_</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a> </span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>   bool joyFeedbackState_{false};</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a> </span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>   int policy_frequency{0};</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a> </span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>   // Standby global kp (clamped per joint)</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>   double kp_standby_{0};</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>   bool sequence_engine_enabled_{false};</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>   bool joystick_imitation_enabled_{false};</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>   bool joystick_sequence_enabled_{false};</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>   bool joystick_back_emergency_sequence_enabled_{false};</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>   std::string joystick_imitation_config_path_;</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>   std::string joystick_sequence_config_path_;</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>   std::string joystick_back_emergency_sequence_path_;</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>   std::string legged_controllers_share_;</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>   bool radarControlEnabled_{false};</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>   bool faceFollowEnabled_{false};</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a> </span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>   /// Last controller `time.seconds()` from `update()`; used for async callbacks (e.g. /imitation_motion_done).</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>   double last_controller_wall_sec_{0.0};</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>   std::atomic&lt;bool&gt; face_follow_allowed_{false};</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a> </span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>   std::mutex plannerCommandMutex_;</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>   geometry_msgs::msg::Twist plannerCommand_;</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>   bool plannerCommandSeen_{false};</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>   bool plannerCommandValid_{false};</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>   int64_t plannerCommandStampNs_{0};</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>   int64_t plannerCommandClockNs_{0};</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>   std::chrono::steady_clock::time_point plannerCommandReceiveTime_{};</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a> </span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>   double imitation_policy_switch_timeout_sec_{120.0};</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>   double imitation_return_blend_sec_{0.35};</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>   bool wbc_enabled_{false};</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>   double wbc_transition_sec_{0.35};</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>   double wbc_command_timeout_sec_{0.5};</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>   std::atomic&lt;bool&gt; wbc_return_pending_{false};</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>   std::atomic&lt;bool&gt; wbc_handoff_in_progress_{false};</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>   double emergency_damping_kd_{5.0};</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>   bool sequence_finish_emergency_pending_{false};</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>   std::mutex auxiliary_action_trigger_mutex_;</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>   bool wbc_cleanup_pending_{false};  // Guarded by auxiliary_action_trigger_mutex_.</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>   // Callbacks stage handoffs; only the control loop touches the shared transition.</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>   std::mutex wbc_transition_mutex_;</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>   uint64_t wbc_generation_{0};</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>   bool wbc_start_allowed_{false};</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>   bool wbc_controller_walking_{false};</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>   geometry_msgs::msg::Quaternion wbc_orientation_;</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>   geometry_msgs::msg::Twist wbc_velocity_;</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>   bool wbc_handoff_pending_{false};</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>   bool wbc_handoff_clear_pending_{false};</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>   PolicyInputs wbc_handoff_start_;</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>   PolicyCmdSource wbc_handoff_target_{PolicyCmdSource::kRl};</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>   std::mutex wbc_action_state_mutex_;</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>   bool wbc_action_active_{false};</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>   int64_t wbc_action_timestamp_ms_{0};</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>   std::string wbc_action_id_;</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>   std::deque&lt;std::pair&lt;std::string, std::chrono::steady_clock::time_point&gt;&gt; recent_wbc_action_requests_;</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a> </span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>   // Feedback rumble array</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>   // sensor_msgs::JoyFeedbackArray joyFeedbackArray_;</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>   sensor_msgs::msg::JoyFeedbackArray joyFeedbackArray_;</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a> </span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>   // Components</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>   JoystickInput joystickInput_;</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>   JoystickImitationActions joystickImitationActions_;</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>   JoystickSequenceActions joystickSequenceActions_;</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>   JoystickCommand lastJoystickCommand_;</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>   std::unique_ptr&lt;VelocityLimiter&gt; velLimiter_;</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>   std::unique_ptr&lt;VisualizationPublisher&gt; vizPub_;</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>   std::unique_ptr&lt;SafetyChecker&gt; safetyChecker_;</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>   int orientation_violation_count_{0};</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>   std::unique_ptr&lt;StateMachine&gt; fsm_;</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a> </span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>   // Flags (default false for real robot; set true in sim launch)</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>   bool isSim_{false};</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>   bool enableRviz_{false};</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a> </span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>  private:</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>   void prepareControllerClock(const rclcpp::Time&amp; time);</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>   RuntimeControlState computeRuntimeControlState() const;</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>   bool isActionSequenceFullCsv() const;</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>   bool advanceSequenceAndWalkingPolicy(const rclcpp::Time&amp; time, const rclcpp::Duration&amp; period);</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>   void runSafetyAndEmergencyFeedback(const rclcpp::Time&amp; time, bool safety_armed);</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>   void publishPolicyObservationWithJoystick(double wall_sec);</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>   void stepAuxiliaryMotionSources(bool allow_auxiliary_overlays, const rclcpp::Duration&amp; period,</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>                                   const rclcpp::Time&amp; time);</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>   void maybePublishVisualization(const rclcpp::Time&amp; time);</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>   void applyJointCsvPhaseTriggerBlendAndCmdVel(double wall_sec);</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a> };</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a> </span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a> }  // namespace legged</span></pre><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> //</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> // Base class for legged controllers: shared FSM, policy mux, safety, head control, and action sequences.</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> //</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #pragma once</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> </span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;legged_controllers/ActionSequence.h&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;legged_controllers/ArmSwingController.h&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;legged_controllers/ControllerTypes.h&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;legged_controllers/FaceFollow.h&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;legged_controllers/HeadScript.h&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> #include &lt;legged_controllers/IHardwareLayer.h&gt;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> #include &lt;legged_controllers/JointCommandComposer.h&gt;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> #include &lt;legged_controllers/JoystickImitationActions.h&gt;</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> #include &lt;legged_controllers/JoystickSequenceActions.h&gt;</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> #include &lt;legged_controllers/PolicyMux.h&gt;</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> #include &lt;legged_controllers/SequenceRuntime.h&gt;</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> #include &lt;algorithm&gt;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> #include &lt;array&gt;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> #include &lt;atomic&gt;</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> #include &lt;chrono&gt;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> #include &lt;deque&gt;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> #include &lt;functional&gt;</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> #include &lt;geometry_msgs/msg/twist.hpp&gt;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> #include &lt;geometry_msgs/msg/twist_stamped.hpp&gt;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> #include &lt;memory&gt;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> #include &lt;mutex&gt;</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> #include &lt;sensor_msgs/msg/joint_state.hpp&gt;</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> #include &lt;sensor_msgs/msg/joy.hpp&gt;</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> #include &lt;sensor_msgs/msg/joy_feedback_array.hpp&gt;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a> #include &lt;std_msgs/msg/bool.hpp&gt;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> #include &lt;std_msgs/msg/float64_multi_array.hpp&gt;</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> #include &lt;std_msgs/msg/int64.hpp&gt;</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a> #include &lt;std_msgs/msg/string.hpp&gt;</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a> #include &lt;string&gt;</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a> #include &lt;unordered_map&gt;</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> #include &lt;utility&gt;</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a> #include &lt;vector&gt;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a> #include &lt;visualization_msgs/msg/marker_array.hpp&gt;</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> #include &quot;legged_controllers/JoystickInput.h&quot;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> #include &quot;legged_controllers/SafetyChecker.h&quot;</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> #include &quot;legged_controllers/StateMachine.h&quot;</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> #include &quot;legged_controllers/VelocityLimiter.h&quot;</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a> #include &quot;legged_controllers/VisualizationPublisher.h&quot;</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a> #include &quot;luvbot_control_interfaces/msg/policy_command.hpp&quot;</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a> #include &quot;luvbot_control_interfaces/msg/policy_observation.hpp&quot;</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a> #include &quot;luvbot_control_interfaces/srv/control_wbc_motion.hpp&quot;</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a> </span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a> namespace legged {</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a> </span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a> class LeggedController {</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>  private:</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   rclcpp::Node::SharedPtr nh_;</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>   std::shared_ptr&lt;IHardwareLayer&gt; robot_hw_;</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a> </span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>  public:</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>   LeggedController(rclcpp::Node::SharedPtr controller_nh, std::shared_ptr&lt;IHardwareLayer&gt; robot_hw)</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>       : nh_(controller_nh),</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         robot_hw_(robot_hw),</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         vizPeriod_(rclcpp::Duration(0, 0)),</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>         joyFeedbackPeriod_(rclcpp::Duration(0, 0)),</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>         shifted_time(rclcpp::Duration(0, 0)) {}</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>   virtual ~LeggedController() = default;</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>   virtual bool init(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   virtual void starting(const rclcpp::Time&amp; time);</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   virtual void update(const rclcpp::Time&amp; time, const rclcpp::Duration&amp; period);</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a> </span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>  protected:</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   // Hooks for derived specialization</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>   virtual void applyJointCommands(bool walking, bool allow_auxiliary_overlays, bool emergency);</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a> </span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   virtual void ModePublish(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>   virtual void checkSafety();  // Default uses SafetyChecker</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>   /// Refresh the policy observation from robot_hw_ for safety and inference.</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>   virtual void updatePolicyObservationFromHardware();</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>   virtual void rvizVisualization();</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a> </span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>   void ModeSubscribe(rclcpp::Node::SharedPtr controller_nh);</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a> </span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>   void EmergencyStopCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>   void JoyCallback(const sensor_msgs::msg::Joy::ConstSharedPtr msg);</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>   void lowCmdRlCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   void lowCmdImitationCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>   void lowCmdWbcCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   void wbcMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>   void wbcActionCommandCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   void plannerCommandCallback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr msg);</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>   void followFaceCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>   void textMotionCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>   void textMotionCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>   void publishTextMotionEvent(const TextMotionController::Event&amp; event);</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   void flushTextMotionEvents();</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   void imitationMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>   std::array&lt;double, 3&gt; readCurrentHeadRpyRad();</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>   bool faceFollowAllowed() const;</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   void syncFaceFollowState(bool allowed, double wall_sec);</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a> </span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>   geometry_msgs::msg::Twist computeJoystickTrim(const JoystickCommand&amp; command);</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   geometry_msgs::msg::Twist selectedOperatorVelocity(const geometry_msgs::msg::Twist&amp; joystick_velocity);</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>   geometry_msgs::msg::Twist computeCommandVelocity(const JoystickCommand&amp; command, double wall_sec);</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>   void applyJoystickMotion(const JoystickCommand&amp; command, double wall_sec);</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   void processJoystickActions(const JoystickCommand&amp; command);</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>   void processJoystickBackEmergencySequence(const JoystickCommand&amp; command);</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>   void processJoystickImitationActions(const sensor_msgs::msg::Joy&amp; joy);</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>   void processJoystickSequenceActions(const sensor_msgs::msg::Joy&amp; joy);</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>   void enterWalkMode();</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>   virtual void resetController();</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>   void triggerEmergencyStop();</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>   void updateSpeedMultiplier(double lt_axis_value);</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>   void adjustStandbyKp(double delta);</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>   void toggleCalibrationMode();</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>   void calibrateByTag(const std::string&amp; tag, const std::string&amp; banner);</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   bool imitationActionActive() const;</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   bool canStartAmpDerivedAction(const char* context, const std::string&amp; action_label, bool require_walking,</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>                                 bool block_imitation_active) const;</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>   bool startActionSequence();</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>   void stopActionSequence(const char* reason, double wall_sec);</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>   void finishActionSequenceNormally(double wall_sec);</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>   void configureActionSequencePhase(const ActionSequencePhase&amp; phase, double wall_sec);</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>   void handleActionSequenceUpdate(const rclcpp::Time&amp; time);</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>   bool loadActionSequenceForPlayback(const std::string&amp; path, const char* context);</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>   bool triggerSequenceFromPath(const std::string&amp; sequence_path, const char* context,</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>                                const std::function&lt;void()&gt;&amp; after_start = nullptr);</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>   std::string displayControllerPath(const std::string&amp; path) const;</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>   bool prepareImitationPolicyForLoadedSequence(const char* context);</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>   bool fullCsvVelocityAllowed() const;</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>   void logFullCsvVelocityBlocked(const char* context, const std::string&amp; target) const;</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>   bool switchImitationPolicy(const std::string&amp; policy_name, const char* context);</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>   void publishImitationActive(bool active, const char* reason = nullptr);</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>   void dataInit(const std::vector&lt;std::string&gt;&amp; joint_names);</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>   bool loadWalkingGainProfile(const YAML::Node&amp; rc, const std::string&amp; profile_name, size_t expected_size,</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>                               JointGainProfile&amp; out) const;</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>   void setPolicySource(PolicyCmdSource source, const char* reason = nullptr);</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>   PolicyCmdSource walkStartPolicySource() const;</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>   void selectPolicyInputs(bool walking, std::vector&lt;double&gt;&amp; q_snapshot, JointGainProfile&amp; active_gains) const;</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   void publishRlObsReset();</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>   /// Switch policy mux to RL and reset RL observation history (no kp/kd ramp).</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>   void returnToRlWithoutGainRamp(const char* reason);</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>   void beginSequenceReleaseHandoff(double wall_sec);</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>   void clearSequenceReleaseHandoff();</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>   bool startWbcMotion(const std::string&amp; motion_id, int64_t timestamp_ms,</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>                       std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response);</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>   bool finishWbcMotion(const char* reason, std::string&amp; message);</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>   void abortWbcImmediately(const char* reason);</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>   void publishWbcActionFeedback(int64_t timestamp_ms, const std::string&amp; action_id, const char* status);</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>   void publishActiveWbcActionTerminal(const char* status);</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>   void updateWbcControlState();</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>   bool startPolicyHandoff(const PolicyInputs&amp; start, double duration_sec, const char* label);</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a> </span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>  protected:</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>   rclcpp::Publisher&lt;luvbot_control_interfaces::msg::PolicyObservation&gt;::SharedPtr pubState_;</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>   rclcpp::Publisher&lt;sensor_msgs::msg::JoyFeedbackArray&gt;::SharedPtr joyFeedbackPub_;</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>   rclcpp::Publisher&lt;std_msgs::msg::String&gt;::SharedPtr wbcActionFeedbackPub_;</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdWbc_;</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subWbcMotionDone_;</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subWbcActionCommand_;</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>   rclcpp::Publisher&lt;std_msgs::msg::Int64&gt;::SharedPtr shotIdPub_;</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>   rclcpp::CallbackGroup::SharedPtr sequence_trigger_callback_group_;</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a> </span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdRl_;</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>   rclcpp::Subscription&lt;luvbot_control_interfaces::msg::PolicyCommand&gt;::SharedPtr subCmdImitation_;</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>   rclcpp::Subscription&lt;sensor_msgs::msg::Joy&gt;::SharedPtr subJoy_;</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subEmgstop_;</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>   rclcpp::Subscription&lt;geometry_msgs::msg::TwistStamped&gt;::SharedPtr plannerCommandSub_;</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subFollowFace_;</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>   rclcpp::CallbackGroup::SharedPtr text_motion_callback_group_;</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr subTextMotion_, subTextMotionCancel_;</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>   rclcpp::Publisher&lt;std_msgs::msg::String&gt;::SharedPtr textMotionStatusPub_;</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>   rclcpp::TimerBase::SharedPtr textMotionStatusTimer_;</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>   std::mutex text_motion_events_mutex_;</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>   std::deque&lt;TextMotionController::Event&gt; text_motion_events_;</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a> </span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr subImitationMotionDone_;</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a> </span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>   // State containers</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>   luvbot_control_interfaces::msg::PolicyObservation policy_observation_;</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>   sensor_msgs::msg::JointState rvizVisualPos_;</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>   std::vector&lt;std::string&gt; jointNames_;</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>   /// True for leg joints (name contains hip/knee/ankle).</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>   std::vector&lt;bool&gt; is_leg_joint_;</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>   /// True for arm joints (name contains shoulder/elbow/wrist).</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>   std::vector&lt;bool&gt; is_arm_joint_;</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>   /// True for head joints (name contains neck/head).</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>   std::vector&lt;bool&gt; is_head_joint_;</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a> </span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>   // Motion source components</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>   HeadScriptController headCtrl_;</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>   FaceFollowController faceFollowCtrl_;</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>   ArmSwingController armSwingCtrl_;</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>   PolicyMux policyMux_;</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>   SequenceRuntime sequenceRuntime_;</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>   JointCommandComposer jointCommandComposer_;</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>   TextMotionController textMotionCtrl_;</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>   bool text_motion_enabled_{false};</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>   std::atomic&lt;bool&gt; text_motion_start_allowed_{false};</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a> </span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>   rclcpp::Time startingTime_;</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>   rclcpp::Time lastVizTick_;</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>   rclcpp::Duration vizPeriod_;</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>   rclcpp::Time lastJoyFeedbackTick_;</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>   rclcpp::Duration joyFeedbackPeriod_;</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>   rclcpp::Duration shifted_time;  // controller time since startingTime_</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a> </span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>   bool joyFeedbackState_{false};</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a> </span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>   int policy_frequency{0};</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a> </span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>   // Standby global kp (clamped per joint)</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>   double kp_standby_{0};</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>   bool sequence_engine_enabled_{false};</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>   bool joystick_imitation_enabled_{false};</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>   bool joystick_sequence_enabled_{false};</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>   bool joystick_back_emergency_sequence_enabled_{false};</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>   std::string joystick_imitation_config_path_;</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>   std::string joystick_sequence_config_path_;</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>   std::string joystick_back_emergency_sequence_path_;</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>   std::string legged_controllers_share_;</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>   bool radarControlEnabled_{false};</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>   bool faceFollowEnabled_{false};</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a> </span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>   /// Last controller `time.seconds()` from `update()`; used for async callbacks (e.g. /imitation_motion_done).</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>   double last_controller_wall_sec_{0.0};</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>   std::atomic&lt;bool&gt; face_follow_allowed_{false};</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a> </span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>   std::mutex plannerCommandMutex_;</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>   geometry_msgs::msg::Twist plannerCommand_;</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>   bool plannerCommandSeen_{false};</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>   bool plannerCommandValid_{false};</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>   int64_t plannerCommandStampNs_{0};</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>   int64_t plannerCommandClockNs_{0};</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>   std::chrono::steady_clock::time_point plannerCommandReceiveTime_{};</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a> </span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>   double imitation_policy_switch_timeout_sec_{120.0};</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>   double imitation_return_blend_sec_{0.35};</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>   bool wbc_enabled_{false};</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>   double wbc_transition_sec_{0.35};</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>   double wbc_command_timeout_sec_{0.5};</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>   std::atomic&lt;bool&gt; wbc_return_pending_{false};</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>   std::atomic&lt;bool&gt; wbc_handoff_in_progress_{false};</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>   double emergency_damping_kd_{5.0};</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>   bool sequence_finish_emergency_pending_{false};</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>   std::mutex auxiliary_action_trigger_mutex_;</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>   bool wbc_cleanup_pending_{false};  // Guarded by auxiliary_action_trigger_mutex_.</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>   // Callbacks stage handoffs; only the control loop touches the shared transition.</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>   std::mutex wbc_transition_mutex_;</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>   uint64_t wbc_generation_{0};</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>   bool wbc_start_allowed_{false};</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>   bool wbc_controller_walking_{false};</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>   geometry_msgs::msg::Quaternion wbc_orientation_;</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a>   geometry_msgs::msg::Twist wbc_velocity_;</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a>   bool wbc_handoff_pending_{false};</span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>   bool wbc_handoff_clear_pending_{false};</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>   PolicyInputs wbc_handoff_start_;</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>   PolicyCmdSource wbc_handoff_target_{PolicyCmdSource::kRl};</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>   std::mutex wbc_action_state_mutex_;</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>   bool wbc_action_active_{false};</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>   int64_t wbc_action_timestamp_ms_{0};</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>   std::string wbc_action_id_;</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>   std::deque&lt;std::pair&lt;std::string, std::chrono::steady_clock::time_point&gt;&gt; recent_wbc_action_requests_;</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a> </span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>   // Feedback rumble array</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a>   // sensor_msgs::JoyFeedbackArray joyFeedbackArray_;</span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a>   sensor_msgs::msg::JoyFeedbackArray joyFeedbackArray_;</span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a> </span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>   // Components</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>   JoystickInput joystickInput_;</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>   JoystickImitationActions joystickImitationActions_;</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>   JoystickSequenceActions joystickSequenceActions_;</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>   JoystickCommand lastJoystickCommand_;</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>   std::unique_ptr&lt;VelocityLimiter&gt; velLimiter_;</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>   std::unique_ptr&lt;VisualizationPublisher&gt; vizPub_;</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a>   std::unique_ptr&lt;SafetyChecker&gt; safetyChecker_;</span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a>   int orientation_violation_count_{0};</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>   std::unique_ptr&lt;StateMachine&gt; fsm_;</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a> </span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>   // Flags (default false for real robot; set true in sim launch)</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>   bool isSim_{false};</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>   bool enableRviz_{false};</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a> </span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a>  private:</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>   void prepareControllerClock(const rclcpp::Time&amp; time);</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>   RuntimeControlState computeRuntimeControlState() const;</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>   bool isActionSequenceFullCsv() const;</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>   bool advanceSequenceAndWalkingPolicy(const rclcpp::Time&amp; time, const rclcpp::Duration&amp; period);</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>   void runSafetyAndEmergencyFeedback(const rclcpp::Time&amp; time, bool safety_armed);</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>   void publishPolicyObservationWithJoystick(double wall_sec);</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>   void stepAuxiliaryMotionSources(bool allow_auxiliary_overlays, const rclcpp::Duration&amp; period,</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>                                   const rclcpp::Time&amp; time);</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>   void maybePublishVisualization(const rclcpp::Time&amp; time);</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>   void applyJointCsvPhaseTriggerBlendAndCmdVel(double wall_sec);</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a> };</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a> </span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a> }  // namespace legged</span></pre></html>

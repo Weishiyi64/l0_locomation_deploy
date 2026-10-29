@@ -1,0 +1,390 @@
+﻿stage,section,path,name,status,old_signature,new_signature,old_start,old_end,new_start,new_end,added_lines,deleted_lines,source_view
+A_to_C,O2,legged_controllers/include/legged_controllers/SequenceRuntime.h,legged::SequenceRuntime::keyboardAudioTopic,deleted,(),,70,70,,,0,1,audit_v2/source_views/005.html
+A_to_C,O2,legged_controllers/launch/action_sequence_policy.py,_iter_keyboard_sequence_paths,deleted,config_path: str,,172,188,,,0,17,audit_v2/source_views/006.html
+A_to_C,O2,legged_controllers/launch/action_sequence_policy.py,collect_action_sequence_manifest,modified,"*, keyboard_action_enabled: bool, keyboard_action_config_path: str, package_share_legged_controllers: str, joystick_imitation_enabled: bool=False, joystick_imitation_config_path: str='', joystick_sequence_enabled: bool=False, joystick_sequence_config_path: str='', robot_type: str='', policy_root_path: str=''","*, package_share_legged_controllers: str, joystick_imitation_enabled: bool=False, joystick_imitation_config_path: str='', joystick_sequence_enabled: bool=False, joystick_sequence_config_path: str='', robot_type: str='', policy_root_path: str=''",461,533,438,502,1,9,audit_v2/source_views/006.html
+A_to_C,O2,legged_controllers/launch/action_sequence_policy.py,collect_dynamic_imitation_policies,modified,"*, keyboard_action_enabled: bool, keyboard_action_config_path: str, package_share_legged_controllers: str, joystick_imitation_enabled: bool=False, joystick_imitation_config_path: str='', joystick_sequence_enabled: bool=False, joystick_sequence_config_path: str=''","*, package_share_legged_controllers: str, joystick_imitation_enabled: bool=False, joystick_imitation_config_path: str='', joystick_sequence_enabled: bool=False, joystick_sequence_config_path: str=''",439,458,420,435,1,5,audit_v2/source_views/006.html
+A_to_C,L3,legged_controllers/launch/one_start.launch.py,_launch_setup,modified,"context, *args, **kwargs","context, *args, **kwargs",28,265,33,327,60,10,audit_v2/source_views/007.html
+A_to_C,L3,legged_controllers/launch/one_start.launch.py,_launch_setup.asset,added,,relative,,,70,76,7,0,audit_v2/source_views/007.html
+A_to_C,L3,legged_controllers/launch/one_start.launch.py,generate_launch_description,modified,,,268,321,330,385,5,3,audit_v2/source_views/007.html
+A_to_C,O2,legged_controllers/launch/sim2mujoco.launch.py,generate_launch_description,modified,,,10,133,9,111,4,25,audit_v2/source_views/008.html
+A_to_C,L3,legged_controllers/launch/sim2real.launch.py,_configure_environment,added,,context,,,11,22,12,0,audit_v2/source_views/009.html
+A_to_C,L3,legged_controllers/launch/sim2real.launch.py,generate_launch_description,modified,,,11,197,25,199,15,27,audit_v2/source_views/009.html
+A_to_C,T1,legged_controllers/launch/text_wbc.launch.py,generate_launch_description,added,,,,,8,27,20,0,audit_v2/source_views/010.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.__init__,deleted,"self, grid: np.ndarray, resolution: float, origin_xy: tuple[float, float], prevent_corner_cutting: bool=False",,34,61,,,0,28,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner._reconstruct,deleted,"self, came_from: dict, current: tuple[int, int]",,174,180,,,0,7,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.grid_to_world,deleted,"self, rc: tuple[int, int]",,70,75,,,0,6,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.heuristic,deleted,"a: tuple[int, int], b: tuple[int, int]",,117,120,,,0,4,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.plan,deleted,"self, start_xy: Iterable[float], goal_xy: Iterable[float]",,122,172,,,0,51,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.segment_is_free,deleted,"self, start_xy: Iterable[float], end_xy: Iterable[float]",,82,115,,,0,34,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.valid,deleted,"self, rc: tuple[int, int]",,77,80,,,0,4,audit_v2/source_views/011.html
+A_to_C,O2,legged_controllers/scripts/astar_global_planner.py,AStarPlanner.world_to_grid,deleted,"self, xy: Iterable[float]",,63,68,,,0,6,audit_v2/source_views/011.html
+A_to_C,O1,legged_controllers/scripts/check_hardware_ready.bash,main,modified,,,112,156,113,157,1,1,audit_v2/source_views/012.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.__init__,deleted,self,,21,93,,,0,73,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.apply,deleted,"self, _event",,152,173,,,0,22,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.draw_goal,deleted,self,,110,124,,,0,15,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.free,deleted,"self, x, y",,99,108,,,0,10,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.message,deleted,"self, text",,95,97,,,0,3,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.motion,deleted,"self, event",,139,145,,,0,7,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.odometry,deleted,"self, message",,188,198,,,0,11,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.on_inference_enabled,deleted,"self, message",,181,183,,,0,3,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.on_path,deleted,"self, message",,175,179,,,0,5,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.on_task_state,deleted,"self, message",,185,186,,,0,2,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.poll,deleted,self,,200,225,,,0,26,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.press,deleted,"self, event",,126,137,,,0,12,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,GoalSelector.release,deleted,"self, event",,147,150,,,0,4,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_selector.py,main,deleted,,,228,241,,,0,14,audit_v2/source_views/013.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.__init__,deleted,self,,21,56,,,0,34,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.__init__.param,deleted,"name, default",,24,25,,,0,2,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.on_goal,deleted,"self, msg",,117,131,,,0,15,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.on_navigation_goal,deleted,"self, msg",,108,115,,,0,8,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.on_odom,deleted,"self, msg",,133,148,,,0,16,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.publish_accepted_goal,deleted,self,,58,69,,,0,12,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.publish_route,deleted,"self, remaining=False",,76,88,,,0,13,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.quaternion,deleted,pose,,71,74,,,0,4,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.start_navigation,deleted,"self, goal",,90,106,,,0,17,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,GoalToPlanner.tick,deleted,self,,150,187,,,0,38,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/goal_to_planner_node.py,main,deleted,,,190,202,,,0,13,audit_v2/source_views/014.html
+A_to_C,O2,legged_controllers/scripts/keyboard_action_trigger.py,KeyboardActionTrigger.__init__,deleted,self,,16,32,,,0,17,audit_v2/source_views/015.html
+A_to_C,O2,legged_controllers/scripts/keyboard_action_trigger.py,KeyboardActionTrigger.load_bindings,deleted,"self, raw_config_path: str",,44,73,,,0,30,audit_v2/source_views/015.html
+A_to_C,O2,legged_controllers/scripts/keyboard_action_trigger.py,KeyboardActionTrigger.publish_trigger,deleted,"self, action_name: str",,75,79,,,0,5,audit_v2/source_views/015.html
+A_to_C,O2,legged_controllers/scripts/keyboard_action_trigger.py,KeyboardActionTrigger.resolve_config_path,deleted,"self, raw_path: str",,34,42,,,0,9,audit_v2/source_views/015.html
+A_to_C,O2,legged_controllers/scripts/keyboard_action_trigger.py,main,deleted,,,82,129,,,0,48,audit_v2/source_views/015.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,FlatGroundPlanner.plan,deleted,"self, start, goal",,142,150,,,0,9,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,FlatGroundPlanner.segment_is_free,deleted,"self, start, end",,136,137,,,0,2,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,FlatGroundPlanner.start_is_free,deleted,"self, xy",,139,140,,,0,2,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,NavigationRoute.__init__,deleted,"self, planner, goal",,165,176,,,0,12,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,NavigationRoute.replan,deleted,"self, xy, now, force=False",,178,205,,,0,28,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,NavigationRoute.update,deleted,"self, pose, speed, now",,207,264,,,0,42,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,NavigationRoute.update.evaluate,deleted,,,210,225,,,0,16,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,_plan_clearance_route,deleted,"root_xy, goal_xy, planner, waypoint_spacing_m, *, exact_first_lookahead=True, preferred_direction=None",,67,130,,,0,64,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,future_waypoints_in_body,deleted,"path_xy, waypoint_index, root_xy, yaw, phase",,360,373,,,0,14,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,load_house_planner,deleted,scene,,153,161,,,0,9,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,plan_configured_astar_route,deleted,"root_xy: np.ndarray, goal_xy: np.ndarray, planner, waypoint_spacing_m: float, preferred_direction=None",,15,64,,,0,50,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,update_route_command,deleted,"path_xy, waypoint_index, root_xy, yaw, target_yaw, arrival, *, heading_enabled, linear_speed, angular_speed, waypoint_radius=0.2, recovering=False, planner=None, planar_speed_mps=0.0, decision_period_s=0.2",,267,357,,,0,80,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,update_route_command.intermediate_is_due,deleted,index,,309,313,,,0,5,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/navigation_route.py,update_route_command.waypoint_reached_or_passed,deleted,index,,297,302,,,0,6,audit_v2/source_views/016.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,GoalTask.__init__,deleted,"self, x, y, heading=None, speed=0.5, turn_speed=2.0",,41,47,,,0,7,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,GoalTask.keep_position_for,deleted,"self, other",,49,55,,,0,7,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,GoalTask.update,deleted,"self, x, y, yaw",,57,72,,,0,16,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,absolute_goal,deleted,values,,75,85,,,0,11,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,task_packet,deleted,values,,20,32,,,0,13,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,wrap,deleted,angle,,8,9,,,0,2,audit_v2/source_views/017.html
+A_to_C,O2,legged_controllers/scripts/planner_commands.py,yaw_xyzw,deleted,q,,12,17,,,0,6,audit_v2/source_views/017.html
+A_to_C,L3,legged_controllers/scripts/sequential_launch_real.sh,showHelp,modified,,,9,19,9,19,2,2,audit_v2/source_views/018.html
+A_to_C,O2,legged_controllers/scripts/sequential_launch_sim.sh,showHelp,modified,,,9,17,9,17,2,2,audit_v2/source_views/019.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.__init__,deleted,"self, obstacles, terrain_size, resolution=0.1",,155,191,,,0,37,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner._cost_to_goal,deleted,"self, goal",,264,298,,,0,35,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner._distance_to_occupied,deleted,self,,193,214,,,0,22,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner._goal_component,deleted,"self, goal",,533,550,,,0,18,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner._moves_outward,deleted,"self, obstacle, start, end",,422,450,,,0,29,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner._step_cost,deleted,"self, current, nxt, move_cost",,216,224,,,0,9,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.plan,deleted,"self, start_xy, goal_xy",,226,262,,,0,37,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.recovery_exits,deleted,"self, start, goal, max_distance=1.0, preferred_direction=None",,452,531,,,0,80,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.recovery_segment_is_safe,deleted,"self, start, end",,398,420,,,0,23,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.safe_lookahead_endpoint,deleted,"self, start, goal, distance=1.0, preferred_direction=None",,300,392,,,0,85,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.safe_lookahead_endpoint.distance_to_shortest_path,deleted,point,,331,338,,,0,8,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,RecoveryAStarPlanner.start_is_free,deleted,"self, xy",,394,396,,,0,3,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,refresh_committed_path,deleted,"path_xy, waypoint_index, start, planner, spacing=1.0",,64,151,,,0,88,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/sim2sim_path_planner.py,sample_guidance_path,deleted,"vertices, planner, spacing=1.0",,17,61,,,0,45,audit_v2/source_views/020.html
+A_to_C,O2,legged_controllers/scripts/timedelay_launch.sh,showHelp,deleted,,,3,24,,,0,22,audit_v2/source_views/022.html
+A_to_C,O2,legged_controllers/src/LeggedControllerInit.cpp,LeggedController::init,modified,(rclcpp::Node::SharedPtr controller_nh),(rclcpp::Node::SharedPtr controller_nh),50,416,49,388,1,28,audit_v2/source_views/023.html
+A_to_C,O2,legged_controllers/src/LeggedControllerRosIo.cpp,LeggedController::ModePublish,modified,(rclcpp::Node::SharedPtr controller_nh),(rclcpp::Node::SharedPtr controller_nh),76,110,71,99,0,6,audit_v2/source_views/024.html
+A_to_C,T4,legged_controllers/src/LeggedControllerRosIo.cpp,LeggedController::ModeSubscribe,modified,(rclcpp::Node::SharedPtr /* controller_nh */),(rclcpp::Node::SharedPtr /* controller_nh */),20,74,20,69,4,9,audit_v2/source_views/024.html
+A_to_C,O2,legged_controllers/src/LeggedControllerRosIo.cpp,LeggedController::keyboardActionTriggerCallback,deleted,(const std_msgs::msg::String::ConstSharedPtr msg),,184,188,,,0,5,audit_v2/source_views/024.html
+A_to_C,O2,legged_controllers/src/LeggedControllerSequenceBridge.cpp,LeggedController::loadKeyboardActionMap,deleted,(const std::string& path),,89,91,,,0,2,audit_v2/source_views/025.html
+A_to_C,O2,legged_controllers/src/LeggedControllerSequenceBridge.cpp,LeggedController::requestKeyboardAction,deleted,(const std::string& action_name),,255,302,,,0,48,audit_v2/source_views/025.html
+A_to_C,L2,legged_controllers/src/LeggedControllerWbc.cpp,LeggedController::finishWbcMotion,modified,"(const char* reason, std::string& message)","(const char* reason, std::string& message)",161,211,176,227,3,2,audit_v2/source_views/026.html
+A_to_C,L2,legged_controllers/src/LeggedControllerWbc.cpp,LeggedController::startWbcMotion,modified,"( const std::string& motion_id, int64_t timestamp_ms, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)","( const std::string& motion_id, int64_t timestamp_ms, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)",55,159,55,174,23,8,audit_v2/source_views/026.html
+A_to_C,T4,legged_controllers/src/LeggedControllerWbc.cpp,LeggedController::textWbcCancelCallback,added,,(const std_msgs::msg::String::ConstSharedPtr msg),,,344,354,10,0,audit_v2/source_views/026.html
+A_to_C,L2,legged_controllers/src/LeggedControllerWbc.cpp,LeggedController::wbcActionCommandCallback,modified,(const std_msgs::msg::String::ConstSharedPtr msg),(const std_msgs::msg::String::ConstSharedPtr msg),248,305,264,327,7,1,audit_v2/source_views/026.html
+A_to_C,O2,legged_controllers/src/SequenceRuntimeMaps.cpp,SequenceRuntime::findKeyboardAction,deleted,(const std::string& action_name),,118,122,,,0,5,audit_v2/source_views/027.html
+A_to_C,O2,legged_controllers/src/SequenceRuntimeMaps.cpp,SequenceRuntime::loadKeyboardActionMap,deleted,(const std::string& path),,17,116,,,0,100,audit_v2/source_views/027.html
+A_to_C,T4,legged_deploy/include/wbc_json_reference.h,WbcJsonReference::id,added,,(),,,22,22,1,0,audit_v2/source_views/032.html
+A_to_C,T4,legged_deploy/include/wbc_json_reference.h,WbcJsonReference::rootOrientation,added,,(),,,26,26,1,0,audit_v2/source_views/032.html
+A_to_C,T4,legged_deploy/include/wbc_json_reference.h,WbcJsonReference::rootPosition,added,,(),,,25,25,1,0,audit_v2/source_views/032.html
+A_to_C,T4,legged_deploy/include/wbc_json_reference.h,WbcJsonReference::size,added,,(),,,27,27,1,0,audit_v2/source_views/032.html
+A_to_C,T4,legged_deploy/include/wbc_json_reference.h,WbcJsonReference::start,added,,(),,,24,24,1,0,audit_v2/source_views/032.html
+A_to_C,L2,legged_deploy/include/wbc_lora_assets.h,WbcLoraAssets::action,added,,(const std::string& id),,,20,20,1,0,audit_v2/source_views/033.html
+A_to_C,L2,legged_deploy/include/wbc_lora_assets.h,WbcLoraAssets::baseHash,added,,(),,,22,22,1,0,audit_v2/source_views/033.html
+A_to_C,L2,legged_deploy/include/wbc_lora_assets.h,WbcLoraAssets::modelPath,added,,(),,,21,21,1,0,audit_v2/source_views/033.html
+A_to_C,L5,legged_deploy/src/main.cpp,main,modified,"(int argc, char** argv)","(int argc, char** argv)",17,152,21,164,8,0,audit_v2/source_views/034.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::RknnModel,modified,(const std::string& model_path),"(const std::string& model_path, InputMode mode)",35,87,92,151,9,2,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::bindResidentSlot,added,,(int slot),,,463,477,15,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::commitResidentParameters,added,,(int slot),,,491,521,31,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::initializeResident,added,,(),,,359,401,43,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::inputShape,added,,(std::size_t index),,,175,178,4,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::inputType,added,,(std::size_t index),,,180,180,1,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::isObservation,added,,(std::size_t index),,,302,304,3,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::releaseResident,added,,(),,,403,412,10,0,audit_v2/source_views/035.html
+A_to_C,L5,legged_deploy/src/rknn_model.cpp,RknnModel::residentLayout,added,,(),,,607,614,8,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::residentSlot,added,,(),,,597,600,4,0,audit_v2/source_views/035.html
+A_to_C,L5,legged_deploy/src/rknn_model.cpp,RknnModel::residentStats,added,,(),,,602,605,4,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::residentTensor,added,,"(const rknn_tensor_attr& logical, rknn_query_cmd query)",,,306,357,52,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::restoreResidentParameters,added,,(int slot),,,523,532,10,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::restoreResidentSlot,added,,(int slot),,,479,489,11,0,audit_v2/source_views/035.html
+A_to_C,L4,legged_deploy/src/rknn_model.cpp,RknnModel::run,modified,"(const std::vector<const float*>& inputs, const std::vector<std::size_t>& element_counts)","(const std::vector<const float*>& inputs, const std::vector<std::size_t>& element_counts)",139,218,217,300,4,0,audit_v2/source_views/035.html
+A_to_C,L4,legged_deploy/src/rknn_model.cpp,RknnModel::runResident,added,,"(const float* policy, std::size_t policy_size, const float* command, std::size_t command_size)",,,534,595,62,0,audit_v2/source_views/035.html
+A_to_C,L5,legged_deploy/src/rknn_model.cpp,RknnModel::runtimeVersion,added,,(),,,182,186,5,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::stageResidentParameters,added,,"(int slot, const std::vector<ParameterInput>& parameters)",,,433,461,29,0,audit_v2/source_views/035.html
+A_to_C,L4,legged_deploy/src/rknn_model.cpp,RknnModel::writeResident,added,,"(ResidentTensor& tensor, int slot, const float* values, std::size_t count)",,,414,431,18,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,RknnModel::~RknnModel,modified,(),(),89,91,153,156,1,0,audit_v2/source_views/035.html
+A_to_C,L5,legged_deploy/src/rknn_model.cpp,describe,added,,(const rknn_tensor_attr& attr),,,30,40,11,0,audit_v2/source_views/035.html
+A_to_C,L4,legged_deploy/src/rknn_model.cpp,fromHalf,added,,(std::uint16_t bits),,,71,78,7,0,audit_v2/source_views/035.html
+A_to_C,L5,legged_deploy/src/rknn_model.cpp,millisecondsSince,added,,(const std::chrono::steady_clock::time_point& start),,,26,28,3,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rknn_model.cpp,supportedResidentFloat,added,,(const rknn_tensor_attr& attr),,,42,50,9,0,audit_v2/source_views/035.html
+A_to_C,L4,legged_deploy/src/rknn_model.cpp,toHalf,added,,(float value),,,54,69,16,0,audit_v2/source_views/035.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::RLWbc,modified,(rclcpp::Node::SharedPtr node),(rclcpp::Node::SharedPtr node),83,119,79,169,62,8,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::activeCallback,modified,(const std_msgs::msg::Bool::ConstSharedPtr msg),(const std_msgs::msg::Bool::ConstSharedPtr msg),456,472,688,709,8,2,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::captureFrame,modified,"(RobotFrame& frame, std::array<double, 4>* orientation_wxyz, std::string& error, int64_t* observation_stamp)","(RobotFrame& frame, std::array<double, 4>* orientation_wxyz, std::string& error, int64_t* observation_stamp)",205,253,281,329,1,1,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::inferAndPublish,modified,"(double elapsed_sec, bool commit_action, std::string& error)","(double elapsed_sec, bool commit_action, std::string& error)",344,404,440,539,91,52,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::inferReferenceFrame,modified,(int index),(int index),255,274,331,333,2,8,audit_v2/source_views/036.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::inferReferenceFrame,added,,"(const Motion& motion, int index)",,,335,370,25,0,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::initializeModel,modified,(),(Motion& motion),176,203,244,279,27,19,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::loadConfig,modified,(const std::string& path),"(Motion& motion, const std::string& path)",126,174,182,242,40,28,audit_v2/source_views/036.html
+A_to_C,L5,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::logTiming,added,,(const char* phase),,,711,764,53,0,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::makeCommandInput,modified,"(const std::array<double, 4>& robot_orientation, int reference_index, bool reset_anchor)","(const std::array<double, 4>& robot_orientation, int reference_index, bool reset_anchor)",299,342,395,438,4,4,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::makePolicyInput,modified,(),(),276,297,372,393,1,1,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::prepareCallback,modified,"(const std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Request> request, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)","(const std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Request> request, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)",406,454,541,686,127,30,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::publishDone,modified,"(bool success, const char* reason)","(bool success, const char* reason)",491,498,783,791,2,1,audit_v2/source_views/036.html
+A_to_C,L4,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::runLoop,modified,(),(),500,536,793,829,1,1,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,RLWbc::~RLWbc,modified,(),(),121,124,171,180,6,0,audit_v2/source_views/036.html
+A_to_C,L2,legged_deploy/src/rl_controller_wbc.cpp,parentPath,deleted,(const std::string& path),,24,27,,,0,4,audit_v2/source_views/036.html
+A_to_C,T5,legged_deploy/src/rl_controller_wbc_json.cpp,RLWbc::initializeJsonReference,added,,(),,,25,53,29,0,audit_v2/source_views/037.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc_json.cpp,RLWbc::jsonCancelCallback,added,,(const std_msgs::msg::String::ConstSharedPtr msg),,,128,138,11,0,audit_v2/source_views/037.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc_json.cpp,RLWbc::jsonReferenceCallback,added,,(const std_msgs::msg::String::ConstSharedPtr msg),,,62,126,65,0,audit_v2/source_views/037.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc_json.cpp,RLWbc::publishJsonStatus,added,,"(const std::string& id, const char* state, const std::string& detail)",,,55,60,6,0,audit_v2/source_views/037.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc_json.cpp,quoted,added,,(const std::string& value),,,9,18,10,0,audit_v2/source_views/037.html
+A_to_C,T4,legged_deploy/src/rl_controller_wbc_json.cpp,remember,added,,"(std::deque<std::string>& ids, const std::string& id)",,,19,22,4,0,audit_v2/source_views/037.html
+A_to_C,L5,legged_deploy/src/wbc_io_probe.cpp,elapsedMs,added,,(const std::chrono::steady_clock::time_point& start),,,24,26,3,0,audit_v2/source_views/038.html
+A_to_C,L5,legged_deploy/src/wbc_io_probe.cpp,readFloats,added,,"(const fs::path& path, std::size_t count)",,,37,46,10,0,audit_v2/source_views/038.html
+A_to_C,L5,legged_deploy/src/wbc_io_probe.cpp,runWbcIoProbe,added,,"(int argc, char** argv, const volatile sig_atomic_t& stop_requested)",,,58,185,128,0,audit_v2/source_views/038.html
+A_to_C,L5,legged_deploy/src/wbc_io_probe.cpp,saveRuntimeMaps,added,,(const fs::path& output),,,48,55,8,0,audit_v2/source_views/038.html
+A_to_C,L5,legged_deploy/src/wbc_io_probe.cpp,writeYaml,added,,"(const fs::path& path, const YAML::Node& value)",,,28,35,8,0,audit_v2/source_views/038.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,WbcJsonReference::WbcJsonReference,added,,"(const std::string& payload, const std::vector<std::string>& joint_names, const std::vector<std::pair<double, double>>& limits, const std::string& base_hash, const std::array<double, 3>* base_position, const std::array<double, 4>* base_orientation)",,,44,150,107,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,WbcJsonReference::expired,added,,(),,,156,156,1,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,WbcJsonReference::frame,added,,(int index),,,152,154,3,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,finite,added,,(const YAML::Node& value),,,17,21,5,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,nowMs,added,,(),,,13,16,4,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference.cpp,require,added,,"(bool value, const char* message)",,,10,12,3,0,audit_v2/source_views/039.html
+A_to_C,T5,legged_deploy/src/wbc_json_reference.cpp,wbcJsonJointLimits,added,,"( const std::string& mapping_file, const std::vector<std::string>& joint_names)",,,24,42,19,0,audit_v2/source_views/039.html
+A_to_C,T4,legged_deploy/src/wbc_json_reference_probe.cpp,main,added,,"(int argc, char** argv)",,,12,46,35,0,audit_v2/source_views/040.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,WbcLoraAssets::WbcLoraAssets,added,,"(const std::string& manifest, const std::vector<std::string>& selected)",,,113,193,81,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,WbcLoraAssets::allocate,added,,(Buffer& buffer),,,221,224,4,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,WbcLoraAssets::bindModel,added,,(const RknnModel& model),,,195,219,25,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,WbcLoraAssets::loadAdapter,added,,"(const Action& action, Buffer& buffer)",,,226,257,32,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,WbcLoraAssets::parameterInputs,added,,(const Buffer& buffer),,,259,270,12,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,asset,added,,"(const std::string& root, const std::string& relative)",,,70,77,8,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,checkedRknn,added,,"(const std::string& root, const std::string& relative, const std::string& source_hash)",,,92,102,11,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,digest,added,,"(const void* data, std::size_t size)",,,30,37,8,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,fileHash,added,,(const std::string& path),,,48,63,16,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,halfToFloat,added,,(std::uint16_t bits),,,103,110,8,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,isHash,added,,(const std::string& value),,,27,29,3,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,readFile,added,,"(const std::string& path, std::size_t maximum)",,,38,47,10,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,readManifest,added,,(const std::string& path),,,64,69,6,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,require,added,,"(bool condition, const std::string& message)",,,18,20,3,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,shape,added,,(const YAML::Node& node),,,78,87,10,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,validId,added,,(const std::string& id),,,21,26,6,0,audit_v2/source_views/041.html
+A_to_C,L2,legged_deploy/src/wbc_lora_assets.cpp,withoutSingletons,added,,(std::vector<std::size_t> dims),,,88,91,4,0,audit_v2/source_views/041.html
+A_to_C,O2,legged_env_mujoco/legged_mujoco/launch/legged_mujoco_sim.launch.py,_legged_mujoco_sim_setup,modified,"context, *args, **kwargs","context, *args, **kwargs",10,104,10,102,0,2,audit_v2/source_views/042.html
+A_to_C,O2,legged_env_mujoco/legged_mujoco/launch/legged_mujoco_sim.launch.py,generate_launch_description,modified,,,107,136,105,132,0,2,audit_v2/source_views/042.html
+A_to_C,O1,legged_env_real/legged_real/launch/isolated_hpm.launch.py,generate_launch_description,added,,,,,23,25,3,0,audit_v2/source_views/044.html
+A_to_C,O1,legged_env_real/legged_real/launch/isolated_hpm.launch.py,setup,added,,context,,,9,20,12,0,audit_v2/source_views/044.html
+A_to_C,O1,legged_env_real/legged_real/launch/legged_real.launch.py,generate_launch_description,modified,,,103,136,109,141,1,2,audit_v2/source_views/045.html
+A_to_C,O1,legged_env_real/legged_real/launch/legged_real.launch.py,launch_setup,modified,"context, *args, **kwargs","context, *args, **kwargs",9,100,9,106,11,5,audit_v2/source_views/045.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,IsolatedHpm.__init__,added,,self,,,19,63,45,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,IsolatedHpm.command,added,,"self, msg",,,73,84,12,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,IsolatedHpm.enable,added,,"self, msg",,,65,71,7,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,IsolatedHpm.publish_feedback,added,,self,,,93,105,13,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,IsolatedHpm.reject_zero,added,,"request, response",,,86,91,6,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/scripts/isolated_hpm.py,main,added,,,,,108,120,13,0,audit_v2/source_views/047.html
+A_to_C,O1,legged_env_real/legged_real/src/LeggedReal.cpp,LeggedReal::motorStateCallback,modified,(const robot_interfaces::msg::MotorStateArray::SharedPtr msg),(const robot_interfaces::msg::MotorStateArray::SharedPtr msg),145,228,145,230,4,2,audit_v2/source_views/048.html
+A_to_C,L3,scripts/batch_convert_onnx_to_rknn_rk3588.py,convert_manifest,added,,args,,,55,170,116,0,audit_v2/source_views/049.html
+A_to_C,L3,scripts/batch_convert_onnx_to_rknn_rk3588.py,main,added,,,,,173,238,66,0,audit_v2/source_views/049.html
+A_to_C,L3,scripts/batch_convert_onnx_to_rknn_rk3588.py,parse_args,added,,,,,26,52,27,0,audit_v2/source_views/049.html
+A_to_C,L3,scripts/build_wbc_lora_rk3588.sh,die,added,,,,,28,28,1,0,audit_v2/source_views/050.html
+A_to_C,L3,scripts/build_wbc_lora_rk3588.sh,need_value,added,,,,,29,29,1,0,audit_v2/source_views/050.html
+A_to_C,L3,scripts/build_wbc_lora_rk3588.sh,print_command,added,,,,,30,30,1,0,audit_v2/source_views/050.html
+A_to_C,L3,scripts/build_wbc_lora_rk3588.sh,run_step,added,,,,,118,131,14,0,audit_v2/source_views/050.html
+A_to_C,L3,scripts/build_wbc_lora_rk3588.sh,usage,added,,,,,5,26,22,0,audit_v2/source_views/050.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py,check_model,modified,path,"path, manifest_path=None",42,65,55,82,5,1,audit_v2/source_views/051.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py,main,modified,,,204,248,279,339,20,4,audit_v2/source_views/051.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py,parse_args,modified,,,17,28,24,41,7,1,audit_v2/source_views/051.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py,verify,modified,"rknn, onnx_path, input_specs, output_spec, args","rknn, onnx_path, input_specs, output_spec, args",134,201,208,276,3,2,audit_v2/source_views/051.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py,verify_dynamic,added,,"rknn, onnx_path, args",,,151,205,55,0,audit_v2/source_views/051.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py,main,modified,,,184,223,191,233,6,3,audit_v2/source_views/052.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py,parse_args,modified,,,20,28,22,33,5,2,audit_v2/source_views/052.html
+A_to_C,L3,scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py,verify_reference,modified,"rknn, onnx_path, output_specs, meta, args","rknn, onnx_path, output_specs, meta, args",143,181,148,188,3,1,audit_v2/source_views/052.html
+A_to_C,L1,scripts/export_wbc_lora.py,action_config,added,,"config, reference_meta, action",,,269,288,20,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,actor_forward,added,,"actor, linear_names, norm_names, stats, policy, command",,,58,72,15,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,adapter_state,added,,"adapter, base, base_hash, linears, schema",,,221,244,24,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,affine_norm_nodes,added,,"prefix, input_value, output_value, index, original=None",,,147,154,8,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,array,added,,tensor,,,35,39,5,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,checkpoint,added,,path,,,29,32,4,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,dynamic_model,added,,"source, schema, bindings, norm_bindings",,,157,190,34,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,export_adapter,added,,"directory, action, adapter, graph, parameter_source='lora'",,,247,266,20,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,export_delivery,added,,"source, output, actions, samples=33, base_actions=(), fp16=False",,,395,630,236,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,finalize_fp16,added,,"stage, graph, report",,,328,392,65,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,fp16_initializers,added,,model,,,291,325,35,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,main,added,,,,,633,644,12,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,normalization_hash,added,,stats,,,54,55,2,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,probe_model,added,,"base_actor, linears, index, schema",,,193,218,26,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,residual_nodes,added,,"prefix, value, base_output, index",,,135,144,10,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,schema_for,added,,"linears, norms, actor",,,123,132,10,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,statistics,added,,state,,,42,51,10,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,topology,added,,"base, model",,,75,120,46,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/export_wbc_lora.py,write_json,added,,"path, value",,,25,26,2,0,audit_v2/source_views/053.html
+A_to_C,L1,scripts/generate_wbc_emotion_index.py,checked_file,added,,"root, path",,,22,25,4,0,audit_v2/source_views/054.html
+A_to_C,L1,scripts/generate_wbc_emotion_index.py,generate,added,,"root, actions=None, step=None",,,50,100,51,0,audit_v2/source_views/054.html
+A_to_C,L1,scripts/generate_wbc_emotion_index.py,main,added,,,,,103,129,27,0,audit_v2/source_views/054.html
+A_to_C,L1,scripts/generate_wbc_emotion_index.py,saved_steps,added,,"directory, prefix",,,36,47,12,0,audit_v2/source_views/054.html
+A_to_C,L1,scripts/generate_wbc_emotion_index.py,sha256,added,,path,,,28,33,6,0,audit_v2/source_views/054.html
+A_to_C,L3,scripts/prepare_wbc_deploy.py,install_lora,added,,"source, output",,,110,194,61,0,audit_v2/source_views/055.html
+A_to_C,L3,scripts/prepare_wbc_deploy.py,install_lora.include,added,,"relative, expected=None",,,125,135,11,0,audit_v2/source_views/055.html
+A_to_C,L3,scripts/prepare_wbc_deploy.py,install_lora.model,added,,"onnx, rknn, record_name, expected, graph_record=False",,,137,149,13,0,audit_v2/source_views/055.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,check_fp16_policy,added,,"path, graph",,,41,61,21,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,load_embedded_model,added,,path,,,28,38,11,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,main,added,,,,,310,319,10,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,normalize_reference,added,,path,,,64,68,5,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,normalize_reference_graph,added,,"model, meta",,,71,172,82,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,normalize_reference_graph.unwrap,added,,value,,,81,100,20,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,prepare,added,,"source, output, dry_run=False",,,175,307,109,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,prepare.include,added,,"relative, expected=None, copy_file=True",,,225,241,17,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/preprocess_wbc_lora_fp16.py,prepare.reserve,added,,relative,,,199,205,7,0,audit_v2/source_views/056.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,board_files,added,,actions,,,88,94,7,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,main,added,,,,,172,180,9,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,process,added,,args,,,97,169,62,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,process.run_step,added,,"label, script, *arguments",,,129,139,11,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,training_files,added,,"source, actions",,,26,58,33,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,verify_assets,added,,"root, expected=None",,,61,85,25,0,audit_v2/source_views/057.html
+A_to_C,L3,scripts/process_wbc_lora_delivery.py,write_json,added,,"path, value",,,22,23,2,0,audit_v2/source_views/057.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,compare,added,,"output, request, arrays, actions",,,157,199,43,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,error_stats,added,,error,,,151,154,4,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,load_cases,added,,directory,,,105,129,25,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,main,added,,,,,278,319,42,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,new_directory,added,,path,,,31,34,4,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,prepare,added,,args,,,37,102,66,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,run_board,added,,"args, output, request, arrays, graph, catalog",,,233,275,43,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,run_local,added,,"args, output, request, arrays, graph, catalog",,,202,230,29,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,save_json,added,,"path, value",,,27,28,2,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/run_wbc_lora_io.py,validate_assets,added,,"manifest, request",,,132,148,17,0,audit_v2/source_views/059.html
+A_to_C,L5,scripts/verify_wbc_lora_rknn.py,main,added,,,,,73,107,35,0,audit_v2/source_views/061.html
+A_to_C,L5,scripts/verify_wbc_lora_rknn.py,verify_cases,added,,"runtime, root, graph, max_abs_error",,,15,70,56,0,audit_v2/source_views/061.html
+A_to_C,L6,scripts/wbc_action_console.py,load_actions,added,,"bundle, selected",,,25,47,23,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,main,added,,,,,234,254,21,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,resolve_action,added,,"value, actions",,,50,58,9,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,run_console,added,,"args, actions, durations",,,83,231,95,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,run_console.feedback,added,,message,,,108,121,14,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,run_console.ready,added,,,,,133,166,34,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,run_console.record,added,,"path, value",,,104,106,3,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,run_console.set_active,added,,message,,,123,125,3,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,show_menu,added,,actions,,,61,66,6,0,audit_v2/source_views/063.html
+A_to_C,L6,scripts/wbc_action_console.py,stop_publisher,added,,process,,,69,80,12,0,audit_v2/source_views/063.html
+A_to_C,L3,scripts/wbc_lora_assets.py,asset_path,added,,"root, relative",,,36,43,8,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,check_graph,added,,"path, manifest_path",,,151,178,18,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,check_graph.specs,added,,items,,,163,172,10,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,conversion_record,added,,"onnx_path, output_path, args, verification",,,200,221,22,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,fingerprint,added,,value,,,22,23,2,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,graph_feeds,added,,"graph, observations, parameters",,,145,148,4,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,load_adapter,added,,"path, graph, expected_action_id=None",,,104,142,39,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,load_graph_manifest,added,,path,,,52,101,50,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,read_json,added,,path,,,26,33,8,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,rknn_build_config,added,,,,,192,197,6,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,runtime_options,added,,args,,,181,189,9,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,sha256,added,,path,,,14,19,6,0,audit_v2/source_views/065.html
+A_to_C,L3,scripts/wbc_lora_assets.py,tensor_shape,added,,value,,,46,49,4,0,audit_v2/source_views/065.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_current_run,added,,,,,65,84,20,0,audit_v2/source_views/066.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_die,added,,,,,4,4,1,0,audit_v2/source_views/066.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_environment,added,,,,,25,63,39,0,audit_v2/source_views/066.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_logged_command,added,,,,,88,105,18,0,audit_v2/source_views/066.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_options,added,,,,,6,23,18,0,audit_v2/source_views/066.html
+A_to_C,L6,scripts/wbc_runtime_common.bash,wbc_print_command,added,,,,,86,86,1,0,audit_v2/source_views/066.html
+A_to_C,O1,system_command_arbiter/src/motor_mapping.cpp,MotorMapping::feedbackFor,modified,"(const MotorMappingEntry& mapping, const luvbot_hardware_interfaces::msg::MotorState& state, double wrap_offset)","(const MotorMappingEntry& mapping, const luvbot_hardware_interfaces::msg::MotorState& state, double wrap_offset)",182,197,182,197,2,2,audit_v2/source_views/069.html
+A_to_C,T1,texttomotion/board_runtime.py,rknn_lite_class,added,,,,,6,26,19,0,audit_v2/source_views/070.html
+A_to_C,T1,texttomotion/board_runtime.py,rknn_lite_class.ExplicitLibraryRuntime._get_rknn_api_lib_path,added,,self,,,22,23,2,0,audit_v2/source_views/070.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.__init__,added,,"self, names, root_height, base_action='A-C04_mod'",,,108,135,28,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.cancel,added,,"self, identifier",,,246,249,4,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.check_observation_gate,added,,self,,,186,189,4,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.check_observation_timeout,added,,self,,,177,180,4,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.close,added,,self,,,251,255,5,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.current_snapshot,added,,self,,,171,175,5,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.execute,added,,"self, document, timeout",,,209,244,36,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.on_observation,added,,"self, message",,,143,169,27,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.on_status,added,,"self, source, message",,,137,141,5,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.publish,added,,"self, publisher, payload",,,204,207,4,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.reset_observation_gate,added,,self,,,182,184,3,0,audit_v2/source_views/071.html
+A_to_C,T3,texttomotion/generate_wbc_json.py,RosTransaction.wait_endpoints,added,,"self, timeout=10",,,191,202,12,0,audit_v2/source_views/071.html
+A_to_C,T2,texttomotion/generate_wbc_json.py,bundle_contract,added,,"path, base_action",,,22,36,15,0,audit_v2/source_views/071.html
+A_to_C,T5,texttomotion/generate_wbc_json.py,check_snapshot,added,,"snapshot, names, limits",,,53,79,27,0,audit_v2/source_views/071.html
+A_to_C,T5,texttomotion/generate_wbc_json.py,full_limits,added,,"mapping, names",,,39,50,12,0,audit_v2/source_views/071.html
+A_to_C,T2,texttomotion/generate_wbc_json.py,main,added,,,,,258,341,84,0,audit_v2/source_views/071.html
+A_to_C,T2,texttomotion/generate_wbc_json.py,make_document,added,,"trajectory, snapshot, graph",,,82,104,23,0,audit_v2/source_views/071.html
+A_to_C,T5,texttomotion/motion_adapter.py,check_pose,added,,"pose, limits",,,82,90,9,0,audit_v2/source_views/072.html
+A_to_C,T5,texttomotion/motion_adapter.py,configure_generation_limits,added,,"pipeline, limits",,,107,132,26,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,generate,added,,"pipeline, request, initial, limits",,,168,220,53,0,audit_v2/source_views/072.html
+A_to_C,T5,texttomotion/motion_adapter.py,load_limits,added,,mapping_file,,,67,79,13,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,mirror_arms,added,,value,,,93,104,12,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,open_pipeline,added,,"manifest, backend",,,38,64,27,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,valid_id,added,,value,,,24,25,2,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,validate_request,added,,request,,,135,165,31,0,audit_v2/source_views/072.html
+A_to_C,T2,texttomotion/motion_adapter.py,verify_baseline,added,,,,,28,35,8,0,audit_v2/source_views/072.html
+B_to_C,T6,legged_controllers/include/legged_controllers/TextMotionController.h,legged::TextMotionController::active,deleted,(),,34,34,,,0,1,audit_v2/source_views/104.html
+B_to_C,T6,legged_controllers/include/legged_controllers/TextMotionController.h,legged::TextMotionController::busy,deleted,(),,33,33,,,0,1,audit_v2/source_views/104.html
+B_to_C,T6,legged_controllers/launch/sim2mujoco.launch.py,generate_launch_description,modified,,,9,113,9,111,0,2,audit_v2/source_views/106.html
+B_to_C,T6,legged_controllers/launch/sim2real.launch.py,generate_launch_description,modified,,,25,199,25,199,2,2,audit_v2/source_views/107.html
+B_to_C,T6,legged_controllers/launch/text_motion.launch.py,generate_launch_description,deleted,,,9,21,,,0,13,audit_v2/source_views/108.html
+B_to_C,T6,legged_controllers/scripts/sequential_launch_real.sh,showHelp,modified,,,9,20,9,19,0,1,audit_v2/source_views/111.html
+B_to_C,T6,legged_controllers/scripts/sequential_launch_sim.sh,showHelp,modified,,,9,18,9,17,0,1,audit_v2/source_views/112.html
+B_to_C,T6,legged_controllers/src/JointCommandComposer.cpp,JointCommandComposer::composeAll,modified,(const Context& ctx),(const Context& ctx),7,95,7,87,0,8,audit_v2/source_views/116.html
+B_to_C,T6,legged_controllers/src/LeggedControllerActions.cpp,LeggedController::canStartAmpDerivedAction,modified,"(const char* context, const std::string& action_label, bool require_walking, bool block_imitation_active)","(const char* context, const std::string& action_label, bool require_walking, bool block_imitation_active)",196,228,196,223,0,5,audit_v2/source_views/117.html
+B_to_C,T6,legged_controllers/src/LeggedControllerInit.cpp,LeggedController::init,modified,(rclcpp::Node::SharedPtr controller_nh),(rclcpp::Node::SharedPtr controller_nh),49,400,49,388,0,12,audit_v2/source_views/118.html
+B_to_C,T6,legged_controllers/src/LeggedControllerRosIo.cpp,LeggedController::ModePublish,modified,(rclcpp::Node::SharedPtr controller_nh),(rclcpp::Node::SharedPtr controller_nh),79,114,71,99,0,7,audit_v2/source_views/119.html
+B_to_C,T6,legged_controllers/src/LeggedControllerRosIo.cpp,LeggedController::ModeSubscribe,modified,(rclcpp::Node::SharedPtr /* controller_nh */),(rclcpp::Node::SharedPtr /* controller_nh */),20,77,20,69,4,12,audit_v2/source_views/119.html
+B_to_C,T6,legged_controllers/src/LeggedControllerRuntime.cpp,LeggedController::applyJointCommands,modified,"(bool walking, bool allow_auxiliary_overlays, bool emergency_control)","(bool walking, bool allow_auxiliary_overlays, bool emergency_control)",192,243,190,231,0,10,audit_v2/source_views/120.html
+B_to_C,T6,legged_controllers/src/LeggedControllerRuntime.cpp,LeggedController::faceFollowAllowed,modified,(),(),47,51,47,50,1,2,audit_v2/source_views/120.html
+B_to_C,T6,legged_controllers/src/LeggedControllerRuntime.cpp,LeggedController::update,modified,"(const rclcpp::Time& time, const rclcpp::Duration& period)","(const rclcpp::Time& time, const rclcpp::Duration& period)",156,190,155,188,1,2,audit_v2/source_views/120.html
+B_to_C,T6,legged_controllers/src/LeggedControllerTextMotion.cpp,LeggedController::flushTextMotionEvents,deleted,(),,26,38,,,0,13,audit_v2/source_views/121.html
+B_to_C,T6,legged_controllers/src/LeggedControllerTextMotion.cpp,LeggedController::publishTextMotionEvent,deleted,(const TextMotionController::Event& event),,19,24,,,0,6,audit_v2/source_views/121.html
+B_to_C,T6,legged_controllers/src/LeggedControllerTextMotion.cpp,LeggedController::textMotionCallback,deleted,(const std_msgs::msg::String::ConstSharedPtr msg),,5,13,,,0,9,audit_v2/source_views/121.html
+B_to_C,T6,legged_controllers/src/LeggedControllerTextMotion.cpp,LeggedController::textMotionCancelCallback,deleted,(const std_msgs::msg::String::ConstSharedPtr msg),,15,17,,,0,3,audit_v2/source_views/121.html
+B_to_C,T6,legged_controllers/src/LeggedControllerWbc.cpp,LeggedController::startWbcMotion,modified,"( const std::string& motion_id, int64_t timestamp_ms, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)","( const std::string& motion_id, int64_t timestamp_ms, std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response)",55,179,55,174,0,5,audit_v2/source_views/122.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::cancel,deleted,(const std::string& request_id),,182,193,,,0,12,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::configure,deleted,"(const std::vector<std::string>& joints, const std::string& mapping_file, std::string& error)",,59,90,,,0,32,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::encodeEvent,deleted,(const Event& event),,289,292,,,0,4,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::finish,deleted,"(const char* state, const char* detail)",,199,209,,,0,11,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::getJointPosition,deleted,"(std::size_t index, double& q)",,275,287,,,0,13,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::remember,deleted,(const std::string& id),,96,99,,,0,4,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::seen,deleted,(const std::string& id),,92,94,,,0,3,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::setAllowed,deleted,(bool allowed),,195,197,,,0,3,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::step,deleted,"(const std::vector<double>& base, const std::vector<JointMotorCommand>& previous, bool allowed)",,211,273,,,0,63,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,TextMotionController::submitJson,deleted,"(const std::string& payload, bool allowed)",,101,180,,,0,80,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,legged::jsonString,deleted,(const std::string& value),,36,55,,,0,20,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,legged::smooth,deleted,(double x),,31,34,,,0,4,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,legged::unixTimeMs,deleted,(),,20,23,,,0,4,audit_v2/source_views/123.html
+B_to_C,T6,legged_controllers/src/TextMotionController.cpp,legged::validId,deleted,(const std::string& id),,25,29,,,0,5,audit_v2/source_views/123.html
+B_to_C,T6,legged_env_real/legged_real/launch/legged_real.launch.py,generate_launch_description,modified,,,110,143,109,141,0,1,audit_v2/source_views/133.html
+B_to_C,T6,legged_env_real/legged_real/launch/legged_real.launch.py,launch_setup,modified,"context, *args, **kwargs","context, *args, **kwargs",9,107,9,106,0,1,audit_v2/source_views/133.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.__init__,deleted,self,,20,49,,,0,30,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.cancel,deleted,"self, identifier",,59,64,,,0,6,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.cancel_generation_if_needed,deleted,"self, detail",,121,128,,,0,8,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.check_timeout,deleted,self,,157,168,,,0,12,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.close,deleted,self,,229,237,,,0,9,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.fresh_pose,deleted,self,,130,134,,,0,5,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.on_observation,deleted,"self, message",,104,119,,,0,16,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.on_playback_status,deleted,"self, message",,136,155,,,0,20,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.on_request,deleted,"self, message",,66,102,,,0,37,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.status,deleted,"self, identifier, state, detail=''",,51,57,,,0,7,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,TextMotionNode.work,deleted,self,,170,227,,,0,58,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_node.py,main,deleted,,,240,253,,,0,14,audit_v2/source_views/140.html
+B_to_C,T6,texttomotion/text_motion_request.py,main,deleted,,,15,84,,,0,66,audit_v2/source_views/141.html
+B_to_C,T6,texttomotion/text_motion_request.py,main.publish,deleted,value,,43,46,,,0,4,audit_v2/source_views/141.html
+WORKSPACE_NEW,D1,records/deploy_new_workspace.py,main,added,,,,,24,89,66,0,audit_v2/source_views/202.html
+WORKSPACE_NEW,D1,records/board_offline_validation.py,digest,added,,path,,,16,17,2,0,audit_v2/source_views/205.html
+WORKSPACE_NEW,D1,records/board_offline_validation.py,main,added,,,,,20,153,113,0,audit_v2/source_views/205.html
+WORKSPACE_NEW,D1,records/board_offline_validation.py,main.probe_case,added,,"name, mutate=None, error=None",,,84,101,18,0,audit_v2/source_views/205.html
+WORKSPACE_NEW,D1,records/board_offline_validation.py,main.record,added,,"name, **details",,,42,44,3,0,audit_v2/source_views/205.html
+WORKSPACE_NEW,D1,records/validate_generation_limits.py,main,added,,,,,15,143,125,0,audit_v2/source_views/206.html
+WORKSPACE_NEW,D1,records/validate_generation_limits.py,main.capture,added,,**kwargs,,,82,85,4,0,audit_v2/source_views/206.html
+WORKSPACE_NEW,D1,records/validate_standard_wbc_startup.py,main,added,,,,,15,137,98,0,audit_v2/source_views/207.html
+WORKSPACE_NEW,D1,records/validate_standard_wbc_startup.py,main.admit,added,,"identifier, mutate=None, state='ready'",,,87,95,9,0,audit_v2/source_views/207.html
+WORKSPACE_NEW,D1,records/validate_standard_wbc_startup.py,main.start_without_observation,added,,identifier,,,97,105,9,0,audit_v2/source_views/207.html
+WORKSPACE_NEW,D1,records/validate_standard_wbc_startup.py,main.until,added,,"predicate, timeout=15",,,79,85,7,0,audit_v2/source_views/207.html

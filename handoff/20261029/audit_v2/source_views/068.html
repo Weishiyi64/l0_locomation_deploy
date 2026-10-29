@@ -1,0 +1,187 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>system_command_arbiter/include/system_command_arbiter/motor_mapping.hpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>system_command_arbiter/include/system_command_arbiter/motor_mapping.hpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;cstddef&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;cstdint&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;luvbot_hardware_interfaces/msg/actuator_motor_command.hpp&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;luvbot_hardware_interfaces/msg/motor_route.hpp&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;luvbot_hardware_interfaces/msg/motor_state.hpp&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;string&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;unordered_map&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;vector&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> namespace system_command_arbiter {</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> constexpr unsigned kMotorErrorFaultSamples = 100U;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> constexpr double kJointPositionTolerance = 0.1;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> struct MotorLimits {</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   double p_min{};</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   double p_max{};</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   double v_min{};</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   double v_max{};</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   double t_min{};</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   double t_max{};</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   double kp_min{};</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   double kp_max{};</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   double kd_min{};</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   double kd_max{};</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   double rotation_direction{1.0};</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> };</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> </span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> struct MotorMappingEntry {</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   std::string joint_name;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   luvbot_hardware_interfaces::msg::MotorRoute route;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   bool enabled{false};</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   double zero_offset{};</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   double motor_direction{1.0};</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   double reduction{1.0};</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   double joint_lower{};</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   double joint_upper{};</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   MotorLimits limits;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> };</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> </span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> struct JointFeedback {</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   double q{};</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   double dq{};</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   double tau{};</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>   uint16_t error{};</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>   uint8_t operating_mode{};</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   bool valid{};</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   bool initializing{};</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   bool error_pending{};</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> };</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> struct FeedbackWrapState {</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   double offset{};</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   unsigned stable_samples{};</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   bool locked{};</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   bool fault{};</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   uint16_t error_code{};</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   unsigned error_samples{};</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> </span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   bool ready() const { return stable_samples &gt;= 3U &amp;&amp; !fault; }</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> };</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> </span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> class MotorMapping {</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>  public:</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   explicit MotorMapping(const std::string&amp; path);</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> </span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   static uint8_t motorTypeForFamily(const std::string&amp; family);</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> </span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>   std::size_t size() const { return entries_.size(); }</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   std::size_t enabledSize() const { return enabled_size_; }</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   const std::vector&lt;MotorMappingEntry&gt;&amp; entries() const { return entries_; }</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   const MotorMappingEntry* findJoint(const std::string&amp; joint_name) const;</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   int indexOfJoint(const std::string&amp; joint_name) const;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   int indexOfRoute(const luvbot_hardware_interfaces::msg::MotorRoute&amp; route) const;</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> </span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   luvbot_hardware_interfaces::msg::ActuatorMotorCommand commandFor(const MotorMappingEntry&amp; mapping, double q,</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>                                                                    double dq, double tau, double kp, double kd,</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>                                                                    double wrap_offset = 0.0) const;</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   double rawJointPosition(const MotorMappingEntry&amp; mapping, double motor_q) const;</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   double initialWrapOffset(const MotorMappingEntry&amp; mapping, double motor_q,</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>                            double tolerance = kJointPositionTolerance) const;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   JointFeedback feedbackFor(const MotorMappingEntry&amp; mapping, const luvbot_hardware_interfaces::msg::MotorState&amp; state,</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>                             double wrap_offset) const;</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   JointFeedback updateFeedback(const MotorMappingEntry&amp; mapping,</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>                                const luvbot_hardware_interfaces::msg::MotorState&amp; state, FeedbackWrapState&amp; wrap) const;</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> </span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>  private:</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   std::vector&lt;MotorMappingEntry&gt; entries_;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   std::unordered_map&lt;std::string, std::size_t&gt; joint_indices_;</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   std::size_t enabled_size_{0};</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a> };</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a> </span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a> }  // namespace system_command_arbiter</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #pragma once</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;cstddef&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &lt;cstdint&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;luvbot_hardware_interfaces/msg/actuator_motor_command.hpp&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;luvbot_hardware_interfaces/msg/motor_route.hpp&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;luvbot_hardware_interfaces/msg/motor_state.hpp&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;string&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;unordered_map&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;vector&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> namespace system_command_arbiter {</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> constexpr unsigned kMotorErrorFaultSamples = 100U;</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> struct MotorLimits {</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   double p_min{};</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>   double p_max{};</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>   double v_min{};</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   double v_max{};</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   double t_min{};</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>   double t_max{};</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>   double kp_min{};</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>   double kp_max{};</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   double kd_min{};</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   double kd_max{};</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   double rotation_direction{1.0};</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> };</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> </span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> struct MotorMappingEntry {</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>   std::string joint_name;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   luvbot_hardware_interfaces::msg::MotorRoute route;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>   bool enabled{false};</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   double zero_offset{};</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   double motor_direction{1.0};</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   double reduction{1.0};</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   double joint_lower{};</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   double joint_upper{};</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   MotorLimits limits;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a> };</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> struct JointFeedback {</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>   double q{};</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   double dq{};</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>   double tau{};</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>   uint16_t error{};</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   uint8_t operating_mode{};</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>   bool valid{};</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>   bool initializing{};</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   bool error_pending{};</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a> };</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a> </span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a> struct FeedbackWrapState {</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>   double offset{};</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   unsigned stable_samples{};</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>   bool locked{};</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>   bool fault{};</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>   uint16_t error_code{};</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>   unsigned error_samples{};</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a> </span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>   bool ready() const { return stable_samples &gt;= 3U &amp;&amp; !fault; }</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a> };</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a> </span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a> class MotorMapping {</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>  public:</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>   explicit MotorMapping(const std::string&amp; path);</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> </span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   static uint8_t motorTypeForFamily(const std::string&amp; family);</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a> </span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>   std::size_t size() const { return entries_.size(); }</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>   std::size_t enabledSize() const { return enabled_size_; }</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   const std::vector&lt;MotorMappingEntry&gt;&amp; entries() const { return entries_; }</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>   const MotorMappingEntry* findJoint(const std::string&amp; joint_name) const;</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>   int indexOfJoint(const std::string&amp; joint_name) const;</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   int indexOfRoute(const luvbot_hardware_interfaces::msg::MotorRoute&amp; route) const;</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a> </span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>   luvbot_hardware_interfaces::msg::ActuatorMotorCommand commandFor(const MotorMappingEntry&amp; mapping, double q,</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>                                                                    double dq, double tau, double kp, double kd,</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>                                                                    double wrap_offset = 0.0) const;</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>   double rawJointPosition(const MotorMappingEntry&amp; mapping, double motor_q) const;</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>   double initialWrapOffset(const MotorMappingEntry&amp; mapping, double motor_q, double tolerance = 0.1) const;</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>   JointFeedback feedbackFor(const MotorMappingEntry&amp; mapping, const luvbot_hardware_interfaces::msg::MotorState&amp; state,</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>                             double wrap_offset) const;</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>   JointFeedback updateFeedback(const MotorMappingEntry&amp; mapping,</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>                                const luvbot_hardware_interfaces::msg::MotorState&amp; state, FeedbackWrapState&amp; wrap) const;</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a> </span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>  private:</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   std::vector&lt;MotorMappingEntry&gt; entries_;</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>   std::unordered_map&lt;std::string, std::size_t&gt; joint_indices_;</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   std::size_t enabled_size_{0};</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a> };</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a> </span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> }  // namespace system_command_arbiter</span></pre></html>

@@ -1,0 +1,261 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/include/rl_controller_wbc.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/include/rl_controller_wbc.h</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #ifndef USE_RKNN</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #error &quot;RLWbc is an RKNN-only deployment worker&quot;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #endif</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> </span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;array&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;atomic&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;chrono&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;deque&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;map&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;memory&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &lt;mutex&gt;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> #include &lt;rclcpp/rclcpp.hpp&gt;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> #include &lt;std_msgs/msg/bool.hpp&gt;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> #include &lt;std_msgs/msg/string.hpp&gt;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> #include &lt;string&gt;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> #include &lt;thread&gt;</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> #include &lt;vector&gt;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> #include &quot;base/base_rl_controller.h&quot;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> #include &quot;luvbot_control_interfaces/srv/control_wbc_motion.hpp&quot;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> #include &quot;rknn_model.h&quot;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> #include &quot;wbc_lora_assets.h&quot;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> #include &quot;wbc_json_reference.h&quot;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> class RLWbc : public BaseRLController {</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>  public:</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   explicit RLWbc(rclcpp::Node::SharedPtr node);</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   ~RLWbc() override;</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> </span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>  private:</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   struct Motion {</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     std::string robot_cfg_path_;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>     std::string config_dir_;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     std::vector&lt;float&gt; default_joint_positions_;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     std::vector&lt;float&gt; action_scale_;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     std::vector&lt;int&gt; history_steps_;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     std::vector&lt;int&gt; future_steps_;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     int previous_action_steps_{3};</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     double control_dt_{0.02};</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     double start_hold_sec_{1.0};</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     std::string policy_input_name_{&quot;policy&quot;};</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     std::string command_input_name_{&quot;command_short&quot;};</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     std::string output_name_{&quot;action&quot;};</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     int reference_num_frames_{0};</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     int reference_root_body_index_{-1};</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     std::string motion_id_;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     std::string adapter_id_;</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     std::shared_ptr&lt;const WbcJsonReference&gt; json_reference_;</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     bool json_consumed_{false};</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> </span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     std::unique_ptr&lt;RknnModel&gt; model_;</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     RknnModel* policy_{nullptr};</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     std::unique_ptr&lt;RknnModel&gt; reference_model_;</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     std::array&lt;int, 6&gt; reference_output_indices_{};</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     int policy_input_index_{-1};</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     int command_input_index_{-1};</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     int output_index_{-1};</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   };</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   struct RobotFrame {</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     std::array&lt;float, 3&gt; angular_velocity{};</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     std::array&lt;float, 3&gt; projected_gravity{};</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     std::vector&lt;float&gt; joint_position;</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     std::vector&lt;float&gt; joint_velocity;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   };</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> </span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   struct ReferenceFrame {</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     std::array&lt;double, 3&gt; root_position{};</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     std::array&lt;double, 4&gt; root_orientation{};</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     std::vector&lt;float&gt; joint_position;</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   };</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> </span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   std::string rlCmdPublishTopic() const override;</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   void loadConfig(Motion&amp; motion, const std::string&amp; path);</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   void initializeModel(Motion&amp; motion);</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   void runLoop();</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   bool inferAndPublish(double elapsed_sec, bool commit_action, std::string&amp; error);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   bool captureFrame(RobotFrame&amp; frame, std::array&lt;double, 4&gt;* orientation_wxyz, std::string&amp; error,</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>                     int64_t* observation_stamp = nullptr);</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   ReferenceFrame inferReferenceFrame(int index);</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   ReferenceFrame inferReferenceFrame(const Motion&amp; motion, int index);</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   std::vector&lt;float&gt; makePolicyInput() const;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   std::vector&lt;float&gt; makeCommandInput(const std::array&lt;double, 4&gt;&amp; robot_orientation, int reference_index,</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>                                     bool reset_anchor);</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   void publishDone(bool success, const char* reason);</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   void logTiming(const char* phase);</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> </span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   void prepareCallback(const std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Request&gt; request,</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>                        std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response);</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   void activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   void initializeJsonReference();</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   void jsonReferenceCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   void jsonCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   void publishJsonStatus(const std::string&amp; id, const char* state, const std::string&amp; detail);</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   void stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) override;</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a> </span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   rclcpp::Node::SharedPtr node_;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   std::map&lt;std::string, std::unique_ptr&lt;Motion&gt;&gt; motions_;</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>   Motion* current_{nullptr};</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   std::unique_ptr&lt;WbcLoraAssets&gt; lora_assets_;</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   std::unique_ptr&lt;RknnModel&gt; shared_policy_;</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   std::array&lt;WbcLoraAssets::Buffer, 2&gt; adapter_buffers_;</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   int active_buffer_{0};</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   // This mutex is only taken by non-realtime prepare callbacks, never by the control loop.</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   std::mutex loading_mutex_;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   bool preparing_{false};</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   uint64_t prepare_generation_{0};</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   double prepare_timeout_sec_{0.5};</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   rclcpp::CallbackGroup::SharedPtr prepare_callback_group_;</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   std::vector&lt;const float*&gt; inputs_;</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   std::vector&lt;std::size_t&gt; input_sizes_;</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   std::vector&lt;std::string&gt; joint_names_;</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   LeggedDeployParams deploy_params_;</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a> </span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   struct TimingStats {</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     uint64_t samples{0};</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     uint64_t timeouts{0};</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     double reference_total{0.0};</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     double reference_max{0.0};</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     double policy_total{0.0};</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     double policy_max{0.0};</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     double cycle_total{0.0};</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     double cycle_max{0.0};</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>     // Bounded 0.1 ms histograms; final bucket is overflow (&gt;= 100 ms).</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     std::array&lt;uint64_t, 1001&gt; reference_hist{}, policy_hist{}, cycle_hist{};</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   } timing_;</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   double reference_sec_{0.0};</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   double policy_sec_{0.0};</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   std::size_t reference_queries_{0};</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>   std::deque&lt;RobotFrame&gt; state_history_;</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>   std::deque&lt;std::vector&lt;float&gt;&gt; action_history_;</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   std::array&lt;double, 4&gt; yaw_anchor_wxyz_{{1.0, 0.0, 0.0, 0.0}};</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   std::chrono::steady_clock::time_point motion_start_{};</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   bool prepared_{false};</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   bool active_{false};</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   bool done_published_{false};</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>   std::mutex observation_mutex_;</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   bool observation_received_{false};</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>   std::chrono::steady_clock::time_point observation_received_at_{};</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   int64_t observation_stamp_ns_{0};</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>   double sensor_timeout_sec_{0.1};</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a> </span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   mutable std::mutex mutex_;</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>   std::atomic&lt;bool&gt; loop_running_{true};</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   std::thread loop_thread_;</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   rclcpp::Service&lt;luvbot_control_interfaces::srv::ControlWbcMotion&gt;::SharedPtr prepare_service_;</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr active_sub_;</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>   rclcpp::Publisher&lt;std_msgs::msg::Bool&gt;::SharedPtr done_pub_;</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>   std::string json_base_action_;</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>   ReferenceFrame json_base_reference_;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>   std::vector&lt;std::pair&lt;double, double&gt;&gt; json_joint_limits_;</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>   std::deque&lt;std::string&gt; json_recent_ids_, json_cancelled_ids_;</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>   rclcpp::CallbackGroup::SharedPtr json_callback_group_, json_cancel_group_;</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   rclcpp::Subscription&lt;std_msgs::msg::String&gt;::SharedPtr json_sub_, json_cancel_sub_;</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>   rclcpp::Publisher&lt;std_msgs::msg::String&gt;::SharedPtr json_status_pub_;</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a> };</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #pragma once</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #ifndef USE_RKNN</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #error &quot;RLWbc is an RKNN-only deployment worker&quot;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #endif</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> </span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;array&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;atomic&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;chrono&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;deque&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> #include &lt;memory&gt;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> #include &lt;mutex&gt;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> #include &lt;rclcpp/rclcpp.hpp&gt;</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> #include &lt;std_msgs/msg/bool.hpp&gt;</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> #include &lt;string&gt;</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> #include &lt;thread&gt;</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> #include &lt;vector&gt;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> #include &quot;base/base_rl_controller.h&quot;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> #include &quot;luvbot_control_interfaces/srv/control_wbc_motion.hpp&quot;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> #include &quot;rknn_model.h&quot;</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> </span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> class RLWbc : public BaseRLController {</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>  public:</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   explicit RLWbc(rclcpp::Node::SharedPtr node);</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   ~RLWbc() override;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> </span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>  private:</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>   struct RobotFrame {</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>     std::array&lt;float, 3&gt; angular_velocity{};</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     std::array&lt;float, 3&gt; projected_gravity{};</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     std::vector&lt;float&gt; joint_position;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>     std::vector&lt;float&gt; joint_velocity;</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   };</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a> </span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   struct ReferenceFrame {</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>     std::array&lt;double, 3&gt; root_position{};</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>     std::array&lt;double, 4&gt; root_orientation{};</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     std::vector&lt;float&gt; joint_position;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   };</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>   std::string rlCmdPublishTopic() const override;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>   void loadConfig(const std::string&amp; path);</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   void initializeModel();</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>   void runLoop();</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>   bool inferAndPublish(double elapsed_sec, bool commit_action, std::string&amp; error);</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   bool captureFrame(RobotFrame&amp; frame, std::array&lt;double, 4&gt;* orientation_wxyz, std::string&amp; error,</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>                     int64_t* observation_stamp = nullptr);</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>   ReferenceFrame inferReferenceFrame(int index);</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   std::vector&lt;float&gt; makePolicyInput() const;</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>   std::vector&lt;float&gt; makeCommandInput(const std::array&lt;double, 4&gt;&amp; robot_orientation, int reference_index,</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>                                     bool reset_anchor);</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>   void publishDone(bool success, const char* reason);</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a> </span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   void prepareCallback(const std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Request&gt; request,</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>                        std::shared_ptr&lt;luvbot_control_interfaces::srv::ControlWbcMotion::Response&gt; response);</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>   void activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>   void stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) override;</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a> </span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>   rclcpp::Node::SharedPtr node_;</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>   std::string robot_cfg_path_;</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>   std::string config_dir_;</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>   std::vector&lt;std::string&gt; joint_names_;</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>   std::vector&lt;float&gt; default_joint_positions_;</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>   std::vector&lt;float&gt; action_scale_;</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>   std::vector&lt;int&gt; history_steps_;</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>   std::vector&lt;int&gt; future_steps_;</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   int previous_action_steps_{3};</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   double control_dt_{0.02};</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>   double start_hold_sec_{1.0};</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>   float clip_actions_{0.0f};</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   std::string policy_input_name_{&quot;policy&quot;};</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>   std::string command_input_name_{&quot;command_short&quot;};</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>   std::string output_name_{&quot;action&quot;};</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   int reference_num_frames_{0};</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>   int reference_root_body_index_{-1};</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>   std::string motion_id_;</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a> </span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>   std::unique_ptr&lt;RknnModel&gt; model_;</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>   std::unique_ptr&lt;RknnModel&gt; reference_model_;</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>   std::array&lt;int, 6&gt; reference_output_indices_{};</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>   LeggedDeployParams deploy_params_;</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>   int policy_input_index_{-1};</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>   int command_input_index_{-1};</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>   int output_index_{-1};</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   std::deque&lt;RobotFrame&gt; state_history_;</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>   std::deque&lt;std::vector&lt;float&gt;&gt; action_history_;</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   std::array&lt;double, 4&gt; yaw_anchor_wxyz_{{1.0, 0.0, 0.0, 0.0}};</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>   std::chrono::steady_clock::time_point motion_start_{};</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   bool prepared_{false};</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>   bool active_{false};</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>   bool done_published_{false};</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>   std::mutex observation_mutex_;</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>   bool observation_received_{false};</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   std::chrono::steady_clock::time_point observation_received_at_{};</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   int64_t observation_stamp_ns_{0};</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>   double sensor_timeout_sec_{0.1};</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a> </span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   mutable std::mutex mutex_;</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>   std::atomic&lt;bool&gt; loop_running_{true};</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>   std::thread loop_thread_;</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   rclcpp::Service&lt;luvbot_control_interfaces::srv::ControlWbcMotion&gt;::SharedPtr prepare_service_;</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>   rclcpp::Subscription&lt;std_msgs::msg::Bool&gt;::SharedPtr active_sub_;</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>   rclcpp::Publisher&lt;std_msgs::msg::Bool&gt;::SharedPtr done_pub_;</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a> };</span></pre></html>

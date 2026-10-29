@@ -1,0 +1,397 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/launch/sim2real.launch.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/launch/sim2real.launch.py</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> from launch import LaunchDescription</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable, LogInfo</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> from launch.conditions import IfCondition</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> from launch.launch_description_sources import PythonLaunchDescriptionSource</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> from launch_ros.actions import Node</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> from launch_ros.substitutions import FindPackageShare</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> </span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> def _configure_environment(context):</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>     mode = context.launch_configurations[&#x27;hpm_mode&#x27;]</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>     if mode not in (&#x27;real&#x27;, &#x27;isolated&#x27;):</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>         raise RuntimeError(&#x27;hpm_mode must be real or isolated&#x27;)</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     if mode == &#x27;isolated&#x27;:</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>         domain = int(context.launch_configurations[&#x27;isolated_ros_domain&#x27;])</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>         if not 1 &lt;= domain &lt;= 232:</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>             raise RuntimeError(&#x27;isolated_ros_domain must be between 1 and 232&#x27;)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>         return [SetEnvironmentVariable(&#x27;ROS_DOMAIN_ID&#x27;, str(domain)),</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>                 SetEnvironmentVariable(&#x27;ROS_LOCALHOST_ONLY&#x27;, &#x27;1&#x27;),</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>                 LogInfo(msg=f&#x27;HPM isolated endpoints; ROS_DOMAIN_ID={domain}, ROS_LOCALHOST_ONLY=1&#x27;)]</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     return []</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> def generate_launch_description():</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     robot_type = LaunchConfiguration(&#x27;robot_type&#x27;)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     subpolicy = LaunchConfiguration(&#x27;subpolicy&#x27;)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     radar_control_enabled = LaunchConfiguration(&#x27;radar_control_enabled&#x27;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     nav_planner_model_path = LaunchConfiguration(&#x27;nav_planner_model_path&#x27;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     planner_depth_input_enabled = LaunchConfiguration(&#x27;planner_depth_input_enabled&#x27;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     raw_depth_preview_enabled = LaunchConfiguration(&#x27;raw_depth_preview_enabled&#x27;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     wbc_enabled = LaunchConfiguration(&#x27;wbc_enabled&#x27;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     wbc_policies = LaunchConfiguration(&#x27;wbc_policies&#x27;)</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     bag_enabled = LaunchConfiguration(&#x27;bag_enabled&#x27;)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>     bag_name = LaunchConfiguration(&#x27;bag_name&#x27;)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     rviz = LaunchConfiguration(&#x27;rviz&#x27;)</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     battery_enabled = LaunchConfiguration(&#x27;battery_enabled&#x27;)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     imu_enabled = LaunchConfiguration(&#x27;imu_enabled&#x27;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     head_script_enabled = LaunchConfiguration(&#x27;head_script_enabled&#x27;)</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     head_script_config = LaunchConfiguration(&#x27;head_script_config&#x27;)</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     joystick_imitation_enabled = LaunchConfiguration(&#x27;joystick_imitation_enabled&#x27;)</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     joystick_imitation_config_path = LaunchConfiguration(&#x27;joystick_imitation_config_path&#x27;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     joystick_sequence_enabled = LaunchConfiguration(&#x27;joystick_sequence_enabled&#x27;)</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     joystick_sequence_config_path = LaunchConfiguration(&#x27;joystick_sequence_config_path&#x27;)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     joystick_back_emergency_sequence_enabled = LaunchConfiguration(&#x27;joystick_back_emergency_sequence_enabled&#x27;)</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     joystick_back_emergency_sequence_path = LaunchConfiguration(&#x27;joystick_back_emergency_sequence_path&#x27;)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     emergency_damping_kd = LaunchConfiguration(&#x27;emergency_damping_kd&#x27;)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     arm_swing_enabled = LaunchConfiguration(&#x27;arm_swing_enabled&#x27;)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     arm_swing_stop_vx_threshold = LaunchConfiguration(&#x27;arm_swing_stop_vx_threshold&#x27;)</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     arm_swing_high_vx_threshold = LaunchConfiguration(&#x27;arm_swing_high_vx_threshold&#x27;)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     arm_swing_vx_hysteresis = LaunchConfiguration(&#x27;arm_swing_vx_hysteresis&#x27;)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     arm_swing_blend_sec = LaunchConfiguration(&#x27;arm_swing_blend_sec&#x27;)</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     safety_orientation_roll_limit_deg = LaunchConfiguration(&#x27;safety_orientation_roll_limit_deg&#x27;)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     safety_orientation_pitch_limit_deg = LaunchConfiguration(&#x27;safety_orientation_pitch_limit_deg&#x27;)</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     safety_orientation_consecutive_violation_count = LaunchConfiguration(</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>         &#x27;safety_orientation_consecutive_violation_count&#x27;</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     )</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> </span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     args = [</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         DeclareLaunchArgument(&#x27;robot_type&#x27;, default_value=&#x27;l0_v5&#x27;),</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         DeclareLaunchArgument(&#x27;subpolicy&#x27;, default_value=&#x27;l0_v5_amp_07090&#x27;),</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>         DeclareLaunchArgument(&#x27;radar_control_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         DeclareLaunchArgument(</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>             &#x27;nav_planner_model_path&#x27;,</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>             default_value=PathJoinSubstitution(</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>                 [</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>                     FindPackageShare(&#x27;legged_deploy&#x27;),</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>                     &#x27;policy&#x27;,</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>                     robot_type,</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>                     &#x27;local_planner&#x27;,</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>                     &#x27;planner_09090.onnx&#x27;,</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>                 ]</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>             ),</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         ),</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>         DeclareLaunchArgument(&#x27;planner_depth_input_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         DeclareLaunchArgument(&#x27;raw_depth_preview_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>         DeclareLaunchArgument(&#x27;cloud_voltage_test_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         DeclareLaunchArgument(&#x27;cloud_device_id&#x27;, default_value=&#x27;LUV2026090001&#x27;),</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         DeclareLaunchArgument(&#x27;cloud_host&#x27;, default_value=&#x27;mqtt.luvbotics.com&#x27;),</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>         DeclareLaunchArgument(&#x27;cloud_cert_dir&#x27;, default_value=&#x27;&#x27;),</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         DeclareLaunchArgument(&#x27;wbc_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>         DeclareLaunchArgument(&#x27;wbc_json_base_action&#x27;, default_value=&#x27;&#x27;),</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         DeclareLaunchArgument(&#x27;wbc_mode&#x27;, default_value=&#x27;static&#x27;),</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>         DeclareLaunchArgument(&#x27;wbc_lora_bundle&#x27;, default_value=&#x27;wbc_lora&#x27;),</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>         DeclareLaunchArgument(&#x27;hpm_mode&#x27;, default_value=&#x27;real&#x27;),</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         DeclareLaunchArgument(&#x27;isolated_ros_domain&#x27;, default_value=&#x27;97&#x27;),</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>         DeclareLaunchArgument(&#x27;wbc_policies&#x27;, default_value=&#x27;[L0_excited_1, L0_sad_1, L0_sad_7, L0_sad_8, L0_sad_9, L0_sad_10, L0_sad_new_1, L0_sad_new_2, L0_sad_new_3, L0_sad_new_4, L0_sad_wanyao, L0_14_satisfied, L0_Approve_8, L0_Approve_24, L0_Approve_26, L0_delicious, L0_satisfied_7, L0_satisfied_8, L0_satisfied_9, L0_satisfied_10, L0_satisfied_new_1]&#x27;),</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>         DeclareLaunchArgument(&#x27;bag_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         DeclareLaunchArgument(</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>             &#x27;bag_name&#x27;,</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>             default_value=PythonExpression([&quot;&#x27;&quot;, subpolicy, &quot;_real&#x27;&quot;]),</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         ),</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>         DeclareLaunchArgument(&#x27;rviz&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         DeclareLaunchArgument(&#x27;battery_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         DeclareLaunchArgument(&#x27;imu_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         DeclareLaunchArgument(&#x27;head_script_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>         DeclareLaunchArgument(</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>             &#x27;head_script_config&#x27;,</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>             default_value=PathJoinSubstitution(</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;pcmd_yaml&#x27;, &#x27;l0_keepalone.yaml&#x27;]</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>             ),</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         ),</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         DeclareLaunchArgument(&#x27;joystick_imitation_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         DeclareLaunchArgument(</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>             &#x27;joystick_imitation_config_path&#x27;,</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>             default_value=PathJoinSubstitution(</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;config&#x27;, &#x27;joystick_imitation_actions.yaml&#x27;]</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>             ),</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>         ),</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         DeclareLaunchArgument(&#x27;joystick_sequence_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>         DeclareLaunchArgument(</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>             &#x27;joystick_sequence_config_path&#x27;,</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>             default_value=PathJoinSubstitution(</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;config&#x27;, &#x27;joystick_sequence_actions.yaml&#x27;]</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>             ),</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         ),</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         DeclareLaunchArgument(&#x27;joystick_back_emergency_sequence_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         DeclareLaunchArgument(</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>             &#x27;joystick_back_emergency_sequence_path&#x27;,</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>             default_value=PathJoinSubstitution(</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;action_sequences&#x27;, &#x27;walking_back_emergency.yaml&#x27;]</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>             ),</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>         ),</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         DeclareLaunchArgument(&#x27;emergency_damping_kd&#x27;, default_value=&#x27;0.2&#x27;),</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>         DeclareLaunchArgument(&#x27;arm_swing_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         DeclareLaunchArgument(&#x27;arm_swing_stop_vx_threshold&#x27;, default_value=&#x27;0.1&#x27;),</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>         DeclareLaunchArgument(&#x27;arm_swing_high_vx_threshold&#x27;, default_value=&#x27;0.8&#x27;),</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         DeclareLaunchArgument(&#x27;arm_swing_vx_hysteresis&#x27;, default_value=&#x27;0.03&#x27;),</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>         DeclareLaunchArgument(&#x27;arm_swing_blend_sec&#x27;, default_value=&#x27;0.5&#x27;),</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         DeclareLaunchArgument(&#x27;safety_orientation_roll_limit_deg&#x27;, default_value=&#x27;30.0&#x27;),</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>         DeclareLaunchArgument(&#x27;safety_orientation_pitch_limit_deg&#x27;, default_value=&#x27;30.0&#x27;),</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         DeclareLaunchArgument(&#x27;safety_orientation_consecutive_violation_count&#x27;, default_value=&#x27;10&#x27;),</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     ]</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> </span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     # 调用 sequential_launch_real.sh：按顺序启动话题硬件桥和主控制器</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     sequential_launch = Node(</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         package=&#x27;legged_controllers&#x27;,</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         executable=&#x27;sequential_launch_real.sh&#x27;,</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         name=&#x27;sequential_launcher_real&#x27;,</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>         arguments=[</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>             robot_type,</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>             bag_enabled,</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>             subpolicy,</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>             bag_name,</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>             rviz,</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>             battery_enabled,</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>             imu_enabled,</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>             head_script_enabled,</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>             head_script_config,</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>             joystick_imitation_enabled,</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>             joystick_imitation_config_path,</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>             arm_swing_enabled,</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>             arm_swing_stop_vx_threshold,</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>             arm_swing_high_vx_threshold,</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>             arm_swing_vx_hysteresis,</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>             arm_swing_blend_sec,</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>             safety_orientation_roll_limit_deg,</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>             safety_orientation_pitch_limit_deg,</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>             safety_orientation_consecutive_violation_count,</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>             joystick_sequence_enabled,</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>             joystick_sequence_config_path,</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>             joystick_back_emergency_sequence_enabled,</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>             joystick_back_emergency_sequence_path,</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>             emergency_damping_kd,</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>             radar_control_enabled,</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>             nav_planner_model_path,</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>             planner_depth_input_enabled,</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>             raw_depth_preview_enabled,</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>             wbc_enabled,</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>             wbc_policies,</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>             LaunchConfiguration(&#x27;wbc_mode&#x27;),</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>             LaunchConfiguration(&#x27;wbc_lora_bundle&#x27;),</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>             LaunchConfiguration(&#x27;hpm_mode&#x27;),</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>             LaunchConfiguration(&#x27;wbc_json_base_action&#x27;),</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>         ],</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>         output=&#x27;screen&#x27;,</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>         sigterm_timeout=&#x27;15&#x27;,</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>         sigkill_timeout=&#x27;5&#x27;,</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     )</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a> </span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     cloud_voltage_test = IncludeLaunchDescription(</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>         PythonLaunchDescriptionSource(</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>             PathJoinSubstitution(</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>                 [</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>                     FindPackageShare(&#x27;luvbot_cloud_bridge&#x27;),</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>                     &#x27;launch&#x27;,</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>                     &#x27;voltage_test.launch.py&#x27;,</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>                 ]</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>             )</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>         ),</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>         condition=IfCondition(LaunchConfiguration(&#x27;cloud_voltage_test_enabled&#x27;)),</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>         launch_arguments={</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>             &#x27;device_id&#x27;: LaunchConfiguration(&#x27;cloud_device_id&#x27;),</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>             &#x27;host&#x27;: LaunchConfiguration(&#x27;cloud_host&#x27;),</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>             &#x27;cert_dir&#x27;: LaunchConfiguration(&#x27;cloud_cert_dir&#x27;),</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>         }.items(),</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     )</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a> </span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>     return LaunchDescription(args + [OpaqueFunction(function=_configure_environment), sequential_launch, cloud_voltage_test])</span></pre><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> from launch import LaunchDescription</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable, LogInfo</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> from launch.conditions import IfCondition</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> from launch.launch_description_sources import PythonLaunchDescriptionSource</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> from launch_ros.actions import Node</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> from launch_ros.substitutions import FindPackageShare</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> </span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> </span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> def _configure_environment(context):</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>     mode = context.launch_configurations[&#x27;hpm_mode&#x27;]</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     if mode not in (&#x27;real&#x27;, &#x27;isolated&#x27;):</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>         raise RuntimeError(&#x27;hpm_mode must be real or isolated&#x27;)</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>     if mode == &#x27;isolated&#x27;:</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>         domain = int(context.launch_configurations[&#x27;isolated_ros_domain&#x27;])</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>         if not 1 &lt;= domain &lt;= 232:</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>             raise RuntimeError(&#x27;isolated_ros_domain must be between 1 and 232&#x27;)</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>         return [SetEnvironmentVariable(&#x27;ROS_DOMAIN_ID&#x27;, str(domain)),</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>                 SetEnvironmentVariable(&#x27;ROS_LOCALHOST_ONLY&#x27;, &#x27;1&#x27;),</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>                 LogInfo(msg=f&#x27;HPM isolated endpoints; ROS_DOMAIN_ID={domain}, ROS_LOCALHOST_ONLY=1&#x27;)]</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     return []</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> </span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> def generate_launch_description():</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>     robot_type = LaunchConfiguration(&#x27;robot_type&#x27;)</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     subpolicy = LaunchConfiguration(&#x27;subpolicy&#x27;)</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>     radar_control_enabled = LaunchConfiguration(&#x27;radar_control_enabled&#x27;)</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     nav_planner_model_path = LaunchConfiguration(&#x27;nav_planner_model_path&#x27;)</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>     planner_depth_input_enabled = LaunchConfiguration(&#x27;planner_depth_input_enabled&#x27;)</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     raw_depth_preview_enabled = LaunchConfiguration(&#x27;raw_depth_preview_enabled&#x27;)</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     wbc_enabled = LaunchConfiguration(&#x27;wbc_enabled&#x27;)</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>     wbc_policies = LaunchConfiguration(&#x27;wbc_policies&#x27;)</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     bag_enabled = LaunchConfiguration(&#x27;bag_enabled&#x27;)</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>     bag_name = LaunchConfiguration(&#x27;bag_name&#x27;)</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>     rviz = LaunchConfiguration(&#x27;rviz&#x27;)</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>     battery_enabled = LaunchConfiguration(&#x27;battery_enabled&#x27;)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>     imu_enabled = LaunchConfiguration(&#x27;imu_enabled&#x27;)</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     head_script_enabled = LaunchConfiguration(&#x27;head_script_enabled&#x27;)</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>     head_script_config = LaunchConfiguration(&#x27;head_script_config&#x27;)</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>     joystick_imitation_enabled = LaunchConfiguration(&#x27;joystick_imitation_enabled&#x27;)</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>     joystick_imitation_config_path = LaunchConfiguration(&#x27;joystick_imitation_config_path&#x27;)</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     joystick_sequence_enabled = LaunchConfiguration(&#x27;joystick_sequence_enabled&#x27;)</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>     joystick_sequence_config_path = LaunchConfiguration(&#x27;joystick_sequence_config_path&#x27;)</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>     joystick_back_emergency_sequence_enabled = LaunchConfiguration(&#x27;joystick_back_emergency_sequence_enabled&#x27;)</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>     joystick_back_emergency_sequence_path = LaunchConfiguration(&#x27;joystick_back_emergency_sequence_path&#x27;)</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>     emergency_damping_kd = LaunchConfiguration(&#x27;emergency_damping_kd&#x27;)</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>     arm_swing_enabled = LaunchConfiguration(&#x27;arm_swing_enabled&#x27;)</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>     arm_swing_stop_vx_threshold = LaunchConfiguration(&#x27;arm_swing_stop_vx_threshold&#x27;)</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>     arm_swing_high_vx_threshold = LaunchConfiguration(&#x27;arm_swing_high_vx_threshold&#x27;)</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>     arm_swing_vx_hysteresis = LaunchConfiguration(&#x27;arm_swing_vx_hysteresis&#x27;)</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>     arm_swing_blend_sec = LaunchConfiguration(&#x27;arm_swing_blend_sec&#x27;)</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>     safety_orientation_roll_limit_deg = LaunchConfiguration(&#x27;safety_orientation_roll_limit_deg&#x27;)</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>     safety_orientation_pitch_limit_deg = LaunchConfiguration(&#x27;safety_orientation_pitch_limit_deg&#x27;)</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>     safety_orientation_consecutive_violation_count = LaunchConfiguration(</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         &#x27;safety_orientation_consecutive_violation_count&#x27;</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>     )</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a> </span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>     args = [</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>         DeclareLaunchArgument(&#x27;robot_type&#x27;, default_value=&#x27;l0_v5&#x27;),</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         DeclareLaunchArgument(&#x27;subpolicy&#x27;, default_value=&#x27;l0_v5_amp_07090&#x27;),</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         DeclareLaunchArgument(&#x27;radar_control_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>         DeclareLaunchArgument(</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>             &#x27;nav_planner_model_path&#x27;,</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>             default_value=PathJoinSubstitution(</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>                 [</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>                     FindPackageShare(&#x27;legged_deploy&#x27;),</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>                     &#x27;policy&#x27;,</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>                     robot_type,</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>                     &#x27;local_planner&#x27;,</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>                     &#x27;planner_09090.onnx&#x27;,</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>                 ]</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>             ),</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>         ),</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>         DeclareLaunchArgument(&#x27;planner_depth_input_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>         DeclareLaunchArgument(&#x27;raw_depth_preview_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>         DeclareLaunchArgument(&#x27;cloud_voltage_test_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         DeclareLaunchArgument(&#x27;cloud_device_id&#x27;, default_value=&#x27;LUV2026090001&#x27;),</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         DeclareLaunchArgument(&#x27;cloud_host&#x27;, default_value=&#x27;mqtt.luvbotics.com&#x27;),</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>         DeclareLaunchArgument(&#x27;cloud_cert_dir&#x27;, default_value=&#x27;&#x27;),</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>         DeclareLaunchArgument(&#x27;wbc_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>         DeclareLaunchArgument(&#x27;text_motion_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>         DeclareLaunchArgument(&#x27;wbc_mode&#x27;, default_value=&#x27;static&#x27;),</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>         DeclareLaunchArgument(&#x27;wbc_lora_bundle&#x27;, default_value=&#x27;wbc_lora&#x27;),</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>         DeclareLaunchArgument(&#x27;hpm_mode&#x27;, default_value=&#x27;real&#x27;),</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>         DeclareLaunchArgument(&#x27;isolated_ros_domain&#x27;, default_value=&#x27;97&#x27;),</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>         DeclareLaunchArgument(&#x27;wbc_policies&#x27;, default_value=&#x27;[L0_excited_1, L0_sad_1, L0_sad_7, L0_sad_8, L0_sad_9, L0_sad_10, L0_sad_new_1, L0_sad_new_2, L0_sad_new_3, L0_sad_new_4, L0_sad_wanyao, L0_14_satisfied, L0_Approve_8, L0_Approve_24, L0_Approve_26, L0_delicious, L0_satisfied_7, L0_satisfied_8, L0_satisfied_9, L0_satisfied_10, L0_satisfied_new_1]&#x27;),</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>         DeclareLaunchArgument(&#x27;bag_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>         DeclareLaunchArgument(</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>             &#x27;bag_name&#x27;,</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>             default_value=PythonExpression([&quot;&#x27;&quot;, subpolicy, &quot;_real&#x27;&quot;]),</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>         ),</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>         DeclareLaunchArgument(&#x27;rviz&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>         DeclareLaunchArgument(&#x27;battery_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>         DeclareLaunchArgument(&#x27;imu_enabled&#x27;, default_value=&#x27;true&#x27;),</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>         DeclareLaunchArgument(&#x27;head_script_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>         DeclareLaunchArgument(</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>             &#x27;head_script_config&#x27;,</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>             default_value=PathJoinSubstitution(</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;pcmd_yaml&#x27;, &#x27;l0_keepalone.yaml&#x27;]</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>             ),</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>         ),</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>         DeclareLaunchArgument(&#x27;joystick_imitation_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>         DeclareLaunchArgument(</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>             &#x27;joystick_imitation_config_path&#x27;,</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>             default_value=PathJoinSubstitution(</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;config&#x27;, &#x27;joystick_imitation_actions.yaml&#x27;]</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>             ),</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>         ),</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>         DeclareLaunchArgument(&#x27;joystick_sequence_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         DeclareLaunchArgument(</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>             &#x27;joystick_sequence_config_path&#x27;,</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>             default_value=PathJoinSubstitution(</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;config&#x27;, &#x27;joystick_sequence_actions.yaml&#x27;]</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>             ),</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>         ),</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>         DeclareLaunchArgument(&#x27;joystick_back_emergency_sequence_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>         DeclareLaunchArgument(</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>             &#x27;joystick_back_emergency_sequence_path&#x27;,</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>             default_value=PathJoinSubstitution(</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>                 [FindPackageShare(&#x27;legged_controllers&#x27;), &#x27;action_sequences&#x27;, &#x27;walking_back_emergency.yaml&#x27;]</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>             ),</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>         ),</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>         DeclareLaunchArgument(&#x27;emergency_damping_kd&#x27;, default_value=&#x27;0.2&#x27;),</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         DeclareLaunchArgument(&#x27;arm_swing_enabled&#x27;, default_value=&#x27;false&#x27;),</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>         DeclareLaunchArgument(&#x27;arm_swing_stop_vx_threshold&#x27;, default_value=&#x27;0.1&#x27;),</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         DeclareLaunchArgument(&#x27;arm_swing_high_vx_threshold&#x27;, default_value=&#x27;0.8&#x27;),</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>         DeclareLaunchArgument(&#x27;arm_swing_vx_hysteresis&#x27;, default_value=&#x27;0.03&#x27;),</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>         DeclareLaunchArgument(&#x27;arm_swing_blend_sec&#x27;, default_value=&#x27;0.5&#x27;),</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>         DeclareLaunchArgument(&#x27;safety_orientation_roll_limit_deg&#x27;, default_value=&#x27;30.0&#x27;),</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>         DeclareLaunchArgument(&#x27;safety_orientation_pitch_limit_deg&#x27;, default_value=&#x27;30.0&#x27;),</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>         DeclareLaunchArgument(&#x27;safety_orientation_consecutive_violation_count&#x27;, default_value=&#x27;10&#x27;),</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     ]</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a> </span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>     # 调用 sequential_launch_real.sh：按顺序启动话题硬件桥和主控制器</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     sequential_launch = Node(</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>         package=&#x27;legged_controllers&#x27;,</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>         executable=&#x27;sequential_launch_real.sh&#x27;,</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>         name=&#x27;sequential_launcher_real&#x27;,</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>         arguments=[</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>             robot_type,</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>             bag_enabled,</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>             subpolicy,</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>             bag_name,</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>             rviz,</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>             battery_enabled,</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>             imu_enabled,</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>             head_script_enabled,</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>             head_script_config,</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>             joystick_imitation_enabled,</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>             joystick_imitation_config_path,</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>             arm_swing_enabled,</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>             arm_swing_stop_vx_threshold,</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>             arm_swing_high_vx_threshold,</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>             arm_swing_vx_hysteresis,</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>             arm_swing_blend_sec,</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>             safety_orientation_roll_limit_deg,</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>             safety_orientation_pitch_limit_deg,</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>             safety_orientation_consecutive_violation_count,</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>             joystick_sequence_enabled,</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>             joystick_sequence_config_path,</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>             joystick_back_emergency_sequence_enabled,</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>             joystick_back_emergency_sequence_path,</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>             emergency_damping_kd,</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>             radar_control_enabled,</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>             nav_planner_model_path,</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>             planner_depth_input_enabled,</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>             raw_depth_preview_enabled,</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>             wbc_enabled,</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>             wbc_policies,</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>             LaunchConfiguration(&#x27;wbc_mode&#x27;),</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>             LaunchConfiguration(&#x27;wbc_lora_bundle&#x27;),</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>             LaunchConfiguration(&#x27;hpm_mode&#x27;),</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>             LaunchConfiguration(&#x27;text_motion_enabled&#x27;),</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>         ],</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>         output=&#x27;screen&#x27;,</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>         sigterm_timeout=&#x27;15&#x27;,</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>         sigkill_timeout=&#x27;5&#x27;,</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     )</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a> </span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>     cloud_voltage_test = IncludeLaunchDescription(</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>         PythonLaunchDescriptionSource(</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>             PathJoinSubstitution(</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>                 [</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>                     FindPackageShare(&#x27;luvbot_cloud_bridge&#x27;),</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>                     &#x27;launch&#x27;,</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>                     &#x27;voltage_test.launch.py&#x27;,</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>                 ]</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>             )</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>         ),</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>         condition=IfCondition(LaunchConfiguration(&#x27;cloud_voltage_test_enabled&#x27;)),</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>         launch_arguments={</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>             &#x27;device_id&#x27;: LaunchConfiguration(&#x27;cloud_device_id&#x27;),</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>             &#x27;host&#x27;: LaunchConfiguration(&#x27;cloud_host&#x27;),</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>             &#x27;cert_dir&#x27;: LaunchConfiguration(&#x27;cloud_cert_dir&#x27;),</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>         }.items(),</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>     )</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a> </span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>     return LaunchDescription(args + [OpaqueFunction(function=_configure_environment), sequential_launch, cloud_voltage_test])</span></pre></html>

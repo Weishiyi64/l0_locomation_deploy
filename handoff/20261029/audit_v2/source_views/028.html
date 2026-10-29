@@ -1,0 +1,467 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/CMakeLists.txt</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/CMakeLists.txt</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> cmake_minimum_required(VERSION 3.5)</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> project(legged_deploy)</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> # Default to C99</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> if(NOT CMAKE_C_STANDARD)</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   set(CMAKE_C_STANDARD 99)</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> endif()</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> # Default to C++14</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> if(NOT CMAKE_CXX_STANDARD)</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>   set(CMAKE_CXX_STANDARD 17)</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> endif()</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES &quot;Clang&quot;)</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   add_compile_options(-Wall -Wextra -Wpedantic)</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> endif()</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> </span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> # find dependencies</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> find_package(ament_cmake REQUIRED)</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> find_package(rclcpp REQUIRED)</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> find_package(std_msgs REQUIRED)</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> find_package(luvbot_control_interfaces REQUIRED)</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> find_package(sensor_msgs REQUIRED)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> find_package(geometry_msgs REQUIRED)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> # ---- third party ----</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> find_package(Eigen3 REQUIRED)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> find_package(yaml-cpp REQUIRED)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> </span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> # ---- Inference backend: TensorRT on Jetson, RKNN on RK3588, OpenVINO on x86 ----</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> set(LEGGED_DEPLOY_BACKEND &quot;AUTO&quot; CACHE STRING &quot;Inference backend: AUTO, OPENVINO, TENSORRT, or RKNN&quot;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> set_property(CACHE LEGGED_DEPLOY_BACKEND PROPERTY STRINGS AUTO OPENVINO TENSORRT RKNN)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> string(TOUPPER &quot;${LEGGED_DEPLOY_BACKEND}&quot; LEGGED_DEPLOY_BACKEND)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> </span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> if(LEGGED_DEPLOY_BACKEND STREQUAL &quot;AUTO&quot;)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   string(TOLOWER &quot;${CMAKE_SYSTEM_PROCESSOR}&quot; _processor)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   if(_processor MATCHES &quot;aarch64|arm64|armv8&quot;)</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     set(_device_tree_hex &quot;&quot;)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     foreach(_compatible_file</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>         &quot;/proc/device-tree/compatible&quot;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         &quot;/sys/firmware/devicetree/base/compatible&quot;)</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>       if(EXISTS &quot;${_compatible_file}&quot;)</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         file(READ &quot;${_compatible_file}&quot; _device_tree_hex HEX)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>         string(TOLOWER &quot;${_device_tree_hex}&quot; _device_tree_hex)</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         break()</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>       endif()</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     endforeach()</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> </span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     # Device-tree strings contain NUL bytes, so match their ASCII hex values.</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     if(_device_tree_hex MATCHES &quot;726f636b636869702c726b33353838&quot;) # rockchip,rk3588</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>       set(LEGGED_DEPLOY_BACKEND &quot;RKNN&quot;)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>       message(STATUS &quot;legged_deploy: AUTO detected Rockchip RK3588&quot;)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     elseif(_device_tree_hex MATCHES &quot;6e7669646961&quot; OR EXISTS &quot;/etc/nv_tegra_release&quot;) # nvidia</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>       set(LEGGED_DEPLOY_BACKEND &quot;TENSORRT&quot;)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>       message(STATUS &quot;legged_deploy: AUTO detected NVIDIA Jetson&quot;)</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     else()</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>       message(FATAL_ERROR</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         &quot;Unable to identify this ARM64 platform as Jetson or RK3588. &quot;</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>         &quot;Set -DLEGGED_DEPLOY_BACKEND=TENSORRT or RKNN explicitly.&quot;)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     endif()</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   else()</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     set(LEGGED_DEPLOY_BACKEND &quot;OPENVINO&quot;)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     message(STATUS &quot;legged_deploy: AUTO selected OpenVINO for ${CMAKE_SYSTEM_PROCESSOR}&quot;)</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   endif()</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> endif()</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> </span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> set(LEGGED_DEPLOY_USE_TENSORRT OFF)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> set(LEGGED_DEPLOY_USE_RKNN OFF)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> if(LEGGED_DEPLOY_BACKEND STREQUAL &quot;TENSORRT&quot;)</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   set(LEGGED_DEPLOY_USE_TENSORRT ON)</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>   message(STATUS &quot;legged_deploy: TensorRT backend&quot;)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>   add_compile_definitions(USE_TENSORRT)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   find_package(CUDA REQUIRED)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   set(TENSORRT_INCLUDE_DIRS &quot;/usr/include/aarch64-linux-gnu&quot;)</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   set(TENSORRT_LIBRARIES &quot;/usr/lib/aarch64-linux-gnu/libnvinfer.so&quot;)</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   set(PLATFORM_INCLUDE_DIRS</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     ${TENSORRT_INCLUDE_DIRS}</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     ${CUDA_INCLUDE_DIRS}</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     &quot;/usr/local/cuda/include&quot;</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   )</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   set(PLATFORM_LIBS ${TENSORRT_LIBRARIES} ${CUDA_LIBRARIES})</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> elseif(LEGGED_DEPLOY_BACKEND STREQUAL &quot;RKNN&quot;)</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   set(LEGGED_DEPLOY_USE_RKNN ON)</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   message(STATUS &quot;legged_deploy: RKNN backend (RK3588)&quot;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   add_compile_definitions(USE_RKNN)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   find_package(OpenSSL REQUIRED)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   set(RKNN_ROOT &quot;${CMAKE_CURRENT_SOURCE_DIR}/third_party/rknn_runtime&quot;</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>       CACHE PATH &quot;RKNN Runtime or rknpu2 root&quot;)</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   find_path(RKNN_INCLUDE_DIR rknn_api.h</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     HINTS ${RKNN_ROOT}</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     PATH_SUFFIXES include runtime/Linux/librknn_api/include</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   )</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   find_library(RKNN_LIBRARY NAMES rknnrt</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     HINTS ${RKNN_ROOT}</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     PATH_SUFFIXES lib lib64 aarch64 runtime/Linux/librknn_api/aarch64</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   )</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   if(NOT RKNN_INCLUDE_DIR OR NOT RKNN_LIBRARY)</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     message(FATAL_ERROR &quot;RKNN Runtime not found. Set -DRKNN_ROOT=&lt;rknpu2 runtime root&gt;.&quot;)</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   endif()</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   set(PLATFORM_INCLUDE_DIRS ${RKNN_INCLUDE_DIR})</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>   set(PLATFORM_LIBS ${RKNN_LIBRARY})</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a> elseif(LEGGED_DEPLOY_BACKEND STREQUAL &quot;OPENVINO&quot;)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   message(STATUS &quot;legged_deploy: OpenVINO backend&quot;)</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   add_compile_definitions(USE_OPENVINO)</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   find_package(OpenVINO REQUIRED COMPONENTS Runtime)</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   set(PLATFORM_INCLUDE_DIRS &quot;&quot;)</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   set(PLATFORM_LIBS openvino::runtime)</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a> else()</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   message(FATAL_ERROR &quot;Unsupported LEGGED_DEPLOY_BACKEND=&#x27;${LEGGED_DEPLOY_BACKEND}&#x27;&quot;)</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a> endif()</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a> </span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a> # Keep your compile definitions (note: running from install may need extra handling)</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a> add_compile_definitions(CMAKE_CURRENT_SOURCE_DIR=&quot;${CMAKE_CURRENT_SOURCE_DIR}&quot;)</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a> add_compile_definitions(LEGGED_POLICY_PATH=&quot;${CMAKE_CURRENT_SOURCE_DIR}/policy&quot;)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a> </span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a> include_directories(</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   include</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>   ${EIGEN3_INCLUDE_DIR}</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a> )</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a> </span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a> </span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a> </span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a> </span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a> # -----------------------</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a> # executable</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a> # -----------------------</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a> add_executable(rl_controller</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   src/main.cpp</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   src/rl_controller.cpp</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   src/rl_controller_imitation.cpp</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   src/order_mapping.cpp</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>   src/base/base_rl_controller.cpp</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> )</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   target_sources(rl_controller PRIVATE src/rknn_model.cpp src/wbc_lora_assets.cpp src/rl_controller_wbc.cpp src/wbc_io_probe.cpp</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     src/wbc_json_reference.cpp src/rl_controller_wbc_json.cpp)</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   target_link_libraries(rl_controller OpenSSL::Crypto)</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   set_target_properties(rl_controller PROPERTIES INSTALL_RPATH &quot;$ORIGIN/..&quot;)</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a> endif()</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a> ament_target_dependencies(rl_controller</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>   rclcpp</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   std_msgs</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>   luvbot_control_interfaces</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   sensor_msgs</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   geometry_msgs</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a> )</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a> target_include_directories(rl_controller PRIVATE ${PLATFORM_INCLUDE_DIRS})</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a> </span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a> # Suppress third-party warnings: Eigen NEON memcpy, TensorRT deprecated API</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> if(CMAKE_CXX_COMPILER_ID MATCHES &quot;GNU|Clang&quot;)</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>   target_compile_options(rl_controller PRIVATE</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>     -Wno-class-memaccess</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     -Wno-deprecated-declarations</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>   )</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a> endif()</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a> </span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> target_link_libraries(rl_controller</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>   yaml-cpp</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>   ${PLATFORM_LIBS}</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>   rt</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>   pthread</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a> )</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a> </span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>   add_executable(wbc_json_reference_probe src/wbc_json_reference_probe.cpp src/wbc_json_reference.cpp)</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>   target_link_libraries(wbc_json_reference_probe yaml-cpp)</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>   add_executable(local_planner_rknn</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     src/local_planner_rknn.cpp</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     src/rknn_model.cpp</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>   )</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>   set_target_properties(local_planner_rknn PROPERTIES INSTALL_RPATH &quot;$ORIGIN/..&quot;)</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>   ament_target_dependencies(local_planner_rknn</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     rclcpp</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     std_msgs</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     luvbot_control_interfaces</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     sensor_msgs</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>   )</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>   target_include_directories(local_planner_rknn PRIVATE ${PLATFORM_INCLUDE_DIRS})</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>   target_link_libraries(local_planner_rknn</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     yaml-cpp</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>     OpenSSL::Crypto</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     ${PLATFORM_LIBS}</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>   )</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a> endif()</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a> </span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a> </span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a> # -----------------------</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a> # install</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a> # -----------------------</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a> #install(TARGETS rl_controller ${PROJECT_NAME}</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> install(TARGETS rl_controller</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>   #ARCHIVE DESTINATION lib</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   #LIBRARY DESTINATION lib</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>   RUNTIME DESTINATION lib/${PROJECT_NAME}</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a> )</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a> </span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>   install(TARGETS local_planner_rknn wbc_json_reference_probe</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>     RUNTIME DESTINATION lib/${PROJECT_NAME}</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   )</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a> endif()</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a> </span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a> install(DIRECTORY include/</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>   DESTINATION include</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a> )</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a> </span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>   install(FILES</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     ${RKNN_INCLUDE_DIR}/rknn_api.h</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     DESTINATION include</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>   )</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>   install(FILES</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>     ${RKNN_LIBRARY}</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>     DESTINATION lib</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>   )</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a> endif()</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a> </span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a> # install policy folder if it exists</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a> install(DIRECTORY policy/</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>   DESTINATION share/${PROJECT_NAME}/policy</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a> )</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a> </span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a> install(</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>   DIRECTORY launch</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>   DESTINATION share/${PROJECT_NAME}</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a> )</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a> </span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a> install(</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>   DIRECTORY config</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>   DESTINATION share/${PROJECT_NAME}</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a> )</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a> </span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a> ament_export_include_directories(include)</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a> #ament_export_libraries(${PROJECT_NAME})</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a> ament_export_dependencies(rclcpp std_msgs luvbot_control_interfaces sensor_msgs geometry_msgs)</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a> </span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a> ament_package()</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> cmake_minimum_required(VERSION 3.5)</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> project(legged_deploy)</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> # Default to C99</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> if(NOT CMAKE_C_STANDARD)</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a>   set(CMAKE_C_STANDARD 99)</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> endif()</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> # Default to C++14</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> if(NOT CMAKE_CXX_STANDARD)</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>   set(CMAKE_CXX_STANDARD 17)</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> endif()</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES &quot;Clang&quot;)</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>   add_compile_options(-Wall -Wextra -Wpedantic)</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> endif()</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> </span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> # find dependencies</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> find_package(ament_cmake REQUIRED)</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> find_package(rclcpp REQUIRED)</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> find_package(std_msgs REQUIRED)</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> find_package(luvbot_control_interfaces REQUIRED)</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> find_package(sensor_msgs REQUIRED)</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> find_package(geometry_msgs REQUIRED)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> # ---- third party ----</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> find_package(Eigen3 REQUIRED)</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> find_package(yaml-cpp REQUIRED)</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> </span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> # ---- Inference backend: TensorRT on Jetson, RKNN on RK3588, OpenVINO on x86 ----</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> set(LEGGED_DEPLOY_BACKEND &quot;AUTO&quot; CACHE STRING &quot;Inference backend: AUTO, OPENVINO, TENSORRT, or RKNN&quot;)</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> set_property(CACHE LEGGED_DEPLOY_BACKEND PROPERTY STRINGS AUTO OPENVINO TENSORRT RKNN)</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a> string(TOUPPER &quot;${LEGGED_DEPLOY_BACKEND}&quot; LEGGED_DEPLOY_BACKEND)</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> if(LEGGED_DEPLOY_BACKEND STREQUAL &quot;AUTO&quot;)</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   string(TOLOWER &quot;${CMAKE_SYSTEM_PROCESSOR}&quot; _processor)</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   if(_processor MATCHES &quot;aarch64|arm64|armv8&quot;)</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>     set(_device_tree_hex &quot;&quot;)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>     foreach(_compatible_file</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>         &quot;/proc/device-tree/compatible&quot;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>         &quot;/sys/firmware/devicetree/base/compatible&quot;)</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>       if(EXISTS &quot;${_compatible_file}&quot;)</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>         file(READ &quot;${_compatible_file}&quot; _device_tree_hex HEX)</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>         string(TOLOWER &quot;${_device_tree_hex}&quot; _device_tree_hex)</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>         break()</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>       endif()</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>     endforeach()</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a> </span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>     # Device-tree strings contain NUL bytes, so match their ASCII hex values.</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>     if(_device_tree_hex MATCHES &quot;726f636b636869702c726b33353838&quot;) # rockchip,rk3588</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>       set(LEGGED_DEPLOY_BACKEND &quot;RKNN&quot;)</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>       message(STATUS &quot;legged_deploy: AUTO detected Rockchip RK3588&quot;)</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>     elseif(_device_tree_hex MATCHES &quot;6e7669646961&quot; OR EXISTS &quot;/etc/nv_tegra_release&quot;) # nvidia</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>       set(LEGGED_DEPLOY_BACKEND &quot;TENSORRT&quot;)</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>       message(STATUS &quot;legged_deploy: AUTO detected NVIDIA Jetson&quot;)</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>     else()</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>       message(FATAL_ERROR</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>         &quot;Unable to identify this ARM64 platform as Jetson or RK3588. &quot;</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>         &quot;Set -DLEGGED_DEPLOY_BACKEND=TENSORRT or RKNN explicitly.&quot;)</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>     endif()</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>   else()</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>     set(LEGGED_DEPLOY_BACKEND &quot;OPENVINO&quot;)</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>     message(STATUS &quot;legged_deploy: AUTO selected OpenVINO for ${CMAKE_SYSTEM_PROCESSOR}&quot;)</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>   endif()</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a> endif()</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a> </span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> set(LEGGED_DEPLOY_USE_TENSORRT OFF)</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> set(LEGGED_DEPLOY_USE_RKNN OFF)</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a> if(LEGGED_DEPLOY_BACKEND STREQUAL &quot;TENSORRT&quot;)</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   set(LEGGED_DEPLOY_USE_TENSORRT ON)</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>   message(STATUS &quot;legged_deploy: TensorRT backend&quot;)</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>   add_compile_definitions(USE_TENSORRT)</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   find_package(CUDA REQUIRED)</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>   set(TENSORRT_INCLUDE_DIRS &quot;/usr/include/aarch64-linux-gnu&quot;)</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>   set(TENSORRT_LIBRARIES &quot;/usr/lib/aarch64-linux-gnu/libnvinfer.so&quot;)</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   set(PLATFORM_INCLUDE_DIRS</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>     ${TENSORRT_INCLUDE_DIRS}</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     ${CUDA_INCLUDE_DIRS}</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>     &quot;/usr/local/cuda/include&quot;</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>   )</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>   set(PLATFORM_LIBS ${TENSORRT_LIBRARIES} ${CUDA_LIBRARIES})</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a> elseif(LEGGED_DEPLOY_BACKEND STREQUAL &quot;RKNN&quot;)</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>   set(LEGGED_DEPLOY_USE_RKNN ON)</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>   message(STATUS &quot;legged_deploy: RKNN backend (RK3588)&quot;)</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>   add_compile_definitions(USE_RKNN)</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>   find_package(OpenSSL REQUIRED)</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   set(RKNN_ROOT &quot;${CMAKE_CURRENT_SOURCE_DIR}/third_party/rknn_runtime&quot;</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>       CACHE PATH &quot;RKNN Runtime or rknpu2 root&quot;)</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   find_path(RKNN_INCLUDE_DIR rknn_api.h</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>     HINTS ${RKNN_ROOT}</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>     PATH_SUFFIXES include runtime/Linux/librknn_api/include</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>   )</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>   find_library(RKNN_LIBRARY NAMES rknnrt</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>     HINTS ${RKNN_ROOT}</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>     PATH_SUFFIXES lib lib64 aarch64 runtime/Linux/librknn_api/aarch64</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   )</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   if(NOT RKNN_INCLUDE_DIR OR NOT RKNN_LIBRARY)</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>     message(FATAL_ERROR &quot;RKNN Runtime not found. Set -DRKNN_ROOT=&lt;rknpu2 runtime root&gt;.&quot;)</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>   endif()</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   set(PLATFORM_INCLUDE_DIRS ${RKNN_INCLUDE_DIR})</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>   set(PLATFORM_LIBS ${RKNN_LIBRARY})</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a> elseif(LEGGED_DEPLOY_BACKEND STREQUAL &quot;OPENVINO&quot;)</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   message(STATUS &quot;legged_deploy: OpenVINO backend&quot;)</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>   add_compile_definitions(USE_OPENVINO)</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>   find_package(OpenVINO REQUIRED COMPONENTS Runtime)</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   set(PLATFORM_INCLUDE_DIRS &quot;&quot;)</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>   set(PLATFORM_LIBS openvino::runtime)</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a> else()</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>   message(FATAL_ERROR &quot;Unsupported LEGGED_DEPLOY_BACKEND=&#x27;${LEGGED_DEPLOY_BACKEND}&#x27;&quot;)</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a> endif()</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a> </span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a> # Keep your compile definitions (note: running from install may need extra handling)</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a> add_compile_definitions(CMAKE_CURRENT_SOURCE_DIR=&quot;${CMAKE_CURRENT_SOURCE_DIR}&quot;)</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a> add_compile_definitions(LEGGED_POLICY_PATH=&quot;${CMAKE_CURRENT_SOURCE_DIR}/policy&quot;)</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a> </span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a> include_directories(</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   include</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   ${EIGEN3_INCLUDE_DIR}</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a> )</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a> </span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a> </span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a> </span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a> </span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> # -----------------------</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> # executable</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a> # -----------------------</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a> add_executable(rl_controller</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>   src/main.cpp</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>   src/rl_controller.cpp</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>   src/rl_controller_imitation.cpp</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>   src/order_mapping.cpp</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>   src/base/base_rl_controller.cpp</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> )</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>   target_sources(rl_controller PRIVATE src/rknn_model.cpp src/rl_controller_wbc.cpp)</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>   set_target_properties(rl_controller PROPERTIES INSTALL_RPATH &quot;$ORIGIN/..&quot;)</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a> endif()</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a> ament_target_dependencies(rl_controller</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>   rclcpp</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   std_msgs</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>   luvbot_control_interfaces</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>   sensor_msgs</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>   geometry_msgs</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a> )</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a> target_include_directories(rl_controller PRIVATE ${PLATFORM_INCLUDE_DIRS})</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a> </span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a> # Suppress third-party warnings: Eigen NEON memcpy, TensorRT deprecated API</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a> if(CMAKE_CXX_COMPILER_ID MATCHES &quot;GNU|Clang&quot;)</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>   target_compile_options(rl_controller PRIVATE</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>     -Wno-class-memaccess</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>     -Wno-deprecated-declarations</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>   )</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a> endif()</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a> </span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a> target_link_libraries(rl_controller</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>   yaml-cpp</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>   ${PLATFORM_LIBS}</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>   rt</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>   pthread</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a> )</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a> </span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>   add_executable(local_planner_rknn</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>     src/local_planner_rknn.cpp</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>     src/rknn_model.cpp</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>   )</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>   set_target_properties(local_planner_rknn PROPERTIES INSTALL_RPATH &quot;$ORIGIN/..&quot;)</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>   ament_target_dependencies(local_planner_rknn</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>     rclcpp</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>     std_msgs</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>     luvbot_control_interfaces</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>     sensor_msgs</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>   )</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>   target_include_directories(local_planner_rknn PRIVATE ${PLATFORM_INCLUDE_DIRS})</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>   target_link_libraries(local_planner_rknn</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>     yaml-cpp</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>     OpenSSL::Crypto</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>     ${PLATFORM_LIBS}</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>   )</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a> endif()</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a> </span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a> </span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a> # -----------------------</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a> # install</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a> # -----------------------</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a> #install(TARGETS rl_controller ${PROJECT_NAME}</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a> install(TARGETS rl_controller</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>   #ARCHIVE DESTINATION lib</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>   #LIBRARY DESTINATION lib</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>   RUNTIME DESTINATION lib/${PROJECT_NAME}</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a> )</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a> </span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>   install(TARGETS local_planner_rknn</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>     RUNTIME DESTINATION lib/${PROJECT_NAME}</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>   )</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a> endif()</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a> </span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a> install(DIRECTORY include/</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>   DESTINATION include</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a> )</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a> </span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a> if(LEGGED_DEPLOY_USE_RKNN)</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>   install(FILES</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>     ${RKNN_INCLUDE_DIR}/rknn_api.h</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>     DESTINATION include</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>   )</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>   install(FILES</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>     ${RKNN_LIBRARY}</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>     DESTINATION lib</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>   )</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a> endif()</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a> </span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a> # install policy folder if it exists</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a> install(DIRECTORY policy/</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>   DESTINATION share/${PROJECT_NAME}/policy</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a> )</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a> </span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a> install(</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>   DIRECTORY launch</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>   DESTINATION share/${PROJECT_NAME}</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a> )</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a> </span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a> install(</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>   DIRECTORY config</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>   DESTINATION share/${PROJECT_NAME}</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a> )</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a> </span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a> ament_export_include_directories(include)</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a> #ament_export_libraries(${PROJECT_NAME})</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a> ament_export_dependencies(rclcpp std_msgs luvbot_control_interfaces sensor_msgs geometry_msgs)</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a> </span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a> ament_package()</span></pre></html>

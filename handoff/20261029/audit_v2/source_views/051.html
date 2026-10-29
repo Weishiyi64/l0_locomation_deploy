@@ -1,0 +1,602 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Build RK3588 FP16 WBC: static two-input policy, or shared 33-input LoRA with --manifest.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> LoRA A/B/bias/LayerNorm remain runtime inputs; one shared policy serves all actions.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> Use --build-only for the formal board deployment (no Python Runtime initialization).</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> &quot;&quot;&quot;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import argparse</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import math</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import sys</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import tempfile</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import time</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> from contextlib import contextmanager</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> from pathlib import Path</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> </span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> from wbc_lora_assets import (asset_path, check_graph, conversion_record, graph_feeds,</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>                              load_adapter, load_graph_manifest, rknn_build_config, runtime_options, sha256)</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> EXPECTED_INPUTS = {&quot;policy&quot;: 399, &quot;command_short&quot;: 240}</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> EXPECTED_OUTPUT = (&quot;action&quot;, 21)</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> RKNN_MAX_ONNX_OPSET = 19</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> def parse_args():</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     parser.add_argument(&quot;onnx&quot;, type=Path, help=&quot;input WBC .onnx model&quot;)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     parser.add_argument(&quot;-o&quot;, &quot;--output&quot;, type=Path, help=&quot;output .rknn (default: beside ONNX)&quot;)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     parser.add_argument(&quot;--samples&quot;, type=int, default=20, help=&quot;random verification samples (minimum: 20)&quot;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     parser.add_argument(&quot;--manifest&quot;, type=Path, help=&quot;dynamic policy/probe graph manifest&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     parser.add_argument(&quot;--device-id&quot;, help=&quot;connected device ID; requires --target rk3588&quot;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     parser.add_argument(&quot;--verification-data&quot;, type=Path, help=&quot;recorded NPZ: policy[N,399], command_short/command[N,240]&quot;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     parser.add_argument(&quot;--cosine-threshold&quot;, type=float, default=0.999)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     parser.add_argument(&quot;--max-abs-error&quot;, type=float, default=0.05)</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     parser.add_argument(</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>         &quot;--target&quot;, help=&quot;runtime target platform, e.g. rk3588; select a board with --device-id&quot;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     )</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     parser.add_argument(&quot;--build-only&quot;, action=&quot;store_true&quot;,</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>                         help=&quot;export FP16 RKNN without loading a Python Runtime; C++ deployment validation remains pending&quot;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     parser.add_argument(&quot;--dry-run&quot;, action=&quot;store_true&quot;,</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>                         help=&quot;validate ONNX/manifest/adapters and print the build plan without importing RKNN or writing files&quot;)</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     return parser.parse_args()</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> </span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> </span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> def static_shape(item, kind, onnx):</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     if item.type.tensor_type.elem_type != onnx.TensorProto.FLOAT:</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must be float32&quot;)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     dims = []</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     for dim in item.type.tensor_type.shape.dim:</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>         if dim.dim_value &lt;= 0:</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>             raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must have a fully static shape&quot;)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         dims.append(dim.dim_value)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     return tuple(dims)</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> </span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> def check_model(path, manifest_path=None):</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     import onnx</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> </span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     if manifest_path is not None:</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>         graph = check_graph(path, manifest_path)</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         return [(x[&quot;name&quot;], tuple(x[&quot;shape&quot;])) for x in graph[&quot;inputs&quot;]], (graph[&quot;outputs&quot;][0][&quot;name&quot;], tuple(graph[&quot;outputs&quot;][0][&quot;shape&quot;]))</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> </span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     model = onnx.load(str(path))</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     onnx.checker.check_model(model)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     initializers = {item.name for item in model.graph.initializer}</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     inputs = [item for item in model.graph.input if item.name not in initializers]</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     outputs = list(model.graph.output)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     names = {item.name for item in inputs}</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     if len(inputs) != 2 or names not in ({&quot;policy&quot;, &quot;command_short&quot;}, {&quot;policy&quot;, &quot;command&quot;}):</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>         raise ValueError(f&quot;expected policy and command_short/command inputs, got {[item.name for item in inputs]}&quot;)</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     specs = []</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     for item in inputs:</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         shape = static_shape(item, &quot;input&quot;, onnx)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>         width = EXPECTED_INPUTS[&quot;policy&quot; if item.name == &quot;policy&quot; else &quot;command_short&quot;]</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         if shape not in ((width,), (1, width)):</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>             raise ValueError(f&quot;input &#x27;{item.name}&#x27; must contain {width} floats, got {shape}&quot;)</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         specs.append((item.name, shape))</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     if len(outputs) != 1 or outputs[0].name != EXPECTED_OUTPUT[0]:</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         raise ValueError(f&quot;expected only output &#x27;{EXPECTED_OUTPUT[0]}&#x27;, got {[item.name for item in outputs]}&quot;)</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     output_shape = static_shape(outputs[0], &quot;output&quot;, onnx)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     if output_shape not in ((21,), (1, 21)):</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         raise ValueError(f&quot;output &#x27;action&#x27; must contain 21 floats, got {output_shape}&quot;)</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     return specs, (outputs[0].name, output_shape)</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a> </span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a> </span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> def replace_mish(model, onnx):</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     rewritten = []</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     count = 0</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     for node in model.graph.node:</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         if node.op_type != &quot;Mish&quot; or node.domain not in (&quot;&quot;, &quot;ai.onnx&quot;):</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>             rewritten.append(node)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>             continue</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         if len(node.input) != 1 or len(node.output) != 1:</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>             raise ValueError(f&quot;Mish node &#x27;{node.name}&#x27; must have one input and one output&quot;)</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         count += 1</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         prefix = node.name or f&quot;mish_{count}&quot;</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         softplus = f&quot;{node.output[0]}__softplus&quot;</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>         tanh = f&quot;{node.output[0]}__tanh&quot;</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>         rewritten.extend(</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>             [</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>                 onnx.helper.make_node(&quot;Softplus&quot;, node.input, [softplus], name=f&quot;{prefix}__softplus&quot;),</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>                 onnx.helper.make_node(&quot;Tanh&quot;, [softplus], [tanh], name=f&quot;{prefix}__tanh&quot;),</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>                 onnx.helper.make_node(&quot;Mul&quot;, [node.input[0], tanh], node.output, name=f&quot;{prefix}__mul&quot;),</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>             ]</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         )</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     if count:</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>         del model.graph.node[:]</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>         model.graph.node.extend(rewritten)</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     return count</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a> </span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a> </span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a> @contextmanager</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a> def rknn_compatible_model(path):</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     import onnx</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     from onnx import version_converter</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a> </span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     model = onnx.load(str(path))</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     default_opsets = [item.version for item in model.opset_import if item.domain in (&quot;&quot;, &quot;ai.onnx&quot;)]</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     if len(default_opsets) != 1:</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         raise ValueError(f&quot;expected one ai.onnx opset, got {default_opsets}&quot;)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     changed = False</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     if default_opsets[0] &gt; RKNN_MAX_ONNX_OPSET:</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         model = version_converter.convert_version(model, RKNN_MAX_ONNX_OPSET)</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>         changed = True</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         print(f&quot;converted ONNX opset {default_opsets[0]} -&gt; {RKNN_MAX_ONNX_OPSET} for RKNN&quot;)</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a> </span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     mish_count = replace_mish(model, onnx)</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     if mish_count:</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         changed = True</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>         print(f&quot;replaced {mish_count} Mish node(s) with NPU-supported Softplus/Tanh/Mul&quot;)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a> </span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     if not changed:</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         yield path</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         return</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> </span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     onnx.checker.check_model(model)</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     with tempfile.TemporaryDirectory(prefix=&quot;wbc_onnx_opset19_&quot;) as directory:</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         converted_path = Path(directory) / path.name</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         onnx.save(model, str(converted_path))</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         yield converted_path</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> </span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a> </span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a> def cosine_similarity(reference, candidate):</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     import numpy as np</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a> </span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     denominator = float(np.linalg.norm(reference) * np.linalg.norm(candidate))</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>     if denominator == 0.0:</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>         return 1.0 if np.array_equal(reference, candidate) else 0.0</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     return float(np.dot(reference, candidate) / denominator)</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> </span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> </span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> def verify_dynamic(rknn, onnx_path, args):</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     import numpy as np</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     import onnxruntime as ort</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     graph = check_graph(onnx_path, args.manifest)</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     root = args.manifest.resolve().parent</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     data_path = args.verification_data or asset_path(root, graph[&quot;verification_data&quot;])</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>     observations = {}</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     with np.load(data_path, allow_pickle=False) as data:</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>         for item in graph[&quot;inputs&quot;]:</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>             if item[&quot;role&quot;] != &quot;observation&quot;:</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>                 continue</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>             value = data[item[&quot;name&quot;]]</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>             if value.dtype != np.float32 or list(value.shape[1:]) != item[&quot;shape&quot;] or not np.isfinite(value).all():</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>                 raise ValueError(f&quot;Invalid recorded input {item[&#x27;name&#x27;]}&quot;)</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>             observations[item[&quot;name&quot;]] = value.copy()</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     counts = {len(x) for x in observations.values()}</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     if len(counts) != 1 or min(counts) &lt; 20:</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>         raise ValueError(&quot;Dynamic verification requires at least 20 aligned observation samples&quot;)</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     session = ort.InferenceSession(str(onnx_path), providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     ret = rknn.init_runtime(**runtime_options(args))</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     if ret != 0:</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>         raise RuntimeError(f&quot;rknn.init_runtime failed, ret={ret}&quot;)</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     reports, first_feed, first_output = [], None, None</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     for action in graph[&quot;actions&quot;]:</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>         adapter_path = asset_path(root, action[&quot;adapter_manifest&quot;])</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>         parameters = load_adapter(adapter_path, graph, action[&quot;action_id&quot;])</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>         maximum, worst, minimum_cosine = 0.0, 0.0, 1.0</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>         for i in range(min(counts)):</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>             feed = graph_feeds(graph, {k: v[i] for k, v in observations.items()}, parameters)</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>             expected = np.asarray(session.run([&quot;action&quot;], feed)[0], np.float32).reshape(-1)</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>             started = time.perf_counter()</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>             actual_outputs = rknn.inference(inputs=[feed[x[&quot;name&quot;]] for x in graph[&quot;inputs&quot;]])</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>             worst = max(worst, time.perf_counter() - started)</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>             if actual_outputs is None or len(actual_outputs) != 1:</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>                 raise RuntimeError(&quot;Dynamic RKNN must return one output&quot;)</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>             actual = np.asarray(actual_outputs[0], np.float32).reshape(-1)</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>             if actual.shape != expected.shape or not np.isfinite(actual).all():</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>                 raise RuntimeError(&quot;Invalid dynamic RKNN output&quot;)</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>             error = float(np.max(np.abs(actual - expected)))</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>             cosine = cosine_similarity(expected, actual) if np.linalg.norm(expected) &gt; 1e-8 else 1.0</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>             maximum, minimum_cosine = max(maximum, error), min(minimum_cosine, cosine)</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>             if error &gt; args.max_abs_error or cosine &lt; args.cosine_threshold:</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>                 raise RuntimeError(f&quot;Dynamic RKNN verification failed: {action[&#x27;action_id&#x27;]} sample={i} error={error} cosine={cosine}&quot;)</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>             if first_feed is None:</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>                 first_feed, first_output = feed, actual.copy()</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>         reports.append({&quot;action_id&quot;: action[&quot;action_id&quot;], &quot;samples&quot;: min(counts),</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>                         &quot;adapter_manifest_sha256&quot;: sha256(adapter_path), &quot;max_abs&quot;: maximum,</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>                         &quot;minimum_cosine&quot;: minimum_cosine, &quot;worst_ms&quot;: worst * 1000.0})</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>         print(f&quot;dynamic verification: {reports[-1]}&quot;)</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>     if first_feed is None:</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>         raise ValueError(&quot;Graph manifest has no selected adapters&quot;)</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>     repeated = rknn.inference(inputs=[first_feed[x[&quot;name&quot;]] for x in graph[&quot;inputs&quot;]])</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     if repeated is None or not np.allclose(np.asarray(repeated[0]).reshape(-1), first_output, atol=args.max_abs_error, rtol=0):</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>         raise RuntimeError(&quot;A-to-B-to-A RKNN verification failed&quot;)</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     return {&quot;actions&quot;: reports, &quot;a_to_b_to_a&quot;: &quot;passed&quot; if len(reports) &gt; 1 else &quot;one_adapter_only&quot;}</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> </span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a> </span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a> def verify(rknn, onnx_path, input_specs, output_spec, args):</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     if args.manifest:</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>         return verify_dynamic(rknn, onnx_path, args)</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>     import numpy as np</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>     import onnxruntime as ort</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a> </span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>     session = ort.InferenceSession(str(onnx_path), providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>     ret = rknn.init_runtime(**runtime_options(args))</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>     if ret != 0:</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>         raise RuntimeError(f&quot;rknn.init_runtime failed, ret={ret}&quot;)</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a> </span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>     rng = np.random.default_rng(0)</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     recorded = None</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>     if args.verification_data:</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>         with np.load(args.verification_data, allow_pickle=False) as data:</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>             recorded = {}</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>             for name, shape in input_specs:</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>                 key = name</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>                 if name != &quot;policy&quot; and name not in data:</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>                     key = &quot;command&quot; if name == &quot;command_short&quot; else &quot;command_short&quot;</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>                 value = data[key]</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>                 if value.dtype != np.float32 or value.ndim != 2 or value.shape[1] != shape[-1] or \</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>                         not np.isfinite(value).all():</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>                     raise ValueError(f&quot;recorded {name} must be finite float32 [N,{shape[-1]}]&quot;)</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>                 recorded[name] = value.copy()</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>         counts = {len(value) for value in recorded.values()}</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>         if len(counts) != 1 or min(counts) &lt; 20:</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>             raise ValueError(&quot;recorded policy and command need the same number of frames, at least 20&quot;)</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>         sample_count = min(counts)</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>     else:</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>         sample_count = args.samples</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>         print(&quot;Random inputs check conversion only; replay recorded observations before hardware use&quot;)</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>     minimum_cosine = 1.0</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>     maximum_error = 0.0</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     error_sum = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>     joint_maximum = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     cumulative_error = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>     worst_latency = 0.0</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>     for sample in range(sample_count):</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>         feed = {name: recorded[name][sample].reshape(shape) if recorded is not None else</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>                 rng.uniform(-1.0, 1.0, shape).astype(np.float32) for name, shape in input_specs}</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>         expected = np.asarray(session.run([output_spec[0]], feed)[0], dtype=np.float32).reshape(-1)</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>         if expected.size != EXPECTED_OUTPUT[1] or not np.isfinite(expected).all():</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>             raise RuntimeError(&quot;ONNX action must contain 21 finite floats&quot;)</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>         started = time.perf_counter()</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>         actual_outputs = rknn.inference(inputs=[feed[name] for name, _ in input_specs])</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>         latency = time.perf_counter() - started</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>         worst_latency = max(worst_latency, latency)</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>         if actual_outputs is None or len(actual_outputs) != 1:</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>             raise RuntimeError(&quot;RKNN must return exactly one output&quot;)</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>         actual = np.asarray(actual_outputs[0], dtype=np.float32).reshape(-1)</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>         if actual.size != EXPECTED_OUTPUT[1] or not np.isfinite(actual).all():</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>             raise RuntimeError(f&quot;RKNN action must contain 21 finite floats, got {actual.shape}&quot;)</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>         error = np.abs(expected - actual)</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>         max_error = float(np.max(error))</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>         error_sum += error</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>         joint_maximum = np.maximum(joint_maximum, error)</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>         cumulative_error += actual - expected</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>         cosine = cosine_similarity(expected, actual)</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>         minimum_cosine = min(minimum_cosine, cosine)</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>         maximum_error = max(maximum_error, max_error)</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>         print(f&quot;  sample={sample:02d} cosine={cosine:.6f} max_abs={max_error:.6g} latency_ms={latency * 1000:.3f}&quot;)</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>         if cosine &lt; args.cosine_threshold or max_error &gt; args.max_abs_error:</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>             raise RuntimeError(f&quot;verification failed at sample {sample}&quot;)</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>     print(f&quot;verification passed: minimum cosine={minimum_cosine:.6f}, maximum abs error={maximum_error:.6g}&quot;)</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>     print(f&quot;mean abs error={error_sum.sum() / (sample_count * 21):.6g}, worst inference ms={worst_latency * 1000:.3f}&quot;)</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>     print(f&quot;per-joint max abs error: {joint_maximum.tolist()}&quot;)</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>     print(f&quot;per-joint mean abs error: {(error_sum / sample_count).tolist()}&quot;)</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>     print(f&quot;per-joint signed cumulative error: {cumulative_error.tolist()}&quot;)</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a> </span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a> </span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a> def main():</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>     args = parse_args()</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>     onnx_path = args.onnx.resolve()</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>     output_path = (args.output or onnx_path.with_suffix(&quot;.rknn&quot;)).resolve()</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     if not onnx_path.is_file() or onnx_path.suffix.lower() != &quot;.onnx&quot;:</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>         raise ValueError(f&quot;ONNX model not found: {onnx_path}&quot;)</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>     if output_path.suffix.lower() != &quot;.rknn&quot;:</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>         raise ValueError(&quot;output filename must end with .rknn&quot;)</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>     if args.samples &lt; 20:</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>         raise ValueError(&quot;--samples must be at least 20&quot;)</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>     if not math.isfinite(args.cosine_threshold) or not -1.0 &lt;= args.cosine_threshold &lt;= 1.0 or \</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>             not math.isfinite(args.max_abs_error) or args.max_abs_error &lt;= 0:</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>         raise ValueError(&quot;verification thresholds must be finite: cosine in [-1,1], max abs error &gt; 0&quot;)</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a> </span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>     runtime_options(args)</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>     input_specs, output_spec = check_model(onnx_path, args.manifest)</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>     output_specs = [output_spec]</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>     print(&quot;inputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in input_specs))</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>     print(&quot;outputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in output_specs))</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>     if args.manifest:</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>         graph = load_graph_manifest(args.manifest)</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>         root = args.manifest.resolve().parent</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>         actions = graph.get(&quot;actions&quot;, [])</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>         if not actions or len({x[&quot;action_id&quot;] for x in actions}) != len(actions):</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>             raise ValueError(&quot;Dynamic graph requires unique, non-empty action entries&quot;)</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>         for action in actions:</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>             load_adapter(asset_path(root, action[&quot;adapter_manifest&quot;]), graph, action[&quot;action_id&quot;])</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>         print(f&quot;shared {graph[&#x27;kind&#x27;]}: actions={len(actions)}, rank={graph[&#x27;rank&#x27;]}, alpha={graph[&#x27;alpha&#x27;]}; &quot;</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>               &quot;adapter tensors remain runtime inputs (no per-action policy compilation)&quot;)</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>     print(f&quot;build: config={rknn_build_config()} do_quantization=False; output={output_path}&quot;)</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>     if args.dry_run:</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>         print(f&quot;DRY-RUN: no RKNN build/runtime; after build, validation={&#x27;pending formal C++ runtime&#x27; if args.build_only else &#x27;Python verification requested&#x27;}&quot;)</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>         return 0</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a> </span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>     with rknn_compatible_model(onnx_path) as rknn_onnx_path:</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>         from rknn.api import RKNN</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a> </span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>         rknn = RKNN(verbose=True)</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>         try:</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>             ret = rknn.config(**rknn_build_config())</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>             if ret != 0:</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>                 raise RuntimeError(f&quot;rknn.config failed, ret={ret}&quot;)</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>             ret = rknn.load_onnx(model=str(rknn_onnx_path))</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>             if ret != 0:</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>                 raise RuntimeError(f&quot;rknn.load_onnx failed, ret={ret}&quot;)</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>             ret = rknn.build(do_quantization=False)</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>             if ret != 0:</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>                 raise RuntimeError(f&quot;rknn.build failed, ret={ret}&quot;)</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>             output_path.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>             with tempfile.TemporaryDirectory(prefix=&quot;wbc_rknn_&quot;, dir=output_path.parent) as directory:</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>                 candidate = Path(directory) / output_path.name</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>                 ret = rknn.export_rknn(str(candidate))</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>                 if ret != 0:</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>                     raise RuntimeError(f&quot;rknn.export_rknn failed, ret={ret}&quot;)</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>                 verification = None if args.build_only else verify(rknn, onnx_path, input_specs, output_spec, args)</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>                 candidate.replace(output_path)</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>                 conversion_record(onnx_path, output_path, args, verification)</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>             print(f&quot;exported: {output_path}; validation={&#x27;pending C++ deployment&#x27; if args.build_only else &#x27;Python verification completed&#x27;}&quot;)</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>         finally:</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>             rknn.release()</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>     return 0</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a> </span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a> </span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a>     try:</span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>         sys.exit(main())</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>     except Exception as error:</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &quot;&quot;&quot;Convert a native two-input MimicLite WBC policy to non-quantized RK3588 RKNN.&quot;&quot;&quot;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> import argparse</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> import math</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> import sys</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> import tempfile</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> import time</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> from contextlib import contextmanager</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> from pathlib import Path</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> EXPECTED_INPUTS = {&quot;policy&quot;: 399, &quot;command_short&quot;: 240}</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> EXPECTED_OUTPUT = (&quot;action&quot;, 21)</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> RKNN_MAX_ONNX_OPSET = 19</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> def parse_args():</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     parser.add_argument(&quot;onnx&quot;, type=Path, help=&quot;input WBC .onnx model&quot;)</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     parser.add_argument(&quot;-o&quot;, &quot;--output&quot;, type=Path, help=&quot;output .rknn (default: beside ONNX)&quot;)</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     parser.add_argument(&quot;--samples&quot;, type=int, default=20, help=&quot;random verification samples (minimum: 20)&quot;)</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     parser.add_argument(&quot;--verification-data&quot;, type=Path, help=&quot;recorded NPZ: policy[N,399], command_short/command[N,240]&quot;)</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     parser.add_argument(&quot;--cosine-threshold&quot;, type=float, default=0.999)</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     parser.add_argument(&quot;--max-abs-error&quot;, type=float, default=0.05)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     parser.add_argument(</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>         &quot;--target&quot;, help=&quot;optional connected RK3588 target id for verification; otherwise toolkit simulator is used&quot;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     )</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>     return parser.parse_args()</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> </span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> </span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> def static_shape(item, kind, onnx):</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     if item.type.tensor_type.elem_type != onnx.TensorProto.FLOAT:</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>         raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must be float32&quot;)</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     dims = []</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>     for dim in item.type.tensor_type.shape.dim:</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>         if dim.dim_value &lt;= 0:</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>             raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must have a fully static shape&quot;)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>         dims.append(dim.dim_value)</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     return tuple(dims)</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a> </span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> def check_model(path):</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     import onnx</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> </span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>     model = onnx.load(str(path))</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>     onnx.checker.check_model(model)</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>     initializers = {item.name for item in model.graph.initializer}</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>     inputs = [item for item in model.graph.input if item.name not in initializers]</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>     outputs = list(model.graph.output)</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>     names = {item.name for item in inputs}</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>     if len(inputs) != 2 or names not in ({&quot;policy&quot;, &quot;command_short&quot;}, {&quot;policy&quot;, &quot;command&quot;}):</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>         raise ValueError(f&quot;expected policy and command_short/command inputs, got {[item.name for item in inputs]}&quot;)</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>     specs = []</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>     for item in inputs:</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>         shape = static_shape(item, &quot;input&quot;, onnx)</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         width = EXPECTED_INPUTS[&quot;policy&quot; if item.name == &quot;policy&quot; else &quot;command_short&quot;]</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>         if shape not in ((width,), (1, width)):</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>             raise ValueError(f&quot;input &#x27;{item.name}&#x27; must contain {width} floats, got {shape}&quot;)</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>         specs.append((item.name, shape))</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>     if len(outputs) != 1 or outputs[0].name != EXPECTED_OUTPUT[0]:</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>         raise ValueError(f&quot;expected only output &#x27;{EXPECTED_OUTPUT[0]}&#x27;, got {[item.name for item in outputs]}&quot;)</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>     output_shape = static_shape(outputs[0], &quot;output&quot;, onnx)</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>     if output_shape not in ((21,), (1, 21)):</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>         raise ValueError(f&quot;output &#x27;action&#x27; must contain 21 floats, got {output_shape}&quot;)</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>     return specs, (outputs[0].name, output_shape)</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> </span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a> def replace_mish(model, onnx):</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>     rewritten = []</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     count = 0</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     for node in model.graph.node:</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>         if node.op_type != &quot;Mish&quot; or node.domain not in (&quot;&quot;, &quot;ai.onnx&quot;):</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>             rewritten.append(node)</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>             continue</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>         if len(node.input) != 1 or len(node.output) != 1:</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>             raise ValueError(f&quot;Mish node &#x27;{node.name}&#x27; must have one input and one output&quot;)</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>         count += 1</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         prefix = node.name or f&quot;mish_{count}&quot;</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         softplus = f&quot;{node.output[0]}__softplus&quot;</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>         tanh = f&quot;{node.output[0]}__tanh&quot;</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>         rewritten.extend(</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>             [</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>                 onnx.helper.make_node(&quot;Softplus&quot;, node.input, [softplus], name=f&quot;{prefix}__softplus&quot;),</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>                 onnx.helper.make_node(&quot;Tanh&quot;, [softplus], [tanh], name=f&quot;{prefix}__tanh&quot;),</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>                 onnx.helper.make_node(&quot;Mul&quot;, [node.input[0], tanh], node.output, name=f&quot;{prefix}__mul&quot;),</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>             ]</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>         )</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>     if count:</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>         del model.graph.node[:]</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>         model.graph.node.extend(rewritten)</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>     return count</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a> </span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> </span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a> @contextmanager</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a> def rknn_compatible_model(path):</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>     import onnx</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>     from onnx import version_converter</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a> </span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>     model = onnx.load(str(path))</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>     default_opsets = [item.version for item in model.opset_import if item.domain in (&quot;&quot;, &quot;ai.onnx&quot;)]</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>     if len(default_opsets) != 1:</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>         raise ValueError(f&quot;expected one ai.onnx opset, got {default_opsets}&quot;)</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>     changed = False</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>     if default_opsets[0] &gt; RKNN_MAX_ONNX_OPSET:</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>         model = version_converter.convert_version(model, RKNN_MAX_ONNX_OPSET)</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>         changed = True</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>         print(f&quot;converted ONNX opset {default_opsets[0]} -&gt; {RKNN_MAX_ONNX_OPSET} for RKNN&quot;)</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a> </span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>     mish_count = replace_mish(model, onnx)</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>     if mish_count:</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         changed = True</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>         print(f&quot;replaced {mish_count} Mish node(s) with NPU-supported Softplus/Tanh/Mul&quot;)</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a> </span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>     if not changed:</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>         yield path</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>         return</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a> </span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>     onnx.checker.check_model(model)</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>     with tempfile.TemporaryDirectory(prefix=&quot;wbc_onnx_opset19_&quot;) as directory:</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>         converted_path = Path(directory) / path.name</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>         onnx.save(model, str(converted_path))</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>         yield converted_path</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> </span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> </span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a> def cosine_similarity(reference, candidate):</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>     import numpy as np</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a> </span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>     denominator = float(np.linalg.norm(reference) * np.linalg.norm(candidate))</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>     if denominator == 0.0:</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>         return 1.0 if np.array_equal(reference, candidate) else 0.0</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>     return float(np.dot(reference, candidate) / denominator)</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> </span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a> </span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a> def verify(rknn, onnx_path, input_specs, output_spec, args):</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>     import numpy as np</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     import onnxruntime as ort</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a> </span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>     session = ort.InferenceSession(str(onnx_path), providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>     runtime_options = {&quot;target&quot;: args.target} if args.target else {}</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>     ret = rknn.init_runtime(**runtime_options)</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>     if ret != 0:</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>         raise RuntimeError(f&quot;rknn.init_runtime failed, ret={ret}&quot;)</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a> </span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>     rng = np.random.default_rng(0)</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     recorded = None</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>     if args.verification_data:</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>         with np.load(args.verification_data, allow_pickle=False) as data:</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>             recorded = {}</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>             for name, shape in input_specs:</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>                 key = name</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>                 if name != &quot;policy&quot; and name not in data:</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>                     key = &quot;command&quot; if name == &quot;command_short&quot; else &quot;command_short&quot;</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>                 value = data[key]</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>                 if value.dtype != np.float32 or value.ndim != 2 or value.shape[1] != shape[-1] or \</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>                         not np.isfinite(value).all():</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>                     raise ValueError(f&quot;recorded {name} must be finite float32 [N,{shape[-1]}]&quot;)</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>                 recorded[name] = value.copy()</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>         counts = {len(value) for value in recorded.values()}</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>         if len(counts) != 1 or min(counts) &lt; 20:</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>             raise ValueError(&quot;recorded policy and command need the same number of frames, at least 20&quot;)</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>         sample_count = min(counts)</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>     else:</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>         sample_count = args.samples</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>         print(&quot;Random inputs check conversion only; replay recorded observations before hardware use&quot;)</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>     minimum_cosine = 1.0</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>     maximum_error = 0.0</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>     error_sum = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>     joint_maximum = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>     cumulative_error = np.zeros(EXPECTED_OUTPUT[1], dtype=np.float64)</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>     worst_latency = 0.0</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>     for sample in range(sample_count):</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>         feed = {name: recorded[name][sample].reshape(shape) if recorded is not None else</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>                 rng.uniform(-1.0, 1.0, shape).astype(np.float32) for name, shape in input_specs}</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>         expected = np.asarray(session.run([output_spec[0]], feed)[0], dtype=np.float32).reshape(-1)</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>         if expected.size != EXPECTED_OUTPUT[1] or not np.isfinite(expected).all():</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>             raise RuntimeError(&quot;ONNX action must contain 21 finite floats&quot;)</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>         started = time.perf_counter()</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>         actual_outputs = rknn.inference(inputs=[feed[name] for name, _ in input_specs])</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>         latency = time.perf_counter() - started</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         worst_latency = max(worst_latency, latency)</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>         if actual_outputs is None or len(actual_outputs) != 1:</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>             raise RuntimeError(&quot;RKNN must return exactly one output&quot;)</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>         actual = np.asarray(actual_outputs[0], dtype=np.float32).reshape(-1)</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>         if actual.size != EXPECTED_OUTPUT[1] or not np.isfinite(actual).all():</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>             raise RuntimeError(f&quot;RKNN action must contain 21 finite floats, got {actual.shape}&quot;)</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>         error = np.abs(expected - actual)</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>         max_error = float(np.max(error))</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>         error_sum += error</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>         joint_maximum = np.maximum(joint_maximum, error)</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>         cumulative_error += actual - expected</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>         cosine = cosine_similarity(expected, actual)</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>         minimum_cosine = min(minimum_cosine, cosine)</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>         maximum_error = max(maximum_error, max_error)</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>         print(f&quot;  sample={sample:02d} cosine={cosine:.6f} max_abs={max_error:.6g} latency_ms={latency * 1000:.3f}&quot;)</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>         if cosine &lt; args.cosine_threshold or max_error &gt; args.max_abs_error:</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>             raise RuntimeError(f&quot;verification failed at sample {sample}&quot;)</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>     print(f&quot;verification passed: minimum cosine={minimum_cosine:.6f}, maximum abs error={maximum_error:.6g}&quot;)</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>     print(f&quot;mean abs error={error_sum.sum() / (sample_count * 21):.6g}, worst inference ms={worst_latency * 1000:.3f}&quot;)</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>     print(f&quot;per-joint max abs error: {joint_maximum.tolist()}&quot;)</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>     print(f&quot;per-joint mean abs error: {(error_sum / sample_count).tolist()}&quot;)</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>     print(f&quot;per-joint signed cumulative error: {cumulative_error.tolist()}&quot;)</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a> </span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a> </span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a> def main():</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>     args = parse_args()</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>     onnx_path = args.onnx.resolve()</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>     output_path = (args.output or onnx_path.with_suffix(&quot;.rknn&quot;)).resolve()</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>     if not onnx_path.is_file() or onnx_path.suffix.lower() != &quot;.onnx&quot;:</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>         raise ValueError(f&quot;ONNX model not found: {onnx_path}&quot;)</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>     if output_path.suffix.lower() != &quot;.rknn&quot;:</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>         raise ValueError(&quot;output filename must end with .rknn&quot;)</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>     if args.samples &lt; 20:</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>         raise ValueError(&quot;--samples must be at least 20&quot;)</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>     if not math.isfinite(args.cosine_threshold) or not -1.0 &lt;= args.cosine_threshold &lt;= 1.0 or \</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>             not math.isfinite(args.max_abs_error) or args.max_abs_error &lt;= 0:</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>         raise ValueError(&quot;verification thresholds must be finite: cosine in [-1,1], max abs error &gt; 0&quot;)</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a> </span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>     input_specs, output_spec = check_model(onnx_path)</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>     output_specs = [output_spec]</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>     print(&quot;inputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in input_specs))</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>     print(&quot;outputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in output_specs))</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a> </span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>     with rknn_compatible_model(onnx_path) as rknn_onnx_path:</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>         from rknn.api import RKNN</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a> </span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>         rknn = RKNN(verbose=True)</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>         try:</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>             ret = rknn.config(target_platform=&quot;rk3588&quot;)</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>             if ret != 0:</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>                 raise RuntimeError(f&quot;rknn.config failed, ret={ret}&quot;)</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>             ret = rknn.load_onnx(model=str(rknn_onnx_path))</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>             if ret != 0:</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>                 raise RuntimeError(f&quot;rknn.load_onnx failed, ret={ret}&quot;)</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>             ret = rknn.build(do_quantization=False)</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>             if ret != 0:</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>                 raise RuntimeError(f&quot;rknn.build failed, ret={ret}&quot;)</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>             output_path.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>             with tempfile.TemporaryDirectory(prefix=&quot;wbc_rknn_&quot;, dir=output_path.parent) as directory:</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>                 candidate = Path(directory) / output_path.name</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>                 ret = rknn.export_rknn(str(candidate))</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>                 if ret != 0:</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>                     raise RuntimeError(f&quot;rknn.export_rknn failed, ret={ret}&quot;)</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>                 verify(rknn, onnx_path, input_specs, output_spec, args)</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>                 candidate.replace(output_path)</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>             print(f&quot;exported: {output_path}&quot;)</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>         finally:</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>             rknn.release()</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>     return 0</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a> </span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a> </span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>     try:</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a>         sys.exit(main())</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a>     except Exception as error:</span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>         sys.exit(1)</span></pre></html>

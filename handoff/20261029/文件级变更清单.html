@@ -1,0 +1,980 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>文件级变更清单</title><style>body{margin:0;background:#f1f4f7;color:#1e2936;font:16px/1.75 system-ui,-apple-system,"Noto Sans CJK SC","Microsoft YaHei",sans-serif}main{max-width:1150px;margin:24px auto;padding:34px 46px;background:white;border:1px solid #dfe6ed;border-radius:8px}h1{font-size:28px;line-height:1.4}h2{font-size:23px;color:#17506d;margin-top:40px;border-bottom:1px solid #d9e5ed;padding-bottom:8px}h3{font-size:19px;color:#17506d;margin-top:30px}h2,h3{scroll-margin-top:20px}p{margin:13px 0}nav{padding-bottom:16px;border-bottom:1px solid #dbe4eb;font-size:14px}a{color:#086d98;text-decoration:none}a:hover{text-decoration:underline}.toc{padding:14px 20px;background:#f5f8fa;border-left:4px solid #247c9c}.toc a{display:block}.toc .sub{padding-left:16px;font-size:14px}table{border-collapse:collapse;width:100%;font-size:13px;margin:18px 0}th,td{border:1px solid #d5e0e8;padding:8px 10px;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf2f7;text-align:left}tr:nth-child(even){background:#fafcfd}code{font-family:"DejaVu Sans Mono",monospace;font-size:.88em;background:#edf2f5;padding:2px 4px;overflow-wrap:anywhere}pre{padding:18px;background:#f2f6f9;border:1px solid #d6e1e9;overflow:auto;line-height:1.55}pre code{padding:0;white-space:pre;background:none}li{margin:7px 0}details.audit{margin:20px 0;border:1px solid #cbdde9;border-radius:6px;background:#fbfdfe;padding:12px 15px}summary{cursor:pointer;color:#165b7b;font-weight:600}details table{font-size:12px}.scope{font-size:13px;color:#536370}strong{color:#163e54}@media(max-width:760px){main{margin:0;padding:20px 14px;border:0}h1{font-size:24px}table{font-size:11px}td,th{padding:6px}}@media print{body{background:white;font-size:10pt}main{margin:0;border:0;padding:0;max-width:none}nav,.toc{display:none}h2,h3{break-after:avoid}table{font-size:8pt}details.audit{border:0;padding:0}pre,tr{break-inside:avoid}}</style></head><body><main><nav><a href="更新说明.html">更新说明</a> · <a href="函数级变更清单.html">全部函数</a> · <a href="文件级变更清单.html">全部文件</a> · <a href="https://github.com/luvbotics/l0_locomotion_deploy/tree/l0_v5">仓库源码</a> · <a href="SHA256SUMS">校验和</a></nav><h1 id="h1">文件级变更总表</h1><div class="toc"><strong>阅读导航</strong><a class="" href="#h2">1 当前源码相对旧单 policy 的全部代码差异</a><a class="" href="#h3">2 独立文本工作区相对改造前快照的代码增量</a><a class="" href="#h4">3 同批文档差异</a><a class="" href="#h5">4 部署辅助和复用资产</a></div>
+<p>本版统一主统计为 A（旧单 policy Git 0e55549）→ C（当前源码）。T6 的 B→C 旧直控清理另列，不加入净总量。每个文件的技术目的见 <a href="%E6%9B%B4%E6%96%B0%E8%AF%B4%E6%98%8E.html">更新说明</a> 对应章节，变化函数见 <a href="%E5%87%BD%E6%95%B0%E7%BA%A7%E5%8F%98%E6%9B%B4%E6%B8%85%E5%8D%95.html">函数级变更清单</a>。</p>
+<h2 id="h2">1 当前源码相对旧单 policy 的全部代码差异</h2>
+<p>共 72 个文件，+6,079/−2,606 行。排除模型、机器人描述资源、文档和缓存。三项脚本迁移按原路径配对。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>状态</th>
+<th style="text-align:right">增删行</th>
+<th style="text-align:right">新增函数</th>
+<th style="text-align:right">修改函数</th>
+<th style="text-align:right">删除函数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="audit_v2/source_views/001.html">legged_controllers/CMakeLists.txt</a></td>
+<td>修改</td>
+<td style="text-align:right">+4/−9</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/002.html">legged_controllers/config/keyboard_action_map.yaml</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−137</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/003.html">legged_controllers/include/legged_controllers/ControllerTypes.h</a></td>
+<td>修改</td>
+<td style="text-align:right">+0/−10</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/004.html">legged_controllers/include/legged_controllers/LeggedController.h</a></td>
+<td>修改</td>
+<td style="text-align:right">+3/−8</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/005.html">legged_controllers/include/legged_controllers/SequenceRuntime.h</a></td>
+<td>修改</td>
+<td style="text-align:right">+0/−9</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/006.html">legged_controllers/launch/action_sequence_policy.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+2/−33</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/007.html">legged_controllers/launch/one_start.launch.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+77/−13</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/008.html">legged_controllers/launch/sim2mujoco.launch.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+4/−26</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/009.html">legged_controllers/launch/sim2real.launch.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+30/−28</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/010.html">legged_controllers/launch/text_wbc.launch.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+27/−0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/011.html">legged_controllers/scripts/astar_global_planner.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−180</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">8</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/012.html">legged_controllers/scripts/check_hardware_ready.bash</a></td>
+<td>修改</td>
+<td style="text-align:right">+2/−1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/013.html">legged_controllers/scripts/goal_selector.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−245</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">14</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/014.html">legged_controllers/scripts/goal_to_planner_node.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−206</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">11</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/015.html">legged_controllers/scripts/keyboard_action_trigger.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−133</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">5</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/016.html">legged_controllers/scripts/navigation_route.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−373</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">14</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/017.html">legged_controllers/scripts/planner_commands.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−85</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">7</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/018.html">legged_controllers/scripts/sequential_launch_real.sh</a></td>
+<td>修改</td>
+<td style="text-align:right">+51/−35</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/019.html">legged_controllers/scripts/sequential_launch_sim.sh</a></td>
+<td>修改</td>
+<td style="text-align:right">+20/−26</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/020.html">legged_controllers/scripts/sim2sim_path_planner.py</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−550</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">14</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/021.html">legged_controllers/scripts/text_wbc_generate</a></td>
+<td>新增</td>
+<td style="text-align:right">+24/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/022.html">legged_controllers/scripts/timedelay_launch.sh</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−35</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/023.html">legged_controllers/src/LeggedControllerInit.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+1/−29</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/024.html">legged_controllers/src/LeggedControllerRosIo.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+4/−21</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/025.html">legged_controllers/src/LeggedControllerSequenceBridge.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+0/−53</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/026.html">legged_controllers/src/LeggedControllerWbc.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+45/−11</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/027.html">legged_controllers/src/SequenceRuntimeMaps.cpp</a></td>
+<td>删除</td>
+<td style="text-align:right">+0/−124</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/028.html">legged_deploy/CMakeLists.txt</a></td>
+<td>修改</td>
+<td style="text-align:right">+6/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/029.html">legged_deploy/include/rknn_model.h</a></td>
+<td>修改</td>
+<td style="text-align:right">+56/−1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/030.html">legged_deploy/include/rl_controller_wbc.h</a></td>
+<td>修改</td>
+<td style="text-align:right">+77/−25</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/031.html">legged_deploy/include/wbc_io_probe.h</a></td>
+<td>新增</td>
+<td style="text-align:right">+7/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/032.html">legged_deploy/include/wbc_json_reference.h</a></td>
+<td>新增</td>
+<td style="text-align:right">+37/−0</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/033.html">legged_deploy/include/wbc_lora_assets.h</a></td>
+<td>新增</td>
+<td style="text-align:right">+40/−0</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/034.html">legged_deploy/src/main.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+12/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/035.html">legged_deploy/src/rknn_model.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+398/−2</td>
+<td style="text-align:right">22</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/036.html">legged_deploy/src/rl_controller_wbc.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+453/−160</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">13</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/037.html">legged_deploy/src/rl_controller_wbc_json.cpp</a></td>
+<td>新增</td>
+<td style="text-align:right">+138/−0</td>
+<td style="text-align:right">6</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/038.html">legged_deploy/src/wbc_io_probe.cpp</a></td>
+<td>新增</td>
+<td style="text-align:right">+185/−0</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/039.html">legged_deploy/src/wbc_json_reference.cpp</a></td>
+<td>新增</td>
+<td style="text-align:right">+156/−0</td>
+<td style="text-align:right">7</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/040.html">legged_deploy/src/wbc_json_reference_probe.cpp</a></td>
+<td>新增</td>
+<td style="text-align:right">+46/−0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/041.html">legged_deploy/src/wbc_lora_assets.cpp</a></td>
+<td>新增</td>
+<td style="text-align:right">+270/−0</td>
+<td style="text-align:right">17</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/042.html">legged_env_mujoco/legged_mujoco/launch/legged_mujoco_sim.launch.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+0/−4</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/043.html">legged_env_real/legged_real/CMakeLists.txt</a></td>
+<td>修改</td>
+<td style="text-align:right">+2/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/044.html">legged_env_real/legged_real/launch/isolated_hpm.launch.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+25/−0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/045.html">legged_env_real/legged_real/launch/legged_real.launch.py</a></td>
+<td>修改</td>
+<td style="text-align:right">+12/−7</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/046.html">legged_env_real/legged_real/package.xml</a></td>
+<td>修改</td>
+<td style="text-align:right">+2/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/047.html">legged_env_real/legged_real/scripts/isolated_hpm.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+124/−0</td>
+<td style="text-align:right">6</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/048.html">legged_env_real/legged_real/src/LeggedReal.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+4/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/049.html">scripts/batch_convert_onnx_to_rknn_rk3588.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+246/−0</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/050.html">scripts/build_wbc_lora_rk3588.sh</a></td>
+<td>新增</td>
+<td style="text-align:right">+163/−0</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/051.html">scripts/convert_onnx_to_rknn_rk3588_wbc_policy.py</a></td>
+<td>迁移并修改</td>
+<td style="text-align:right">+100/−9</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">4</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/052.html">scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py</a></td>
+<td>迁移并修改</td>
+<td style="text-align:right">+16/−6</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/053.html">scripts/export_wbc_lora.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+648/−0</td>
+<td style="text-align:right">19</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/054.html">scripts/generate_wbc_emotion_index.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+137/−0</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/055.html">scripts/prepare_wbc_deploy.py</a></td>
+<td>迁移并修改</td>
+<td style="text-align:right">+108/−2</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/056.html">scripts/preprocess_wbc_lora_fp16.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+327/−0</td>
+<td style="text-align:right">9</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/057.html">scripts/process_wbc_lora_delivery.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+188/−0</td>
+<td style="text-align:right">7</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/058.html">scripts/record_wbc_rosbag.sh</a></td>
+<td>新增</td>
+<td style="text-align:right">+42/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/059.html">scripts/run_wbc_lora_io.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+323/−0</td>
+<td style="text-align:right">10</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/060.html">scripts/start_sim2real.sh</a></td>
+<td>新增</td>
+<td style="text-align:right">+86/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/061.html">scripts/verify_wbc_lora_rknn.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+115/−0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/062.html">scripts/wbc-record-qos.yaml</a></td>
+<td>新增</td>
+<td style="text-align:right">+29/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/063.html">scripts/wbc_action_console.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+258/−0</td>
+<td style="text-align:right">10</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/064.html">scripts/wbc_action_console.sh</a></td>
+<td>新增</td>
+<td style="text-align:right">+19/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/065.html">scripts/wbc_lora_assets.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+221/−0</td>
+<td style="text-align:right">13</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/066.html">scripts/wbc_runtime_common.bash</a></td>
+<td>新增</td>
+<td style="text-align:right">+105/−0</td>
+<td style="text-align:right">6</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/067.html">system_command_arbiter/config/l0_v5.yaml</a></td>
+<td>修改</td>
+<td style="text-align:right">+3/−3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/068.html">system_command_arbiter/include/system_command_arbiter/motor_mapping.hpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+3/−1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/069.html">system_command_arbiter/src/motor_mapping.cpp</a></td>
+<td>修改</td>
+<td style="text-align:right">+2/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/070.html">texttomotion/board_runtime.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+26/−0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/071.html">texttomotion/generate_wbc_json.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+350/−0</td>
+<td style="text-align:right">17</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><a href="audit_v2/source_views/072.html">texttomotion/motion_adapter.py</a></td>
+<td>新增</td>
+<td style="text-align:right">+220/−0</td>
+<td style="text-align:right">9</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+</tbody>
+</table>
+<h2 id="h3">2 独立文本工作区相对改造前快照的代码增量</h2>
+<p>B→C 共 41 个代码/配置/脚本文件，+957/−910 行。这个清单保留完整工作区增量，不能与上节相加。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>状态</th>
+<th style="text-align:right">增删行</th>
+<th style="text-align:right">新增函数</th>
+<th style="text-align:right">修改函数</th>
+<th style="text-align:right">删除函数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>legged_controllers/CMakeLists.txt</code></td>
+<td>修改</td>
+<td style="text-align:right">+3/−11</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/include/legged_controllers/JointCommandComposer.h</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/include/legged_controllers/LeggedController.h</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−13</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/include/legged_controllers/TextMotionController.h</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−67</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+</tr>
+<tr>
+<td><code>legged_controllers/launch/one_start.launch.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+4/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/launch/sim2mujoco.launch.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/launch/sim2real.launch.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/launch/text_motion.launch.py</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−21</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+</tr>
+<tr>
+<td><code>legged_controllers/launch/text_wbc.launch.py</code></td>
+<td>新增</td>
+<td style="text-align:right">+27/−0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/package.xml</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/scripts/sequential_launch_real.sh</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/scripts/sequential_launch_sim.sh</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/scripts/text_motion_node</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−4</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/scripts/text_motion_request</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−4</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/scripts/text_wbc_generate</code></td>
+<td>新增</td>
+<td style="text-align:right">+24/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/JointCommandComposer.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−8</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerActions.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerInit.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−12</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerRosIo.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+4/−19</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerRuntime.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−14</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerTextMotion.cpp</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−40</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">4</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/LeggedControllerWbc.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+12/−5</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_controllers/src/TextMotionController.cpp</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−294</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">14</td>
+</tr>
+<tr>
+<td><code>legged_deploy/CMakeLists.txt</code></td>
+<td>修改</td>
+<td style="text-align:right">+5/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/include/rl_controller_wbc.h</code></td>
+<td>修改</td>
+<td style="text-align:right">+17/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/include/wbc_json_reference.h</code></td>
+<td>新增</td>
+<td style="text-align:right">+37/−0</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/include/wbc_lora_assets.h</code></td>
+<td>修改</td>
+<td style="text-align:right">+1/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/src/rl_controller_wbc.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+49/−11</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/src/rl_controller_wbc_json.cpp</code></td>
+<td>新增</td>
+<td style="text-align:right">+138/−0</td>
+<td style="text-align:right">6</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/src/wbc_json_reference.cpp</code></td>
+<td>新增</td>
+<td style="text-align:right">+156/−0</td>
+<td style="text-align:right">7</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/src/wbc_json_reference_probe.cpp</code></td>
+<td>新增</td>
+<td style="text-align:right">+46/−0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_deploy/src/wbc_lora_assets.cpp</code></td>
+<td>修改</td>
+<td style="text-align:right">+4/−0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>legged_env_real/legged_real/launch/legged_real.launch.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+0/−2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>scripts/wbc_action_console.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+1/−1</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>scripts/wbc_action_console.sh</code></td>
+<td>修改</td>
+<td style="text-align:right">+2/−3</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>scripts/wbc_runtime_common.bash</code></td>
+<td>修改</td>
+<td style="text-align:right">+5/−12</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>texttomotion/board_runtime.py</code></td>
+<td>新增</td>
+<td style="text-align:right">+26/−0</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>texttomotion/generate_wbc_json.py</code></td>
+<td>新增</td>
+<td style="text-align:right">+350/−0</td>
+<td style="text-align:right">17</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>texttomotion/motion_adapter.py</code></td>
+<td>修改</td>
+<td style="text-align:right">+36/−2</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td><code>texttomotion/text_motion_node.py</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−257</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">12</td>
+</tr>
+<tr>
+<td><code>texttomotion/text_motion_request.py</code></td>
+<td>删除</td>
+<td style="text-align:right">+0/−88</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">2</td>
+</tr>
+</tbody>
+</table>
+<h2 id="h4">3 同批文档差异</h2>
+<p>以下 5 个 B→C 文档差异来自源码快照，未计入代码统计；本次修订产生的交付说明保存在 deliveries 中，没有修改源码内历史文档。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>状态</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>l0_ros2_deploy_v2/README.md</code></td>
+<td>修改</td>
+<td>移除旧动作直控部署文档入口。</td>
+</tr>
+<tr>
+<td><code>l0_ros2_deploy_v2/docs/agent-context.md</code></td>
+<td>修改</td>
+<td>说明 JSON reference 在 RLWbc 内接入及 Base 参数复用。</td>
+</tr>
+<tr>
+<td><code>l0_ros2_deploy_v2/docs/text-motion-deployment.md</code></td>
+<td>删除</td>
+<td>删除旧九关节直接叠加的部署文档。</td>
+</tr>
+<tr>
+<td><code>l0_ros2_deploy_v2/docs/text-wbc-board.md</code></td>
+<td>新增</td>
+<td>新增板端文本生成→JSON→WBC 部署说明；归档原文的部分高度描述早于最终实现，见本次更新说明。</td>
+</tr>
+<tr>
+<td><code>l0_ros2_deploy_v2/docs/wbc-lora-production-deployment.md</code></td>
+<td>修改</td>
+<td>修正交互控制台使用当前运行快照的说明。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="h5">4 部署辅助和复用资产</h2>
+<p>独立工作区 records 中 8 个部署/历史验证脚本单列于更新说明 D1，命名函数新增 11 个；属于工作区创建时新增文件，不计入 A→C 主统计。冻结模型 36 个文件相对交付 ZIP 无修改，RKNNLite 与 Runtime 是复制的依赖，不计作自主实现代码。</p>
+<p>完整数据见 <code>audit_v2/FUNCTION_AUDIT.json</code>、<code>FUNCTION_CHANGES.csv</code>、<code>FILE_CHANGES.csv</code>。前版 <code>changes/</code> 阶段清单仅在本地交付目录保留，仓库版以本目录的 <code>audit_v2/</code> 为准。</p>
+</main></body></html>

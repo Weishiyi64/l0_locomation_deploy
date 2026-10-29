@@ -1,0 +1,156 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/wbc_json_reference.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/wbc_json_reference.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;wbc_json_reference.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;algorithm&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;chrono&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;cmath&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> namespace {</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> void require(bool value, const char* message) {</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>   if (!value) throw std::runtime_error(message);</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> }</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> std::int64_t nowMs() {</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   return std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>       std::chrono::system_clock::now().time_since_epoch()).count();</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> }</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> double finite(const YAML::Node&amp; value) {</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   const double result = value.as&lt;double&gt;();</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   require(std::isfinite(result), &quot;non-finite JSON reference value&quot;);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   return result;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> }</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> }  // namespace</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> std::vector&lt;std::pair&lt;double, double&gt;&gt; wbcJsonJointLimits(</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     const std::string&amp; mapping_file, const std::vector&lt;std::string&gt;&amp; joint_names) {</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   const auto motors = YAML::LoadFile(mapping_file)[&quot;motors&quot;];</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   require(motors.IsSequence(), &quot;mapping has no motors sequence&quot;);</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   std::vector&lt;std::pair&lt;double, double&gt;&gt; result;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   for (const auto&amp; name : joint_names) {</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     unsigned count = 0;</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     std::pair&lt;double, double&gt; bounds;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     for (const auto&amp; motor : motors) {</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>       if (motor[&quot;joint_name&quot;].as&lt;std::string&gt;() != name) continue;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>       ++count;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>       bounds = {finite(motor[&quot;joint_lower&quot;]), finite(motor[&quot;joint_upper&quot;])};</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>       require(motor[&quot;enabled&quot;].as&lt;bool&gt;() &amp;&amp; bounds.first &lt; bounds.second, &quot;invalid/disabled joint limit&quot;);</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     }</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     require(count == 1, &quot;missing/duplicate JSON WBC mapping joint&quot;);</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     result.push_back(bounds);</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   }</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   return result;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> }</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> </span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> WbcJsonReference::WbcJsonReference(const std::string&amp; payload, const std::vector&lt;std::string&gt;&amp; joint_names,</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     const std::vector&lt;std::pair&lt;double, double&gt;&gt;&amp; limits, const std::string&amp; base_hash,</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     const std::array&lt;double, 3&gt;* base_position, const std::array&lt;double, 4&gt;* base_orientation) {</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>   require(!payload.empty() &amp;&amp; payload.size() &lt;= 4U * 1024U * 1024U, &quot;JSON payload exceeds 4 MiB&quot;);</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>   require(joint_names.size() == 21 &amp;&amp; limits.size() == 21, &quot;JSON reference requires 21-joint WBC ABI&quot;);</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   const auto root = YAML::Load(payload);</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   require(root.IsMap() &amp;&amp; root[&quot;format&quot;].as&lt;std::string&gt;(&quot;&quot;) == &quot;gmr_upper_body_joint_trajectory_v1&quot; &amp;&amp;</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>           root[&quot;robot&quot;].as&lt;std::string&gt;(&quot;&quot;) == &quot;l0_v5&quot; &amp;&amp; root[&quot;angle_unit&quot;].as&lt;std::string&gt;(&quot;&quot;) == &quot;rad&quot; &amp;&amp;</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>           root[&quot;coordinate_contract&quot;].as&lt;std::string&gt;(&quot;&quot;) == &quot;robot_anatomical_v1&quot; &amp;&amp;</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>           root[&quot;fps&quot;].as&lt;double&gt;(0) == 50.0, &quot;JSON reference format/robot/coordinate/FPS mismatch&quot;);</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>   require(root[&quot;source_zip_sha256&quot;].as&lt;std::string&gt;(&quot;&quot;) ==</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>       &quot;48485ea7f14fd7e52920f7f59e4da20515b9f043e0aa388ee2a3e43130a84119&quot;, &quot;wrong text model source delivery&quot;);</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   require(root[&quot;wbc_base_checkpoint_sha256&quot;].as&lt;std::string&gt;(&quot;&quot;) == base_hash, &quot;JSON/WBC Base identity mismatch&quot;);</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   id_ = root[&quot;request_id&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   require(id_.size() &gt;= 3 &amp;&amp; id_.size() &lt;= 32 &amp;&amp; id_.compare(0, 2, &quot;T_&quot;) == 0 &amp;&amp;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>       std::all_of(id_.begin(), id_.end(), [](unsigned char c) {</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         return (c &gt;= &#x27;a&#x27; &amp;&amp; c &lt;= &#x27;z&#x27;) || (c &gt;= &#x27;A&#x27; &amp;&amp; c &lt;= &#x27;Z&#x27;) ||</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>                (c &gt;= &#x27;0&#x27; &amp;&amp; c &lt;= &#x27;9&#x27;) || c == &#x27;-&#x27; || c == &#x27;_&#x27;;</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>       }), &quot;invalid text motion request ID&quot;);</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   expires_at_ms_ = root[&quot;expires_at_ms&quot;].as&lt;std::int64_t&gt;();</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   const auto remaining = expires_at_ms_ - nowMs();</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   require(remaining &gt; 0 &amp;&amp; remaining &lt;= 10000, &quot;expired/excessive JSON admission TTL&quot;);</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   const auto names = root[&quot;joint_names&quot;];</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   require(names.IsSequence() &amp;&amp; names.size() == 9, &quot;JSON must contain nine upper-body joint names&quot;);</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   for (std::size_t i = 0; i &lt; 9; ++i)</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     require(names[i].as&lt;std::string&gt;() == joint_names[12 + i], &quot;JSON joint order differs from WBC Base&quot;);</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>   const auto snapshot = root[&quot;wbc_start_state&quot;];</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>   const auto snapshot_names = snapshot[&quot;joint_names&quot;];</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   const auto snapshot_joints = snapshot[&quot;joint_positions&quot;];</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   require(snapshot_names.IsSequence() &amp;&amp; snapshot_names.size() == 21 &amp;&amp;</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>           snapshot_joints.IsSequence() &amp;&amp; snapshot_joints.size() == 21, &quot;invalid WBC start snapshot&quot;);</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   for (std::size_t j = 0; j &lt; 21; ++j) {</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     require(snapshot_names[j].as&lt;std::string&gt;() == joint_names[j], &quot;snapshot joint order differs from WBC Base&quot;);</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     const double q = finite(snapshot_joints[j]);</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     require(q &gt;= limits[j].first - 1e-6 &amp;&amp; q &lt;= limits[j].second + 1e-6, &quot;snapshot outside robot joint limits&quot;);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     start_[j] = static_cast&lt;float&gt;(std::clamp(q, limits[j].first, limits[j].second));</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   }</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   const auto position = snapshot[&quot;base_position&quot;];</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   const auto orientation = snapshot[&quot;base_quaternion_wxyz&quot;];</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   require(position.IsSequence() &amp;&amp; position.size() == 3 &amp;&amp; orientation.IsSequence() &amp;&amp; orientation.size() == 4,</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>           &quot;invalid JSON root pose dimensions&quot;);</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   for (std::size_t j = 0; j &lt; 3; ++j) root_position_[j] = finite(position[j]);</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   const auto reference_source = root[&quot;root_reference_source&quot;].as&lt;std::string&gt;(&quot;snapshot&quot;);</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   require(reference_source == &quot;snapshot&quot; || reference_source == &quot;wbc_base_action&quot;, &quot;unknown JSON root reference source&quot;);</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   if (reference_source == &quot;wbc_base_action&quot;) {</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     require(base_position &amp;&amp; base_orientation, &quot;WBC Base reference pose must be supplied by the WBC worker&quot;);</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     root_position_ = *base_position;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   }</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   require(root_position_[2] &gt; 0.05 &amp;&amp; root_position_[2] &lt; 2.0, &quot;invalid reference root height&quot;);</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   double norm = 0;</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   for (std::size_t j = 0; j &lt; 4; ++j) {</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>     root_orientation_[j] = finite(orientation[j]);</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>     if (reference_source == &quot;wbc_base_action&quot;) root_orientation_[j] = (*base_orientation)[j];</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     require(std::isfinite(root_orientation_[j]), &quot;non-finite WBC reference quaternion&quot;);</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     norm += root_orientation_[j] * root_orientation_[j];</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   }</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>   require(std::abs(norm - 1.0) &lt; 0.1, &quot;invalid reference root quaternion&quot;);</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   for (auto&amp; q : root_orientation_) q /= std::sqrt(norm);</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   const auto token_ids = root[&quot;model_diagnostics&quot;][&quot;token_ids&quot;];</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   require(token_ids.IsSequence() &amp;&amp; token_ids.size() == 3, &quot;JSON needs head/left/right token identity&quot;);</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   const std::array&lt;int, 3&gt; tokens{{token_ids[0].as&lt;int&gt;(), token_ids[1].as&lt;int&gt;(), token_ids[2].as&lt;int&gt;()}};</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   require(tokens[0] &gt;= 0 &amp;&amp; tokens[0] &lt; 47 &amp;&amp; tokens[1] &gt;= 0 &amp;&amp; tokens[1] &lt; 43 &amp;&amp; tokens[2] &gt;= 0 &amp;&amp; tokens[2] &lt; 43,</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>           &quot;invalid text model token IDs&quot;);</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   require(tokens[0] || tokens[1] || tokens[2], &quot;no active body part&quot;);</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   const auto frames = root[&quot;frames&quot;];</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   const auto count = root[&quot;frame_count&quot;].as&lt;std::size_t&gt;(0);</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   require(frames.IsSequence() &amp;&amp; count == frames.size() &amp;&amp; count &gt;= 2 &amp;&amp; count &lt;= 5000,</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>           &quot;invalid JSON frame count&quot;);</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   std::vector&lt;Joints&gt; action;</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   action.reserve(count);</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   for (std::size_t i = 0; i &lt; count; ++i) {</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     const auto frame = frames[i];</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     require(frame[&quot;frame_index&quot;].as&lt;std::size_t&gt;(count) == i &amp;&amp;</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>             std::abs(finite(frame[&quot;time&quot;]) - i / 50.0) &lt;= 1e-5, &quot;invalid JSON frame timeline&quot;);</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     const auto values = frame[&quot;joint_positions&quot;];</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     require(values.IsSequence() &amp;&amp; values.size() == 9, &quot;invalid upper-body frame size&quot;);</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     Joints row = start_;</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     for (std::size_t j = 0; j &lt; 9; ++j) {</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>       const double q = finite(values[j]);</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>       const auto&amp; bound = limits[12 + j];</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>       require(q &gt;= bound.first - 1e-6 &amp;&amp; q &lt;= bound.second + 1e-6, &quot;JSON frame exceeds robot joint limits&quot;);</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>       const bool active = tokens[j &lt; 3 ? 1 : (j &lt; 6 ? 2 : 0)] != 0;</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>       if (!active) require(std::abs(q - start_[12 + j]) &lt;= 0.005, &quot;inactive body part differs from captured pose&quot;);</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>       else row[12 + j] = static_cast&lt;float&gt;(std::clamp(q, bound.first, bound.second));</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>     }</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     action.push_back(row);</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   }</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>   // Preserve the reference packer&#x27;s standing hold and smooth entry/exit. No</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>   // second arm mirror, FK pass, or per-request ONNX/RKNN conversion is needed.</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>   constexpr std::size_t hold = 10, transition = 40, settle = 10;</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   frames_.reserve(count + hold + 2 * transition + settle);</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   frames_.insert(frames_.end(), hold, start_);</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   const auto appendBlend = [&amp;](const Joints&amp; from, const Joints&amp; to) {</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     for (std::size_t i = 0; i &lt; transition; ++i) {</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>       const float u = static_cast&lt;float&gt;(i) / (transition - 1);</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>       const float alpha = u * u * (3 - 2 * u);</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>       Joints row;</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>       for (std::size_t j = 0; j &lt; 21; ++j) row[j] = from[j] + alpha * (to[j] - from[j]);</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>       frames_.push_back(row);</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     }</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   };</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>   appendBlend(start_, action.front());</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   frames_.insert(frames_.end(), action.begin(), action.end());</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   appendBlend(action.back(), start_);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>   frames_.insert(frames_.end(), settle, start_);</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>   require(!expired(), &quot;JSON expired during full validation&quot;);</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> }</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> </span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a> const WbcJsonReference::Joints&amp; WbcJsonReference::frame(int index) const {</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>   return frames_.at(static_cast&lt;std::size_t&gt;(std::clamp(index, 0, static_cast&lt;int&gt;(frames_.size()) - 1)));</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a> }</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a> </span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> bool WbcJsonReference::expired() const { return expires_at_ms_ &lt;= nowMs(); }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

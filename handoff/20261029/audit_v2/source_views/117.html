@@ -1,0 +1,454 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/src/LeggedControllerActions.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/src/LeggedControllerActions.cpp</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &lt;mutex&gt;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &quot;legged_controllers/ControllerBanners.h&quot;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &quot;legged_controllers/LeggedController.h&quot;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> </span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> namespace legged {</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> void LeggedController::processJoystickActions(const JoystickCommand&amp; command) {</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a>   if (command.emergency_stop_pressed) triggerEmergencyStop();</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>   if (command.set_walk_pressed) enterWalkMode();</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>   if (command.reset_pressed) resetController();</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>   if (command.kp_add_pressed) adjustStandbyKp(2.0);</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>   if (command.kp_minus_pressed) adjustStandbyKp(-2.0);</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   if (command.toggle_calibration_pressed) toggleCalibrationMode();</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   if (command.calibrate_left_arm_pressed) calibrateByTag(&quot;left_arm&quot;, &quot;CALIBRATING LEFT ARM&quot;);</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   if (command.calibrate_right_arm_pressed) calibrateByTag(&quot;right_arm&quot;, &quot;CALIBRATING RIGHT ARM&quot;);</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   if (command.calibrate_left_leg_pressed) calibrateByTag(&quot;left_leg&quot;, &quot;CALIBRATING LEFT LEG&quot;);</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   if (command.calibrate_right_leg_pressed) calibrateByTag(&quot;right_leg&quot;, &quot;CALIBRATING RIGHT LEG&quot;);</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   if (command.calibrate_waist_pressed) calibrateByTag(&quot;waist&quot;, &quot;CALIBRATING WAIST&quot;);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   if (command.calibrate_neck_pressed) calibrateByTag(&quot;neck&quot;, &quot;CALIBRATING NECK&quot;);</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> }</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> void LeggedController::processJoystickBackEmergencySequence(const JoystickCommand&amp; command) {</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   if (!joystick_back_emergency_sequence_enabled_ || !command.back_emergency_sequence_pressed) return;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   if (!fsm_ || !fsm_-&gt;isWalking()) return;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   const std::string action_label = &quot;Back emergency sequence&quot;;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   std::lock_guard&lt;std::mutex&gt; lock(auxiliary_action_trigger_mutex_);</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   if (!canStartAmpDerivedAction(&quot;[BackEmergency]&quot;, action_label, true, true))</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   {</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     return;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   }</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> </span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   if (joystick_back_emergency_sequence_path_.empty())</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   {</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;[BackEmergency] Ignoring trigger: sequence path is empty&quot;);</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     return;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   }</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> </span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   if (!fullCsvVelocityAllowed())</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   {</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     logFullCsvVelocityBlocked(&quot;[BackEmergency]&quot;, joystick_back_emergency_sequence_path_);</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     return;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   }</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> </span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   const auto log_trigger = [this]() {</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[BackEmergency] Back button -&gt; %s; EmergencyStop after finish&quot;,</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>                 displayControllerPath(joystick_back_emergency_sequence_path_).c_str());</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   };</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   if (triggerSequenceFromPath(joystick_back_emergency_sequence_path_, &quot;[BackEmergency] Trigger&quot;, log_trigger))</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   {</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     sequence_finish_emergency_pending_ = true;</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>   }</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> }</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> </span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a> void LeggedController::updateSpeedMultiplier(double lt_axis_value) {</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   if (velLimiter_)</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   {</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     velLimiter_-&gt;updateSpeedMultiplierFromAxis(lt_axis_value);</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   }</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   else</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   {</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[SPEED MULTIPLIER] Velocity limiter not initialized&quot;);</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   }</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> }</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> </span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> void LeggedController::triggerEmergencyStop() {</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   if (fsm_-&gt;isCalibration())</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   {</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] Ignored while hardware calibration mode is active&quot;);</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     return;</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   }</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> </span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   const bool had_active_sequence = sequenceRuntime_.isActive();</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   if (had_active_sequence)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   {</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] Active action sequence aborted&quot;);</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   }</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   publishImitationActive(false, &quot;[EMERGENCY] Deactivate imitation worker&quot;);</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   abortWbcImmediately(&quot;[EMERGENCY] Deactivate WBC worker&quot;);</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   setPolicySource(walkStartPolicySource(), &quot;[EMERGENCY] Policy source restored to default&quot;);</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a> </span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   if (!fsm_-&gt;isEmergency()) fsm_-&gt;emergencyStop();</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a> </span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   kp_standby_ = 0;</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   printEmergencyStopBanner(nh_-&gt;get_logger());</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] System stopped for safety!&quot;);</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a> }</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> </span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> void LeggedController::enterWalkMode() {</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   if (!fsm_-&gt;isStandby()) return;</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a> </span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   clearSequenceReleaseHandoff();</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   fsm_-&gt;setWalk();</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>   startingTime_ = rclcpp::Clock().now();</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   printWalkModeBanner(nh_-&gt;get_logger());</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[WALK] Robot entering walk mode - All systems go!&quot;);</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a> }</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a> </span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a> void LeggedController::resetController() {</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   if (!fsm_-&gt;isEmergency()) return;</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a> </span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   fsm_-&gt;resetFromEmergency();</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   kp_standby_ = 0;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   orientation_violation_count_ = 0;</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   publishImitationActive(false, &quot;[RESET] Deactivate imitation worker&quot;);</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   abortWbcImmediately(&quot;[RESET] Deactivate WBC worker&quot;);</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   policyMux_.clearCommands(0.0);</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[RESET] Standby targets cleared to zero pose&quot;);</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   setPolicySource(walkStartPolicySource(), &quot;[RESET] Policy source restored to startup default&quot;);</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   publishRlObsReset();</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a> </span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   logResetBanner(nh_-&gt;get_logger());</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a> </span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>   joyFeedbackArray_.array[0].intensity = 0.0;</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   joyFeedbackArray_.array[1].intensity = 0.0;</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>   joyFeedbackPub_-&gt;publish(joyFeedbackArray_);</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[RESET] Controller reset - Ready for operation!&quot;);</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a> }</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a> </span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a> void LeggedController::adjustStandbyKp(double delta) {</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>   if (fsm_-&gt;isStandby())</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>   {</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     kp_standby_ += delta;</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Standby gain %s: %.1f&quot;, delta &gt;= 0.0 ? &quot;increased&quot; : &quot;decreased&quot;, kp_standby_);</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     if (kp_standby_ &gt; 80)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     {</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>       kp_standby_ = 80;</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Limit reached - max: 80&quot;);</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     }</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>     else if (kp_standby_ &lt; 0)</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     {</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>       kp_standby_ = 0;</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Limit reached - min: 0&quot;);</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>     }</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   }</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> }</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a> </span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a> void LeggedController::toggleCalibrationMode() {</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   if (isSim_)</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   {</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode is not supported in simulation&quot;);</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>     return;</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   }</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a> </span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>   if (fsm_-&gt;isEmergency())</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>   {</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>     if (!robot_hw_-&gt;set_calibration_mode(true))</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     {</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Failed to enable hardware calibration mode&quot;);</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>       return;</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     }</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     fsm_-&gt;enterCalibrationMode();</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>     printCalibrationEnabledBanner(nh_-&gt;get_logger());</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode activated&quot;);</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>   }</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>   else if (fsm_-&gt;isCalibration())</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>   {</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     if (!robot_hw_-&gt;set_calibration_mode(false))</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     {</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Failed to disable hardware calibration mode&quot;);</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>       return;</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     }</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     fsm_-&gt;exitCalibrationMode();</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     printCalibrationDisabledBanner(nh_-&gt;get_logger());</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode deactivated, back to Emergency Stop&quot;);</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>   }</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>   else</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>   {</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Can only enter calibration mode from Emergency Stop state&quot;);</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>   }</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a> }</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a> </span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a> void LeggedController::calibrateByTag(const std::string&amp; tag, const std::string&amp; banner) {</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>   if (!fsm_-&gt;isCalibration()) return;</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a> </span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>   printCalibrationBanner(nh_-&gt;get_logger(), banner);</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>   if (robot_hw_-&gt;zeroMotorsByTag(tag))</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>   {</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] %s request accepted; checking motor position feedback&quot;, tag.c_str());</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>   }</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>   else</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>   {</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;[CALIBRATION] %s calibration failed&quot;, tag.c_str());</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>   }</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a> }</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> </span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a> bool LeggedController::imitationActionActive() const {</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   return policyMux_.source() != PolicyCmdSource::kRl || policyMux_.imitationActiveCommanded() ||</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>          policyMux_.wbcActiveCommanded() || wbc_return_pending_.load() || wbc_handoff_in_progress_.load();</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a> }</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a> </span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a> bool LeggedController::canStartAmpDerivedAction(const char* context, const std::string&amp; action_label,</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>                                                 bool require_walking, bool block_imitation_active) const {</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>   const char* tag = context != nullptr ? context : &quot;[ActionTrigger]&quot;;</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   const std::string label = action_label.empty() ? &quot;unnamed&quot; : action_label;</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a> </span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>   if (require_walking &amp;&amp; (!fsm_ || !fsm_-&gt;isWalking()))</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>   {</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: robot must be in Walking mode&quot;, tag, label.c_str());</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     return false;</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>   }</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>   if (fsm_ &amp;&amp; (fsm_-&gt;isEmergency() || fsm_-&gt;isCalibration()))</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>   {</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: controller is not in a safe state&quot;, tag, label.c_str());</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     return false;</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>   }</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>   if (sequenceRuntime_.isActive())</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>   {</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: action sequence is already active&quot;, tag, label.c_str());</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>     return false;</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>   }</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>   if (block_imitation_active &amp;&amp; imitationActionActive())</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>   {</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: another policy action or WBC handoff is already active&quot;,</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>                 tag, label.c_str());</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     return false;</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>   }</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>   return true;</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a> }</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a> </span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a> }  // namespace legged</span></pre><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &lt;mutex&gt;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &quot;legged_controllers/ControllerBanners.h&quot;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &quot;legged_controllers/LeggedController.h&quot;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> </span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> namespace legged {</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> </span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> void LeggedController::processJoystickActions(const JoystickCommand&amp; command) {</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a>   if (command.emergency_stop_pressed) triggerEmergencyStop();</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>   if (command.set_walk_pressed) enterWalkMode();</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>   if (command.reset_pressed) resetController();</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>   if (command.kp_add_pressed) adjustStandbyKp(2.0);</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>   if (command.kp_minus_pressed) adjustStandbyKp(-2.0);</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>   if (command.toggle_calibration_pressed) toggleCalibrationMode();</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>   if (command.calibrate_left_arm_pressed) calibrateByTag(&quot;left_arm&quot;, &quot;CALIBRATING LEFT ARM&quot;);</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>   if (command.calibrate_right_arm_pressed) calibrateByTag(&quot;right_arm&quot;, &quot;CALIBRATING RIGHT ARM&quot;);</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   if (command.calibrate_left_leg_pressed) calibrateByTag(&quot;left_leg&quot;, &quot;CALIBRATING LEFT LEG&quot;);</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>   if (command.calibrate_right_leg_pressed) calibrateByTag(&quot;right_leg&quot;, &quot;CALIBRATING RIGHT LEG&quot;);</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>   if (command.calibrate_waist_pressed) calibrateByTag(&quot;waist&quot;, &quot;CALIBRATING WAIST&quot;);</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   if (command.calibrate_neck_pressed) calibrateByTag(&quot;neck&quot;, &quot;CALIBRATING NECK&quot;);</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> }</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> </span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> void LeggedController::processJoystickBackEmergencySequence(const JoystickCommand&amp; command) {</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>   if (!joystick_back_emergency_sequence_enabled_ || !command.back_emergency_sequence_pressed) return;</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   if (!fsm_ || !fsm_-&gt;isWalking()) return;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> </span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   const std::string action_label = &quot;Back emergency sequence&quot;;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   std::lock_guard&lt;std::mutex&gt; lock(auxiliary_action_trigger_mutex_);</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>   if (!canStartAmpDerivedAction(&quot;[BackEmergency]&quot;, action_label, true, true))</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   {</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     return;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   }</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   if (joystick_back_emergency_sequence_path_.empty())</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   {</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;[BackEmergency] Ignoring trigger: sequence path is empty&quot;);</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>     return;</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   }</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a> </span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   if (!fullCsvVelocityAllowed())</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>   {</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>     logFullCsvVelocityBlocked(&quot;[BackEmergency]&quot;, joystick_back_emergency_sequence_path_);</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     return;</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   }</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> </span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>   const auto log_trigger = [this]() {</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[BackEmergency] Back button -&gt; %s; EmergencyStop after finish&quot;,</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>                 displayControllerPath(joystick_back_emergency_sequence_path_).c_str());</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>   };</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   if (triggerSequenceFromPath(joystick_back_emergency_sequence_path_, &quot;[BackEmergency] Trigger&quot;, log_trigger))</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>   {</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>     sequence_finish_emergency_pending_ = true;</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>   }</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a> }</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a> </span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a> void LeggedController::updateSpeedMultiplier(double lt_axis_value) {</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>   if (velLimiter_)</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>   {</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>     velLimiter_-&gt;updateSpeedMultiplierFromAxis(lt_axis_value);</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>   }</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>   else</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>   {</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[SPEED MULTIPLIER] Velocity limiter not initialized&quot;);</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>   }</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a> }</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> void LeggedController::triggerEmergencyStop() {</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   if (fsm_-&gt;isCalibration())</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   {</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] Ignored while hardware calibration mode is active&quot;);</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     return;</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>   }</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a> </span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>   const bool had_active_sequence = sequenceRuntime_.isActive();</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>   if (had_active_sequence)</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>   {</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] Active action sequence aborted&quot;);</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>   }</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>   publishImitationActive(false, &quot;[EMERGENCY] Deactivate imitation worker&quot;);</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>   abortWbcImmediately(&quot;[EMERGENCY] Deactivate WBC worker&quot;);</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>   setPolicySource(walkStartPolicySource(), &quot;[EMERGENCY] Policy source restored to default&quot;);</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a> </span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>   if (!fsm_-&gt;isEmergency()) fsm_-&gt;emergencyStop();</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a> </span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>   kp_standby_ = 0;</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>   printEmergencyStopBanner(nh_-&gt;get_logger());</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>   RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[EMERGENCY] System stopped for safety!&quot;);</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a> }</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a> </span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a> void LeggedController::enterWalkMode() {</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>   if (!fsm_-&gt;isStandby()) return;</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a> </span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   clearSequenceReleaseHandoff();</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   fsm_-&gt;setWalk();</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>   startingTime_ = rclcpp::Clock().now();</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>   printWalkModeBanner(nh_-&gt;get_logger());</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[WALK] Robot entering walk mode - All systems go!&quot;);</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a> }</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a> </span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a> void LeggedController::resetController() {</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>   if (!fsm_-&gt;isEmergency()) return;</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a> </span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   fsm_-&gt;resetFromEmergency();</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>   kp_standby_ = 0;</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>   orientation_violation_count_ = 0;</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>   publishImitationActive(false, &quot;[RESET] Deactivate imitation worker&quot;);</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>   abortWbcImmediately(&quot;[RESET] Deactivate WBC worker&quot;);</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>   policyMux_.clearCommands(0.0);</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[RESET] Standby targets cleared to zero pose&quot;);</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>   setPolicySource(walkStartPolicySource(), &quot;[RESET] Policy source restored to startup default&quot;);</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>   publishRlObsReset();</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a> </span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   logResetBanner(nh_-&gt;get_logger());</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a> </span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>   joyFeedbackArray_.array[0].intensity = 0.0;</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>   joyFeedbackArray_.array[1].intensity = 0.0;</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>   joyFeedbackPub_-&gt;publish(joyFeedbackArray_);</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[RESET] Controller reset - Ready for operation!&quot;);</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a> }</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> </span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> void LeggedController::adjustStandbyKp(double delta) {</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>   if (fsm_-&gt;isStandby())</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>   {</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>     kp_standby_ += delta;</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Standby gain %s: %.1f&quot;, delta &gt;= 0.0 ? &quot;increased&quot; : &quot;decreased&quot;, kp_standby_);</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>     if (kp_standby_ &gt; 80)</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>     {</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>       kp_standby_ = 80;</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Limit reached - max: 80&quot;);</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     }</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>     else if (kp_standby_ &lt; 0)</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>     {</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>       kp_standby_ = 0;</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KP] Limit reached - min: 0&quot;);</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>     }</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   }</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a> }</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a> </span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a> void LeggedController::toggleCalibrationMode() {</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>   if (isSim_)</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>   {</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode is not supported in simulation&quot;);</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>     return;</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>   }</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a> </span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>   if (fsm_-&gt;isEmergency())</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>   {</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>     if (!robot_hw_-&gt;set_calibration_mode(true))</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>     {</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Failed to enable hardware calibration mode&quot;);</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>       return;</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>     }</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>     fsm_-&gt;enterCalibrationMode();</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>     printCalibrationEnabledBanner(nh_-&gt;get_logger());</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode activated&quot;);</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>   }</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>   else if (fsm_-&gt;isCalibration())</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>   {</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>     if (!robot_hw_-&gt;set_calibration_mode(false))</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>     {</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Failed to disable hardware calibration mode&quot;);</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>       return;</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>     }</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>     fsm_-&gt;exitCalibrationMode();</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>     printCalibrationDisabledBanner(nh_-&gt;get_logger());</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] Calibration mode deactivated, back to Emergency Stop&quot;);</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>   }</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>   else</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>   {</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[CALIBRATION] Can only enter calibration mode from Emergency Stop state&quot;);</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>   }</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a> }</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a> </span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a> void LeggedController::calibrateByTag(const std::string&amp; tag, const std::string&amp; banner) {</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>   if (!fsm_-&gt;isCalibration()) return;</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a> </span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>   printCalibrationBanner(nh_-&gt;get_logger(), banner);</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>   if (robot_hw_-&gt;zeroMotorsByTag(tag))</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>   {</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[CALIBRATION] %s request accepted; checking motor position feedback&quot;, tag.c_str());</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>   }</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>   else</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>   {</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;[CALIBRATION] %s calibration failed&quot;, tag.c_str());</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>   }</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a> }</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a> </span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a> bool LeggedController::imitationActionActive() const {</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>   return policyMux_.source() != PolicyCmdSource::kRl || policyMux_.imitationActiveCommanded() ||</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>          policyMux_.wbcActiveCommanded() || wbc_return_pending_.load() || wbc_handoff_in_progress_.load();</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a> }</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a> </span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a> bool LeggedController::canStartAmpDerivedAction(const char* context, const std::string&amp; action_label,</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>                                                 bool require_walking, bool block_imitation_active) const {</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>   const char* tag = context != nullptr ? context : &quot;[ActionTrigger]&quot;;</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>   const std::string label = action_label.empty() ? &quot;unnamed&quot; : action_label;</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>   if (textMotionCtrl_.busy())</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>   {</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: text motion owns auxiliary joints&quot;, tag, label.c_str());</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>     return false;</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>   }</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a> </span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>   if (require_walking &amp;&amp; (!fsm_ || !fsm_-&gt;isWalking()))</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>   {</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: robot must be in Walking mode&quot;, tag, label.c_str());</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>     return false;</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>   }</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>   if (fsm_ &amp;&amp; (fsm_-&gt;isEmergency() || fsm_-&gt;isCalibration()))</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>   {</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: controller is not in a safe state&quot;, tag, label.c_str());</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>     return false;</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>   }</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>   if (sequenceRuntime_.isActive())</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>   {</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: action sequence is already active&quot;, tag, label.c_str());</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>     return false;</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>   }</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>   if (block_imitation_active &amp;&amp; imitationActionActive())</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>   {</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;%s Ignoring action &#x27;%s&#x27;: another policy action or WBC handoff is already active&quot;,</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>                 tag, label.c_str());</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>     return false;</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>   }</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>   return true;</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a> }</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a> </span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a> }  // namespace legged</span></pre></html>

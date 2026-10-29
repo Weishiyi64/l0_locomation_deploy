@@ -1,0 +1,141 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>records/validate_standard_wbc_startup.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>records/validate_standard_wbc_startup.py</h1><p>基线 WORKSPACE_NEW；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Isolated worker-only checks. No HPM, hardware bridge, brain command or activation.&quot;&quot;&quot;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> import copy</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import json</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> import os</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> from pathlib import Path</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import signal</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import subprocess</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import sys</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import time</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import numpy as np</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> </span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> def main():</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>     assert os.environ.get(&#x27;ROS_DOMAIN_ID&#x27;) == &#x27;173&#x27; and os.environ.get(&#x27;ROS_LOCALHOST_ONLY&#x27;) == &#x27;1&#x27;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     ws = Path(sys.argv[1]).resolve()</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     assert str(ws).startswith(&#x27;/userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_&#x27;)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     run = ws/&#x27;records&#x27;/time.strftime(&#x27;standard_wbc_startup_%Y%m%d_%H%M%S&#x27;)</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     run.mkdir()</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>     sys.path.insert(0, str(ws/&#x27;install/legged_controllers/share/legged_controllers/texttomotion&#x27;))</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     from generate_wbc_json import bundle_contract, check_snapshot, full_limits</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     deploy = ws/&#x27;install/legged_deploy&#x27;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     policy = deploy/&#x27;share/legged_deploy/policy&#x27;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     bundle = policy/&#x27;l0_v5/text_wbc_bundle/base_manifest.json&#x27;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     mapping = ws/&#x27;install/system_command_arbiter/share/system_command_arbiter/config/l0_v5.yaml&#x27;</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     graph, names = bundle_contract(bundle, &#x27;A-C04_mod&#x27;)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     action = next(a for a in graph[&#x27;actions&#x27;] if a[&#x27;action_id&#x27;] == &#x27;A-C04_mod&#x27;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     config = bundle.parent/action[&#x27;config&#x27;]</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     snapshot = json.loads((ws/&#x27;records/HOST_REFERENCE_SNAPSHOT.json&#x27;).read_text())</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     snapshot.update(base_position=[0, 0, 0], root_reference_source=&#x27;wbc_base_action&#x27;, wbc_base_action=&#x27;A-C04_mod&#x27;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     checked = check_snapshot(snapshot, names, full_limits(mapping, names))</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     assert checked[&#x27;base_position&#x27;][2] == 0</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     invalid = copy.deepcopy(snapshot)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>     invalid[&#x27;base_quaternion_wxyz&#x27;] = [0, 0, 0, 0]</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     try:</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>         check_snapshot(invalid, names, full_limits(mapping, names))</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         raise AssertionError(&#x27;Invalid quaternion was accepted&#x27;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     except ValueError:</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         pass</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     source = run/&#x27;zero_height_snapshot.json&#x27;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     source.write_text(json.dumps(snapshot)+&#x27;\n&#x27;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     cli = subprocess.run([&#x27;ros2&#x27;,&#x27;run&#x27;,&#x27;legged_controllers&#x27;,&#x27;text_wbc_generate&#x27;,</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         &#x27;--model&#x27;,str(ws/&#x27;model_sources/text_to_motion/compiled/manifest.json&#x27;),</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>         &#x27;--bundle&#x27;,str(bundle),&#x27;--mapping&#x27;,str(mapping),&#x27;--snapshot&#x27;,str(source),</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         &#x27;--text&#x27;,&#x27;头点头&#x27;,&#x27;--seed&#x27;,&#x27;42&#x27;,&#x27;--output&#x27;,str(run/&#x27;zero_height_motion.json&#x27;)],</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>         capture_output=True,text=True,timeout=45)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     (run/&#x27;generation.log&#x27;).write_text(cli.stdout+cli.stderr)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     assert cli.returncode == 0, cli.stderr</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     document = json.loads((run/&#x27;zero_height_motion.json&#x27;).read_text())</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     assert document[&#x27;root_reference_source&#x27;] == &#x27;wbc_base_action&#x27;</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     assert document[&#x27;wbc_start_state&#x27;][&#x27;base_position&#x27;][2] == 0</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     import rclpy</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     from rclpy.qos import QoSProfile, ReliabilityPolicy</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     from std_msgs.msg import String</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     from luvbot_control_interfaces.msg import PolicyCommand</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     from luvbot_control_interfaces.srv import ControlWbcMotion</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     rclpy.init(args=[])</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     node = rclpy.create_node(&#x27;text_standard_wbc_startup_validation&#x27;)</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>     events, commands = [], []</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     node.create_subscription(String,&#x27;/text_motion/wbc_status&#x27;,lambda m:events.append(json.loads(m.data)),20)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     node.create_subscription(PolicyCommand,&#x27;/control/policy/command/wbc&#x27;,lambda m:commands.append(m),</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         QoSProfile(depth=10,reliability=ReliabilityPolicy.BEST_EFFORT))</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     publish = node.create_publisher(String,&#x27;/text_motion/json&#x27;,1)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     cancel = node.create_publisher(String,&#x27;/text_motion/cancel&#x27;,10)</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     prepare = node.create_client(ControlWbcMotion,&#x27;/control/policy/wbc/prepare&#x27;)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     args = [str(deploy/&#x27;lib/legged_deploy/rl_controller&#x27;),&#x27;--ros-args&#x27;,&#x27;-r&#x27;,&#x27;__node:=wbc_startup_validation_worker&#x27;]</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     for key,value in {&#x27;robot_type&#x27;:&#x27;l0_v5&#x27;,&#x27;robot_cfg_path&#x27;:str(config),&#x27;wbc_mode&#x27;:&#x27;lora&#x27;,</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>         &#x27;wbc_lora_manifest&#x27;:str(bundle),&#x27;wbc_json_base_action&#x27;:&#x27;A-C04_mod&#x27;,&#x27;mapping_file&#x27;:str(mapping),</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>         &#x27;policy_root_path&#x27;:str(policy),&#x27;available_wbc_policies&#x27;:&#x27;[A-C04_mod]&#x27;,</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>         &#x27;rl_controller_config_path&#x27;:str(deploy/&#x27;share/legged_deploy/config/rl_controller_config.yaml&#x27;)}.items():</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         args += [&#x27;-p&#x27;,key+&#x27;:=&#x27;+value]</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     report = {&#x27;status&#x27;:&#x27;running&#x27;,&#x27;scope&#x27;:&#x27;Isolated domain 173; one WBC worker; no observation publisher, HPM, brain commands or activation&#x27;,</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>               &#x27;zero_measured_height_generation_exitcode&#x27;:cli.returncode,&#x27;generated_frames&#x27;:document[&#x27;frame_count&#x27;],</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>               &#x27;zero_quaternion_rejected_like_standard_WBC&#x27;:True,&#x27;cases&#x27;:[]}</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     worker_log = (run/&#x27;worker.log&#x27;).open(&#x27;w&#x27;)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     worker = subprocess.Popen(args,stdout=worker_log,stderr=subprocess.STDOUT,start_new_session=True)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> </span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     def until(predicate, timeout=15):</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>         deadline = time.monotonic()+timeout</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         while time.monotonic()&lt;deadline:</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>             if predicate(): return</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>             if worker.poll() is not None: raise RuntimeError(&#x27;Worker exited; see worker.log&#x27;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>             rclpy.spin_once(node,timeout_sec=.05)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>         raise TimeoutError(&#x27;Worker validation timed out&#x27;)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a> </span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     def admit(identifier, mutate=None, state=&#x27;ready&#x27;):</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>         value=copy.deepcopy(document)</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         value.update(request_id=identifier,expires_at_ms=int(time.time()*1000)+5000)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         if mutate: mutate(value)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>         (run/(identifier+&#x27;.json&#x27;)).write_text(json.dumps(value)+&#x27;\n&#x27;)</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         publish.publish(String(data=json.dumps(value)))</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>         until(lambda:any(e.get(&#x27;request_id&#x27;)==identifier and e.get(&#x27;state&#x27;)==state for e in events))</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         event=next(e for e in events if e.get(&#x27;request_id&#x27;)==identifier and e.get(&#x27;state&#x27;)==state)</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         report[&#x27;cases&#x27;].append(event)</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a> </span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     def start_without_observation(identifier):</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>         request=ControlWbcMotion.Request()</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         request.command=ControlWbcMotion.Request.START</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>         request.motion_id=identifier</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>         future=prepare.call_async(request)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>         until(future.done)</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         response=future.result()</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         assert not response.success and &#x27;fresh, inference-enabled PolicyObservation&#x27; in response.message, response.message</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>         return response.message</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a> </span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     try:</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>         until(lambda:publish.get_subscription_count()&gt;0 and prepare.service_is_ready())</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>         ordinary_failure=start_without_observation(&#x27;A-C04_mod&#x27;)</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         admit(&#x27;T_standard_zero&#x27;)</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>         text_failure=start_without_observation(&#x27;T_standard_zero&#x27;)</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         assert ordinary_failure.split(&#x27;;&#x27;)[0] == text_failure.split(&#x27;;&#x27;)[0]</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         report[&#x27;shared_missing_observation_rejection&#x27;]={&#x27;ordinary&#x27;:ordinary_failure,&#x27;text&#x27;:text_failure}</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>         admit(&#x27;T_wrong_base_action&#x27;,lambda d:d.update(wbc_base_action=&#x27;A-C07_mod&#x27;),&#x27;rejected&#x27;)</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>         admit(&#x27;T_unknown_reference&#x27;,lambda d:d.update(root_reference_source=&#x27;unknown&#x27;),&#x27;rejected&#x27;)</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         admit(&#x27;T_legacy_zero_height&#x27;,lambda d:d.update(root_reference_source=&#x27;snapshot&#x27;),&#x27;rejected&#x27;)</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         admit(&#x27;T_legacy_valid&#x27;,lambda d:(d.update(root_reference_source=&#x27;snapshot&#x27;),d[&#x27;wbc_start_state&#x27;].update(base_position=[0,0,.45])))</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         cancel.publish(String(data=&#x27;T_legacy_valid&#x27;))</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         until(lambda:any(e.get(&#x27;request_id&#x27;)==&#x27;T_legacy_valid&#x27; and e.get(&#x27;state&#x27;)==&#x27;cancelled&#x27; for e in events))</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>         assert not commands</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>         report.update(status=&#x27;passed&#x27;,policy_commands_published=0,events=events)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     except Exception as error:</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>         report.update(status=&#x27;failed&#x27;,error=repr(error),events=events)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         raise</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>     finally:</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         if worker.poll() is None:</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>             os.killpg(worker.pid,signal.SIGINT)</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>             try: worker.wait(timeout=10)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>             except subprocess.TimeoutExpired:</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>                 os.killpg(worker.pid,signal.SIGTERM)</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>                 worker.wait(timeout=5)</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         worker_log.close()</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         node.destroy_node()</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>         rclpy.shutdown()</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         (run/&#x27;REPORT.json&#x27;).write_text(json.dumps(report,ensure_ascii=False,indent=2)+&#x27;\n&#x27;)</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>         print(&#x27;standard_wbc_startup_run=&#x27;+str(run),flush=True)</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         print(json.dumps(report,ensure_ascii=False,indent=2),flush=True)</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a> </span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a> </span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> if __name__==&#x27;__main__&#x27;:</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>     main()</span></pre><h2 id="A">原版本 WORKSPACE</h2><p>该版本不存在此文件。</p></html>

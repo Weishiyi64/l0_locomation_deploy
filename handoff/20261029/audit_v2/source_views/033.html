@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/include/wbc_lora_assets.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/include/wbc_lora_assets.h</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &quot;rknn_model.h&quot;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;map&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;string&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;vector&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> // Shared by the deployed worker in both HPM and isolated runs. No ROS or training dependencies.</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> class WbcLoraAssets {</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>  public:</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>   struct Action {</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>     std::string id, config, reference, adapter, adapter_hash;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>     std::string parameter_source;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   };</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   struct Buffer {</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     std::vector&lt;std::vector&lt;float&gt;&gt; parameters;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   };</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   WbcLoraAssets(const std::string&amp; manifest, const std::vector&lt;std::string&gt;&amp; selected);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   const Action&amp; action(const std::string&amp; id) const { return actions_.at(id); }</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   const std::string&amp; modelPath() const { return model_path_; }</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   const std::string&amp; baseHash() const { return base_hash_; }</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   void bindModel(const RknnModel&amp; model);</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   void allocate(Buffer&amp; buffer) const;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   void loadAdapter(const Action&amp; action, Buffer&amp; buffer) const;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   // Complete parameter mapping, used only by prepare; no device ownership here.</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   std::vector&lt;RknnModel::ParameterInput&gt; parameterInputs(const Buffer&amp; buffer) const;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> </span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>  private:</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   struct Tensor {</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     std::string name, actor_key;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     std::vector&lt;std::size_t&gt; shape;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     std::size_t elements{};</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     int input_index{-1};</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   };</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   YAML::Node graph_;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   std::string root_, model_path_, base_hash_;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   std::vector&lt;Tensor&gt; tensors_;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   std::map&lt;std::string, Action&gt; actions_;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> };</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

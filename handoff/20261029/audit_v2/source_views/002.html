@@ -1,0 +1,137 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/config/keyboard_action_map.yaml</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/config/keyboard_action_map.yaml</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> keyboard_actions:</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a>   audio_topic: /audio_play_cmd</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a>   actions:</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a>     - name: L0_enougheat</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a>       key: enougheat</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a>       sequence: action_sequences/L0_enougheat.yaml</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a>       audio_cmd: 0_mi_ku_zu</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a>     - name: L0_gotobed</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>       key: gotobed</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>       sequence: action_sequences/L0_gotobed.yaml</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>       audio_cmd: 0_ku_zu_la</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>     - name: L0_nice</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>       key: nice</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>       sequence: action_sequences/L0_nice.yaml</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>       audio_cmd: 0_zu</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     - name: L0_whatisit</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>       key: whatisit</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>       sequence: action_sequences/L0_whatisit.yaml</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>       audio_cmd: 0_mi_o_ni</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     - name: L0_hurtwhere</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>       key: hurtwhere</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>       sequence: action_sequences/L0_hurtwhere.yaml</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>       audio_cmd: 0_ni_ma</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> </span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     - name: L0_Hugme</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>       key: hugme</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>       sequence: action_sequences/L0_Hugme.yaml</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>       audio_cmd: 0_we_mi_ba</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     - name: L0_ImHurt</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>       key: imhurt</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>       sequence: action_sequences/L0_ImHurt.yaml</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>       audio_cmd: 0_mi_ma</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> </span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     - name: L0_WantToGo</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>       key: wanttogo</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>       sequence: action_sequences/L0_WantToGo.yaml</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>       audio_cmd: 1_mi_ta_te</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> </span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>     - name: L0_GoAway</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>       key: goaway</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>       sequence: action_sequences/L0_GoAway.yaml</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>       audio_cmd: 0_we_ta_te</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a> </span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>     - name: L0_IwantIt</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>       key: iwantit</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>       sequence: action_sequences/L0_IwantIt.yaml</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>       audio_cmd: 0_mi_ta</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a> </span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>     - name: L0_Jvgong</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>       key: jvgong</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>       sequence: action_sequences/L0_Jvgong.yaml</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>       audio_cmd: 0_zu</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a> </span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>     - name: L0_Remind</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>       key: remind</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>       sequence: action_sequences/L0_Remind.yaml</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a> </span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>     - name: L0_TakeAPicture</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>       key: takeapicture</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>       sequence: action_sequences/L0_TakeAPicture.yaml</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a> </span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>     - name: L0_WakeUp</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>       key: wakeup</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>       sequence: action_sequences/L0_WakeUp.yaml</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a> </span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     - name: L0_WantToSleep</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>       key: wanttosleep</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>       sequence: action_sequences/L0_WantToSleep.yaml</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a> </span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>     - name: L0_guiguisuisui</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>       key: guiguisuisui</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>       sequence: action_sequences/L0_guiguisuisui.yaml</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a> </span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>     - name: L0_relaxed</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>       key: relaxed</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>       sequence: action_sequences/L0_relaxed.yaml</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a> </span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>     - name: L0_hungry</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>       key: hungry</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>       sequence: action_sequences/L0_hungry.yaml</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> </span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>     - name: L0_huanyinghuijia</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>       key: huanyinghuijia</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>       sequence: action_sequences/L0_huanyinghuijia.yaml</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a> </span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>     - name: L0_liangxiang</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>       key: liangxiang</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>       sequence: action_sequences/L0_liangxiang.yaml</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a> </span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>     - name: L0_new_yoga</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>       key: yoga</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>       sequence: action_sequences/L0_new_yoga.yaml</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a> </span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>     - name: L0_niuniuwu</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>       key: niuniuwu</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>       sequence: action_sequences/L0_niuniuwu.yaml</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a> </span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>     - name: L0_caipanwu</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>       key: caipanwu</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>       sequence: action_sequences/L0_caipanwu.yaml</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a> </span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>     - name: L0_dunxia_dunzhe_dunqi</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>       key: dunxia_dunzhe_dunqi</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>       sequence: action_sequences/L0_dunxia_dunzhe_dunqi.yaml</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> </span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>     - name: L0_taiji</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>       key: taiji</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>       sequence: action_sequences/L0_taiji.yaml</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a> </span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>     - name: L0_taijishan</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>       key: taijishan</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>       sequence: action_sequences/L0_taijishan.yaml</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>       audio_cmd: &quot;&quot;</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a> </span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>     - name: L0_charston_1</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>       key: charston_1</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>       sequence: action_sequences/L0_charston_1.yaml</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>       audio_cmd: &quot;&quot;</span></pre></html>

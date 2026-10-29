@@ -1,0 +1,1305 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_env_real/legged_real/src/LeggedReal.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_env_real/legged_real/src/LeggedReal.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;legged_real/LeggedReal.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;algorithm&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;chrono&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;cmath&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;functional&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;iterator&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;luvbot_hardware_interfaces/msg/motor_state.hpp&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;unordered_set&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> namespace legged {</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> </span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&amp;) {</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   nh_ = std::move(nh);</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   auto declare = [this](const std::string&amp; name, const auto&amp; value) {</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     if (!nh_-&gt;has_parameter(name)) nh_-&gt;declare_parameter(name, value);</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   };</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   declare(&quot;/RobotHw/joint_filter_coeff_real&quot;, 1.0);</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   declare(&quot;/RobotHw/imu_filter_coeff_real&quot;, 1.0);</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   declare(&quot;/RobotHw/imu_startup_timeout&quot;, 5.0);</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   declare(&quot;/RobotHw/imu_connection_timeout&quot;, 5.0);</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   declare(&quot;/RobotHw/max_consecutive_missing&quot;, 200);</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   declare(&quot;/RobotHw/imu_enabled&quot;, true);</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   declare(&quot;emergency.damping_kd&quot;, 5.0);</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   declare(&quot;motor_lifecycle_period_ms&quot;, 20);</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   declare(&quot;robot_type&quot;, std::string{});</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   declare(&quot;robot_cfg_path&quot;, std::string{});</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   declare(&quot;legged_controller_config_path&quot;, std::string{});</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   declare(&quot;mapping_file&quot;, std::string{});</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> </span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   joint_filter_coeff_real_ = nh_-&gt;get_parameter(&quot;/RobotHw/joint_filter_coeff_real&quot;).as_double();</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   imu_filter_coeff_real_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_filter_coeff_real&quot;).as_double();</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   imu_startup_timeout_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_startup_timeout&quot;).as_double();</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   imu_connection_timeout_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_connection_timeout&quot;).as_double();</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   max_consecutive_missing_ = nh_-&gt;get_parameter(&quot;/RobotHw/max_consecutive_missing&quot;).as_int();</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   imu_enabled_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_enabled&quot;).as_bool();</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   const double emergency_damping_kd = nh_-&gt;get_parameter(&quot;emergency.damping_kd&quot;).as_double();</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   if (!std::isfinite(emergency_damping_kd))</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   {</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;emergency.damping_kd must be finite&quot;);</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     return false;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   }</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   emergency_damping_kd_ = std::max(0.0, emergency_damping_kd);</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>   const int motor_lifecycle_period_ms = nh_-&gt;get_parameter(&quot;motor_lifecycle_period_ms&quot;).as_int();</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>   robot_type_ = nh_-&gt;get_parameter(&quot;robot_type&quot;).as_string();</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   const std::string robot_cfg_path = nh_-&gt;get_parameter(&quot;robot_cfg_path&quot;).as_string();</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   const std::string mapping_file = nh_-&gt;get_parameter(&quot;mapping_file&quot;).as_string();</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a> </span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>   if (joint_filter_coeff_real_ &lt; 0.0 || joint_filter_coeff_real_ &gt; 1.0 || imu_filter_coeff_real_ &lt; 0.0 ||</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>       imu_filter_coeff_real_ &gt; 1.0 || imu_startup_timeout_ &lt;= 0.0 || imu_connection_timeout_ &lt;= 0.0 ||</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>       max_consecutive_missing_ &lt;= 0 || motor_lifecycle_period_ms &lt;= 0)</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   {</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Invalid hardware filter or timeout parameter&quot;);</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     return false;</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   }</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor feedback watchdog: warning after %d missing control cycles, emergency after %d&quot;,</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>               std::max(1, max_consecutive_missing_ / 2), max_consecutive_missing_);</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> </span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   if ((robot_type_ != &quot;l0_v3&quot; &amp;&amp; robot_type_ != &quot;l0_v4&quot; &amp;&amp; robot_type_ != &quot;l0_v5&quot;) || robot_cfg_path.empty() ||</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>       mapping_file.empty())</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   {</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Topic motor control requires robot_type=l0_v3/l0_v4/l0_v5 and both config paths&quot;);</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     return false;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   }</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> </span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   try</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>   {</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     motor_mapping_ = std::make_unique&lt;system_command_arbiter::MotorMapping&gt;(mapping_file);</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     if (motor_mapping_-&gt;enabledSize() == 0U) throw std::runtime_error(&quot;motor mapping has no enabled motors&quot;);</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     const YAML::Node robot_cfg = YAML::LoadFile(robot_cfg_path)[&quot;RobotCfg&quot;];</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     if (!robot_cfg || !robot_cfg[&quot;joint_order_mj&quot;] || !robot_cfg[&quot;joint_order_mj&quot;].IsSequence() ||</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>         !robot_cfg[&quot;default_joint_angles&quot;] || !robot_cfg[&quot;default_joint_angles&quot;].IsSequence())</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>       throw std::runtime_error(&quot;RobotCfg.joint_order_mj and default_joint_angles are required&quot;);</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     for (const auto&amp; joint : robot_cfg[&quot;joint_order_mj&quot;]) joint_names_.push_back(joint.as&lt;std::string&gt;());</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     if (joint_names_.size() != motor_mapping_-&gt;size()) throw std::runtime_error(&quot;joint order and mapping size differ&quot;);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     if (robot_cfg[&quot;default_joint_angles&quot;].size() != joint_names_.size())</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>       throw std::runtime_error(&quot;default joint angle count and mapping size differ&quot;);</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     std::unordered_set&lt;std::string&gt; seen;</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     for (std::size_t i = 0; i &lt; joint_names_.size(); ++i)</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>     {</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>       const auto&amp; name = joint_names_[i];</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>       if (!seen.emplace(name).second || motor_mapping_-&gt;entries()[i].joint_name != name)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         throw std::runtime_error(&quot;joint order does not match motor mapping at index &quot; + std::to_string(i));</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     }</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     default_joint_positions_.reserve(joint_names_.size());</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     for (const auto&amp; angle : robot_cfg[&quot;default_joint_angles&quot;])</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     {</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>       const double value = angle.as&lt;double&gt;();</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>       if (!std::isfinite(value)) throw std::runtime_error(&quot;default joint angles must be finite&quot;);</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>       default_joint_positions_.push_back(value);</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     }</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   } catch (const std::exception&amp; error)</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   {</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Failed to configure topic motor mapping: %s&quot;, error.what());</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     return false;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>   }</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a> </span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   const auto motor_command_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   const auto safety_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   imu_subscription_ = nh_-&gt;create_subscription&lt;sensor_msgs::msg::Imu&gt;(</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>       &quot;imu/data&quot;, rclcpp::SensorDataQoS(), std::bind(&amp;LeggedReal::imuCallback, this, std::placeholders::_1));</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   odom_subscription_ = nh_-&gt;create_subscription&lt;nav_msgs::msg::Odometry&gt;(</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>       &quot;odom&quot;, rclcpp::SensorDataQoS(), std::bind(&amp;LeggedReal::odomCallback, this, std::placeholders::_1));</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>   motor_state_subscription_ = nh_-&gt;create_subscription&lt;robot_interfaces::msg::MotorStateArray&gt;(</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>       &quot;actuator/motor/state&quot;, rclcpp::SensorDataQoS(),</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>       std::bind(&amp;LeggedReal::motorStateCallback, this, std::placeholders::_1));</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   command_publisher_ =</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>       nh_-&gt;create_publisher&lt;robot_interfaces::msg::MotorCommand&gt;(&quot;actuator/motor/command&quot;, motor_command_qos);</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   enable_publisher_ =</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>       nh_-&gt;create_publisher&lt;robot_interfaces::msg::MotorEnableCommand&gt;(&quot;actuator/motor/enable&quot;, motor_command_qos);</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   zero_client_ = nh_-&gt;create_client&lt;robot_interfaces::srv::MotorSetZero&gt;(&quot;actuator/motor/set_zero&quot;);</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>   emergency_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;emergency_stop&quot;, safety_qos);</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   hardware_fault_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;hardware_fault&quot;, safety_qos);</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>   motors_ready_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;motors_ready&quot;, safety_qos);</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a> </span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   const std::size_t count = motor_mapping_-&gt;size();</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>   latest_feedback_.resize(count);</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>   feedback_updated_.assign(count, false);</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>   feedback_wrap_.resize(count);</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>   control_wrap_offsets_.assign(count, 0.0);</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>   consecutive_missing_feedback_.assign(count, 0);</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>   feedback_fault_.assign(count, false);</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>   joint_data_.resize(count);</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   joint_motor_states_.resize(count);</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   joint_motor_commands_.resize(count);</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   for (std::size_t i = 0; i &lt; count; ++i)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   {</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     if (motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     joint_data_[i].pos_ = default_joint_positions_[i];</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     joint_motor_states_[i].q = default_joint_positions_[i];</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   }</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a> </span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   imu_startup_time_ = nh_-&gt;now();</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>   lifecycle_timer_ = nh_-&gt;create_wall_timer(std::chrono::milliseconds(motor_lifecycle_period_ms),</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>                                             std::bind(&amp;LeggedReal::lifecycleTick, this));</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   if (!requestAllMotorsEnabled(true)) return false;</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> </span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   return setupTimestampInterface() &amp;&amp; setupBodyStateInterface() &amp;&amp; setupHybridJointInterface() &amp;&amp;</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>          setupImuSensorInterface() &amp;&amp; setupHardwareCommandInterface();</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a> }</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a> </span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a> void LeggedReal::motorStateCallback(const robot_interfaces::msg::MotorStateArray::SharedPtr msg) {</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   verifyZeroFeedback(*msg);</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   std::lock_guard&lt;std::mutex&gt; lock(feedback_mutex_);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>   for (const auto&amp; state : msg-&gt;states)</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>   {</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>     const std::size_t i = state.route.motor_type;</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>     if (i &gt;= motor_mapping_-&gt;size())</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     {</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>                            &quot;Ignoring feedback for unknown HPM motor index %u&quot;,</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>                            static_cast&lt;unsigned&gt;(state.route.motor_type));</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>       continue;</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>     }</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     luvbot_hardware_interfaces::msg::MotorState mapped_state;</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     mapped_state.route = mapping.route;</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     mapped_state.valid = state.valid;</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     mapped_state.error_code = state.error_code;</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     mapped_state.operating_mode = state.operating_mode;</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     mapped_state.q = state.q;</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     mapped_state.dq = state.dq;</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     mapped_state.tau = state.tau;</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     const double previous_offset = feedback_wrap_[i].offset;</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     const bool was_ready = feedback_wrap_[i].ready();</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     const bool was_faulted = feedback_wrap_[i].fault;</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     latest_feedback_[i] = motor_mapping_-&gt;updateFeedback(mapping, mapped_state, feedback_wrap_[i]);</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     if (latest_feedback_[i].error_pending)</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>                            &quot;Motor %s transient error_code=%u: %u/%u consecutive feedback frames; &quot;</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>                            &quot;holding last good feedback&quot;,</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>                            mapping.joint_name.c_str(), static_cast&lt;unsigned&gt;(state.error_code),</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>                            feedback_wrap_[i].error_samples, system_command_arbiter::kMotorErrorFaultSamples);</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     if (latest_feedback_[i].initializing &amp;&amp; !latest_feedback_[i].error_pending &amp;&amp;</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>         feedback_wrap_[i].stable_samples == 0U)</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>                            &quot;Motor %s feedback received but joint position/turn is unconfirmed: &quot;</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>                            &quot;motor_q=%.6f -&gt; joint_q=%.6f wrap_offset=%.6f; &quot;</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>                            &quot;joint_limits=[%.6f, %.6f] tolerance=%.3f rad; check calibration and mechanical pose&quot;,</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>                            mapping.joint_name.c_str(), state.q, latest_feedback_[i].q, feedback_wrap_[i].offset,</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>                            mapping.joint_lower, mapping.joint_upper, system_command_arbiter::kJointPositionTolerance);</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     if ((!was_ready &amp;&amp; feedback_wrap_[i].ready()) || previous_offset != feedback_wrap_[i].offset)</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor %s turn check: motor_q=%.6f offset=%.6f joint_q=%.6f ready=%s&quot;,</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>                   mapping.joint_name.c_str(), state.q, feedback_wrap_[i].offset, latest_feedback_[i].q,</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>                   feedback_wrap_[i].ready() ? &quot;true&quot; : &quot;false&quot;);</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>     if (!was_faulted &amp;&amp; feedback_wrap_[i].fault)</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>                    &quot;Motor %s feedback fault latched: motor_q=%.6f offset=%.6f joint_q=%.6f &quot;</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>                    &quot;error_code=%u consecutive_error_frames=%u; &quot;</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>                    &quot;active commands blocked; emergency damping remains available; &quot;</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>                    &quot;inspect feedback and disable before recovery&quot;,</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>                    mapping.joint_name.c_str(), state.q, feedback_wrap_[i].offset, latest_feedback_[i].q,</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>                    static_cast&lt;unsigned&gt;(state.error_code), feedback_wrap_[i].error_samples);</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>     feedback_updated_[i] = true;</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   }</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>   // unsigned int feedback_mask =  msg-&gt;feedback_mask &amp; 0x001F_FFFF;</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>   constexpr unsigned int ALL_FEEDBACK_MASK = 0x001FFFFFu;</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a> </span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>   const uint32_t feedback_mask = static_cast&lt;uint32_t&gt;(msg-&gt;feedback_mask) &amp; ALL_FEEDBACK_MASK;</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a> </span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>   if (feedback_mask != ALL_FEEDBACK_MASK)</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>   {</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>     std::string missing_motors;</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     for (unsigned int i = 0; i &lt; 21; ++i)</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     {</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>       if ((feedback_mask &amp; (1u &lt;&lt; i)) == 0u)</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>       {</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>         if (!missing_motors.empty())</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>         {</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>           missing_motors += &quot;, &quot;;</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>         }</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>         missing_motors += std::to_string(i + 1);</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>       }</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>     }</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>     /*</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     RCLCPP_WARN(</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>         this-&gt;get_logger(),</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>         &quot;电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X&quot;,</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>         missing_motors.c_str(),</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>         static_cast&lt;unsigned int&gt;(feedback_mask));</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>     */</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 5000,</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>                          &quot;电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X&quot;, missing_motors.c_str(),</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>                          static_cast&lt;unsigned int&gt;(feedback_mask));</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>   }</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a> }</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a> </span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a> bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>   std::vector&lt;system_command_arbiter::JointFeedback&gt; feedback;</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>   std::vector&lt;bool&gt; updated;</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>   bool reset_feedback_watchdogs = false;</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>   bool motors_enabled_at_snapshot = false;</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>   {</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     std::lock_guard&lt;std::mutex&gt; lock(feedback_mutex_);</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     reset_feedback_watchdogs = reset_feedback_watchdogs_.exchange(false);</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>     motors_enabled_at_snapshot = motors_enabled_.load();</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>     feedback = latest_feedback_;</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     updated = feedback_updated_;</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>     control_feedback_ready_ = true;</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     for (std::size_t i = 0; i &lt; feedback_wrap_.size(); ++i)</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>     {</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>       control_wrap_offsets_[i] = feedback_wrap_[i].offset;</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>       if (motor_mapping_-&gt;entries()[i].enabled &amp;&amp; !feedback_wrap_[i].ready()) control_feedback_ready_ = false;</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>     }</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>     std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>   }</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>   if (reset_feedback_watchdogs)</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>   {</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>     std::fill(consecutive_missing_feedback_.begin(), consecutive_missing_feedback_.end(), 0);</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>     std::fill(feedback_fault_.begin(), feedback_fault_.end(), false);</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>   }</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a> </span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>   bool motor_fault = false;</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>   for (std::size_t i = 0; i &lt; feedback.size(); ++i)</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>   {</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>     const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>     if (!mapping.enabled)</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     {</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>       joint_motor_states_[i].q = default_joint_positions_[i];</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>       joint_motor_states_[i].dq = 0.0;</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>       joint_motor_states_[i].tau = 0.0;</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>       continue;</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>     }</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a> </span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>     if (updated[i] &amp;&amp; feedback[i].valid &amp;&amp; feedback[i].error == 0U)</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>     {</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>       const bool recovered = feedback_fault_[i];</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>       feedback_fault_[i] = false;</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>       joint_data_[i].pos_ = feedback[i].q;</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>       joint_data_[i].vel_ =</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>           joint_filter_coeff_real_ * feedback[i].dq + (1.0 - joint_filter_coeff_real_) * joint_data_[i].prev_vel_;</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>       joint_data_[i].tau_ = feedback[i].tau;</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>       joint_data_[i].prev_vel_ = joint_data_[i].vel_;</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>       if (recovered)</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>         RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor %s feedback recovered; motor commands may resume&quot;,</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>                     joint_names_[i].c_str());</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>     }</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     else if (updated[i] &amp;&amp; feedback[i].error_pending)</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>     {</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>       // Count received error frames in the callback, not control cycles; keep the last good observation.</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>     }</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>     else if (updated[i] &amp;&amp; feedback[i].initializing)</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>     {</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>       // An uncalibrated joint can be online without a usable control observation.</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>       const bool recovered = feedback_fault_[i];</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>       feedback_fault_[i] = false;</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>       if (recovered)</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>         RCLCPP_INFO(nh_-&gt;get_logger(),</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>                     &quot;Motor %s feedback received again; joint position/turn still unconfirmed&quot;,</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>                     joint_names_[i].c_str());</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>     }</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>     else if (updated[i])</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>     {</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>       const bool newly_faulted = !feedback_fault_[i];</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>       feedback_fault_[i] = true;</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>       if (newly_faulted)</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>       {</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>         RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>                      &quot;\033[1;31mMotor %s (HPM index %zu) feedback fault: valid=%s error_code=%u; switching to &quot;</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>                      &quot;emergency damping\033[0m&quot;,</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>                      joint_names_[i].c_str(), i, feedback[i].valid ? &quot;true&quot; : &quot;false&quot;,</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>                      static_cast&lt;unsigned&gt;(feedback[i].error));</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>       }</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>     }</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>     else if (motors_enabled_at_snapshot &amp;&amp; !calibration_mode_.load())</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>     {</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>       const int previous_missing = consecutive_missing_feedback_[i];</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>       consecutive_missing_feedback_[i] = std::min(previous_missing + 1, max_consecutive_missing_);</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>       if (consecutive_missing_feedback_[i] == std::max(1, max_consecutive_missing_ / 2))</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>         RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>                     &quot;\033[1;33mMotor %s (HPM index %zu) no new motor feedback for %d control cycles; &quot;</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>                     &quot;watchdog grace period remains active\033[0m&quot;,</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>                     joint_names_[i].c_str(), i, consecutive_missing_feedback_[i]);</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>       if (previous_missing &lt; max_consecutive_missing_ &amp;&amp; consecutive_missing_feedback_[i] == max_consecutive_missing_)</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>       {</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>         feedback_fault_[i] = true;</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>         RCLCPP_ERROR(</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>             nh_-&gt;get_logger(),</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>             &quot;\033[1;31mMotor %s (HPM index %zu) no new motor feedback for %d consecutive control cycles; &quot;</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>             &quot;switching to emergency damping\033[0m&quot;,</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>             joint_names_[i].c_str(), i, max_consecutive_missing_);</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>       }</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>     }</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a> </span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>     joint_motor_states_[i].q = joint_data_[i].pos_;</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>     joint_motor_states_[i].dq = joint_data_[i].vel_;</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>     joint_motor_states_[i].tau = joint_data_[i].tau_;</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>   }</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a> </span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>   motor_fault = std::any_of(feedback_fault_.begin(), feedback_fault_.end(), [](bool value) { return value; });</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>   motor_fault_.store(motor_fault);</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>   emergency_stop_triggered_.store(motor_fault);</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>   publishMotorsReady(motors_enabled_.load() &amp;&amp; !motor_fault);</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a>   publishHardwareFault();</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a> </span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>   {</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>     std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>     imu_qx_ = imu_data_.ori[0];</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>     imu_qy_ = imu_data_.ori[1];</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>     imu_qz_ = imu_data_.ori[2];</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a>     imu_qw_ = imu_data_.ori[3];</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>     imu_gyx_ = imu_data_.angular_vel[0];</span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a>     imu_gyy_ = imu_data_.angular_vel[1];</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>     imu_gyz_ = imu_data_.angular_vel[2];</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a>     if (odom_received_)</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a>     {</span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a>       base_px_ = odom_position_[0];</span>
+<span id="C-L356" class="line"><a href="#C-L356"> 356</a>       base_py_ = odom_position_[1];</span>
+<span id="C-L357" class="line"><a href="#C-L357"> 357</a>       base_pz_ = odom_position_[2];</span>
+<span id="C-L358" class="line"><a href="#C-L358"> 358</a>       base_qx_ = odom_orientation_[0];</span>
+<span id="C-L359" class="line"><a href="#C-L359"> 359</a>       base_qy_ = odom_orientation_[1];</span>
+<span id="C-L360" class="line"><a href="#C-L360"> 360</a>       base_qz_ = odom_orientation_[2];</span>
+<span id="C-L361" class="line"><a href="#C-L361"> 361</a>       base_qw_ = odom_orientation_[3];</span>
+<span id="C-L362" class="line"><a href="#C-L362"> 362</a>     }</span>
+<span id="C-L363" class="line"><a href="#C-L363"> 363</a>     else</span>
+<span id="C-L364" class="line"><a href="#C-L364"> 364</a>     {</span>
+<span id="C-L365" class="line"><a href="#C-L365"> 365</a>       base_qx_ = imu_qx_;</span>
+<span id="C-L366" class="line"><a href="#C-L366"> 366</a>       base_qy_ = imu_qy_;</span>
+<span id="C-L367" class="line"><a href="#C-L367"> 367</a>       base_qz_ = imu_qz_;</span>
+<span id="C-L368" class="line"><a href="#C-L368"> 368</a>       base_qw_ = imu_qw_;</span>
+<span id="C-L369" class="line"><a href="#C-L369"> 369</a>     }</span>
+<span id="C-L370" class="line"><a href="#C-L370"> 370</a>   }</span>
+<span id="C-L371" class="line"><a href="#C-L371"> 371</a>   timestamp_ns_ = static_cast&lt;double&gt;(time.nanoseconds());</span>
+<span id="C-L372" class="line"><a href="#C-L372"> 372</a>   return true;</span>
+<span id="C-L373" class="line"><a href="#C-L373"> 373</a> }</span>
+<span id="C-L374" class="line"><a href="#C-L374"> 374</a> </span>
+<span id="C-L375" class="line"><a href="#C-L375"> 375</a> void LeggedReal::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {</span>
+<span id="C-L376" class="line"><a href="#C-L376"> 376</a>   const double quaternion_norm_squared =</span>
+<span id="C-L377" class="line"><a href="#C-L377"> 377</a>       msg-&gt;orientation.x * msg-&gt;orientation.x + msg-&gt;orientation.y * msg-&gt;orientation.y +</span>
+<span id="C-L378" class="line"><a href="#C-L378"> 378</a>       msg-&gt;orientation.z * msg-&gt;orientation.z + msg-&gt;orientation.w * msg-&gt;orientation.w;</span>
+<span id="C-L379" class="line"><a href="#C-L379"> 379</a>   const double values[]{msg-&gt;angular_velocity.x, msg-&gt;angular_velocity.y, msg-&gt;angular_velocity.z,</span>
+<span id="C-L380" class="line"><a href="#C-L380"> 380</a>                         quaternion_norm_squared};</span>
+<span id="C-L381" class="line"><a href="#C-L381"> 381</a>   if (!std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) ||</span>
+<span id="C-L382" class="line"><a href="#C-L382"> 382</a>       quaternion_norm_squared &lt; 1e-12)</span>
+<span id="C-L383" class="line"><a href="#C-L383"> 383</a>   {</span>
+<span id="C-L384" class="line"><a href="#C-L384"> 384</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;Ignoring invalid IMU sample&quot;);</span>
+<span id="C-L385" class="line"><a href="#C-L385"> 385</a>     return;</span>
+<span id="C-L386" class="line"><a href="#C-L386"> 386</a>   }</span>
+<span id="C-L387" class="line"><a href="#C-L387"> 387</a>   const double inverse_norm = 1.0 / std::sqrt(quaternion_norm_squared);</span>
+<span id="C-L388" class="line"><a href="#C-L388"> 388</a>   std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="C-L389" class="line"><a href="#C-L389"> 389</a>   imu_connection_status_ = true;</span>
+<span id="C-L390" class="line"><a href="#C-L390"> 390</a>   last_imu_received_time_ = nh_-&gt;now();</span>
+<span id="C-L391" class="line"><a href="#C-L391"> 391</a>   for (int i = 0; i &lt; 3; ++i)</span>
+<span id="C-L392" class="line"><a href="#C-L392"> 392</a>   {</span>
+<span id="C-L393" class="line"><a href="#C-L393"> 393</a>     imu_data_.angular_vel[i] = imu_first_read_ ? values[i]</span>
+<span id="C-L394" class="line"><a href="#C-L394"> 394</a>                                                : imu_filter_coeff_real_ * values[i] +</span>
+<span id="C-L395" class="line"><a href="#C-L395"> 395</a>                                                      (1.0 - imu_filter_coeff_real_) * imu_data_.prev_angular_vel[i];</span>
+<span id="C-L396" class="line"><a href="#C-L396"> 396</a>     imu_data_.prev_angular_vel[i] = imu_data_.angular_vel[i];</span>
+<span id="C-L397" class="line"><a href="#C-L397"> 397</a>   }</span>
+<span id="C-L398" class="line"><a href="#C-L398"> 398</a>   imu_first_read_ = false;</span>
+<span id="C-L399" class="line"><a href="#C-L399"> 399</a>   imu_data_.ori[0] = msg-&gt;orientation.x * inverse_norm;</span>
+<span id="C-L400" class="line"><a href="#C-L400"> 400</a>   imu_data_.ori[1] = msg-&gt;orientation.y * inverse_norm;</span>
+<span id="C-L401" class="line"><a href="#C-L401"> 401</a>   imu_data_.ori[2] = msg-&gt;orientation.z * inverse_norm;</span>
+<span id="C-L402" class="line"><a href="#C-L402"> 402</a>   imu_data_.ori[3] = msg-&gt;orientation.w * inverse_norm;</span>
+<span id="C-L403" class="line"><a href="#C-L403"> 403</a> }</span>
+<span id="C-L404" class="line"><a href="#C-L404"> 404</a> </span>
+<span id="C-L405" class="line"><a href="#C-L405"> 405</a> void LeggedReal::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {</span>
+<span id="C-L406" class="line"><a href="#C-L406"> 406</a>   const auto&amp; position = msg-&gt;pose.pose.position;</span>
+<span id="C-L407" class="line"><a href="#C-L407"> 407</a>   const auto&amp; orientation = msg-&gt;pose.pose.orientation;</span>
+<span id="C-L408" class="line"><a href="#C-L408"> 408</a>   const double norm_squared = orientation.x * orientation.x + orientation.y * orientation.y +</span>
+<span id="C-L409" class="line"><a href="#C-L409"> 409</a>                               orientation.z * orientation.z + orientation.w * orientation.w;</span>
+<span id="C-L410" class="line"><a href="#C-L410"> 410</a>   if (msg-&gt;header.frame_id.empty() || msg-&gt;child_frame_id.empty() || !std::isfinite(position.x) ||</span>
+<span id="C-L411" class="line"><a href="#C-L411"> 411</a>       !std::isfinite(position.y) || !std::isfinite(position.z) || !std::isfinite(norm_squared) || norm_squared &lt; 1e-12)</span>
+<span id="C-L412" class="line"><a href="#C-L412"> 412</a>   {</span>
+<span id="C-L413" class="line"><a href="#C-L413"> 413</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;Ignoring invalid odometry pose&quot;);</span>
+<span id="C-L414" class="line"><a href="#C-L414"> 414</a>     return;</span>
+<span id="C-L415" class="line"><a href="#C-L415"> 415</a>   }</span>
+<span id="C-L416" class="line"><a href="#C-L416"> 416</a>   const double inverse_norm = 1.0 / std::sqrt(norm_squared);</span>
+<span id="C-L417" class="line"><a href="#C-L417"> 417</a>   std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="C-L418" class="line"><a href="#C-L418"> 418</a>   odom_position_[0] = position.x;</span>
+<span id="C-L419" class="line"><a href="#C-L419"> 419</a>   odom_position_[1] = position.y;</span>
+<span id="C-L420" class="line"><a href="#C-L420"> 420</a>   odom_position_[2] = position.z;</span>
+<span id="C-L421" class="line"><a href="#C-L421"> 421</a>   odom_orientation_[0] = orientation.x * inverse_norm;</span>
+<span id="C-L422" class="line"><a href="#C-L422"> 422</a>   odom_orientation_[1] = orientation.y * inverse_norm;</span>
+<span id="C-L423" class="line"><a href="#C-L423"> 423</a>   odom_orientation_[2] = orientation.z * inverse_norm;</span>
+<span id="C-L424" class="line"><a href="#C-L424"> 424</a>   odom_orientation_[3] = orientation.w * inverse_norm;</span>
+<span id="C-L425" class="line"><a href="#C-L425"> 425</a>   odom_received_ = true;</span>
+<span id="C-L426" class="line"><a href="#C-L426"> 426</a> }</span>
+<span id="C-L427" class="line"><a href="#C-L427"> 427</a> </span>
+<span id="C-L428" class="line"><a href="#C-L428"> 428</a> bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {</span>
+<span id="C-L429" class="line"><a href="#C-L429"> 429</a>   bool imu_failed = false;</span>
+<span id="C-L430" class="line"><a href="#C-L430"> 430</a>   const rclcpp::Time current = nh_-&gt;now();</span>
+<span id="C-L431" class="line"><a href="#C-L431"> 431</a>   const bool motors_enabled = motors_enabled_.load();</span>
+<span id="C-L432" class="line"><a href="#C-L432"> 432</a>   {</span>
+<span id="C-L433" class="line"><a href="#C-L433"> 433</a>     std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="C-L434" class="line"><a href="#C-L434"> 434</a>     // No actuator command is published before lifecycle enable completes, so</span>
+<span id="C-L435" class="line"><a href="#C-L435"> 435</a>     // the IMU startup watchdog must not expire while its backend is still absent.</span>
+<span id="C-L436" class="line"><a href="#C-L436"> 436</a>     if (imu_enabled_ &amp;&amp; motors_enabled &amp;&amp; !imu_connection_status_)</span>
+<span id="C-L437" class="line"><a href="#C-L437"> 437</a>       imu_failed = (current - imu_startup_time_).seconds() &gt;= imu_startup_timeout_;</span>
+<span id="C-L438" class="line"><a href="#C-L438"> 438</a>     else if (imu_enabled_ &amp;&amp; motors_enabled &amp;&amp; (current - last_imu_received_time_).seconds() &gt; imu_connection_timeout_)</span>
+<span id="C-L439" class="line"><a href="#C-L439"> 439</a>     {</span>
+<span id="C-L440" class="line"><a href="#C-L440"> 440</a>       imu_connection_status_ = false;</span>
+<span id="C-L441" class="line"><a href="#C-L441"> 441</a>       imu_failed = true;</span>
+<span id="C-L442" class="line"><a href="#C-L442"> 442</a>     }</span>
+<span id="C-L443" class="line"><a href="#C-L443"> 443</a>   }</span>
+<span id="C-L444" class="line"><a href="#C-L444"> 444</a> </span>
+<span id="C-L445" class="line"><a href="#C-L445"> 445</a>   imu_fault_.store(imu_failed);</span>
+<span id="C-L446" class="line"><a href="#C-L446"> 446</a>   publishHardwareFault();</span>
+<span id="C-L447" class="line"><a href="#C-L447"> 447</a>   const bool stop = emergency_stop_triggered_.load() || imu_failed || lifecycle_fault_.load();</span>
+<span id="C-L448" class="line"><a href="#C-L448"> 448</a>   if (stop != emergency_published_)</span>
+<span id="C-L449" class="line"><a href="#C-L449"> 449</a>   {</span>
+<span id="C-L450" class="line"><a href="#C-L450"> 450</a>     std_msgs::msg::Bool message;</span>
+<span id="C-L451" class="line"><a href="#C-L451"> 451</a>     message.data = stop;</span>
+<span id="C-L452" class="line"><a href="#C-L452"> 452</a>     emergency_pub_-&gt;publish(message);</span>
+<span id="C-L453" class="line"><a href="#C-L453"> 453</a>     emergency_published_ = stop;</span>
+<span id="C-L454" class="line"><a href="#C-L454"> 454</a>     if (stop)</span>
+<span id="C-L455" class="line"><a href="#C-L455"> 455</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="C-L456" class="line"><a href="#C-L456"> 456</a>                    &quot;\033[1;31mMotor commands switched to emergency damping: emergency_stop=%s motor_feedback_fault=%s &quot;</span>
+<span id="C-L457" class="line"><a href="#C-L457"> 457</a>                    &quot;imu_fault=%s lifecycle_fault=%s\033[0m&quot;,</span>
+<span id="C-L458" class="line"><a href="#C-L458"> 458</a>                    emergency_stop_triggered_.load() ? &quot;true&quot; : &quot;false&quot;, motor_fault_.load() ? &quot;true&quot; : &quot;false&quot;,</span>
+<span id="C-L459" class="line"><a href="#C-L459"> 459</a>                    imu_failed ? &quot;true&quot; : &quot;false&quot;, lifecycle_fault_.load() ? &quot;true&quot; : &quot;false&quot;);</span>
+<span id="C-L460" class="line"><a href="#C-L460"> 460</a>     else</span>
+<span id="C-L461" class="line"><a href="#C-L461"> 461</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Hardware fault cleared; controller state determines motor commands&quot;);</span>
+<span id="C-L462" class="line"><a href="#C-L462"> 462</a>   }</span>
+<span id="C-L463" class="line"><a href="#C-L463"> 463</a>   // Serialize publication with disable, calibration transitions and SETZERO requests.</span>
+<span id="C-L464" class="line"><a href="#C-L464"> 464</a>   std::lock_guard&lt;std::mutex&gt; lifecycle_lock(lifecycle_mutex_);</span>
+<span id="C-L465" class="line"><a href="#C-L465"> 465</a>   // Serialize turn selection with publication, including the first powered command.</span>
+<span id="C-L466" class="line"><a href="#C-L466"> 466</a>   std::lock_guard&lt;std::mutex&gt; feedback_lock(feedback_mutex_);</span>
+<span id="C-L467" class="line"><a href="#C-L467"> 467</a>   bool zero_gain_command = !motors_enabled_.load() || calibration_mode_.load() || lifecycle_active_ ||</span>
+<span id="C-L468" class="line"><a href="#C-L468"> 468</a>                            lifecycle_fault_.load();</span>
+<span id="C-L469" class="line"><a href="#C-L469"> 469</a>   bool active_command = false;</span>
+<span id="C-L470" class="line"><a href="#C-L470"> 470</a>   bool damping_command = stop || zero_gain_command;</span>
+<span id="C-L471" class="line"><a href="#C-L471"> 471</a>   bool feedback_ready = control_feedback_ready_;</span>
+<span id="C-L472" class="line"><a href="#C-L472"> 472</a>   for (std::size_t i = 0; i &lt; feedback_wrap_.size(); ++i)</span>
+<span id="C-L473" class="line"><a href="#C-L473"> 473</a>   {</span>
+<span id="C-L474" class="line"><a href="#C-L474"> 474</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="C-L475" class="line"><a href="#C-L475"> 475</a>     damping_command = damping_command || feedback_wrap_[i].fault;</span>
+<span id="C-L476" class="line"><a href="#C-L476"> 476</a>     const auto&amp; command = joint_motor_commands_[i];</span>
+<span id="C-L477" class="line"><a href="#C-L477"> 477</a>     active_command = active_command || command.kp != 0.0 || command.dq_des != 0.0 || command.tau_ff != 0.0;</span>
+<span id="C-L478" class="line"><a href="#C-L478"> 478</a>     feedback_ready =</span>
+<span id="C-L479" class="line"><a href="#C-L479"> 479</a>         feedback_ready &amp;&amp; feedback_wrap_[i].ready() &amp;&amp; control_wrap_offsets_[i] == feedback_wrap_[i].offset;</span>
+<span id="C-L480" class="line"><a href="#C-L480"> 480</a>   }</span>
+<span id="C-L481" class="line"><a href="#C-L481"> 481</a>   if (!damping_command &amp;&amp; !feedback_ready)</span>
+<span id="C-L482" class="line"><a href="#C-L482"> 482</a>   {</span>
+<span id="C-L483" class="line"><a href="#C-L483"> 483</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L484" class="line"><a href="#C-L484"> 484</a>                          &quot;Publishing zero-gain MIT until all feedback turns are confirmed in the control snapshot&quot;);</span>
+<span id="C-L485" class="line"><a href="#C-L485"> 485</a>     zero_gain_command = true;</span>
+<span id="C-L486" class="line"><a href="#C-L486"> 486</a>     damping_command = true;</span>
+<span id="C-L487" class="line"><a href="#C-L487"> 487</a>   }</span>
+<span id="C-L488" class="line"><a href="#C-L488"> 488</a>   robot_interfaces::msg::MotorCommand output;</span>
+<span id="C-L489" class="line"><a href="#C-L489"> 489</a>   output.stamp = current;</span>
+<span id="C-L490" class="line"><a href="#C-L490"> 490</a>   output.sequence_id = ++command_sequence_;</span>
+<span id="C-L491" class="line"><a href="#C-L491"> 491</a>   output.control_mode = robot_interfaces::msg::MotorCommand::CONTROL_MODE_MIT;</span>
+<span id="C-L492" class="line"><a href="#C-L492"> 492</a>   output.commands.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="C-L493" class="line"><a href="#C-L493"> 493</a>   try</span>
+<span id="C-L494" class="line"><a href="#C-L494"> 494</a>   {</span>
+<span id="C-L495" class="line"><a href="#C-L495"> 495</a>     for (std::size_t i = 0; i &lt; joint_motor_commands_.size(); ++i)</span>
+<span id="C-L496" class="line"><a href="#C-L496"> 496</a>     {</span>
+<span id="C-L497" class="line"><a href="#C-L497"> 497</a>       const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="C-L498" class="line"><a href="#C-L498"> 498</a>       if (!mapping.enabled) continue;</span>
+<span id="C-L499" class="line"><a href="#C-L499"> 499</a>       const auto&amp; command = joint_motor_commands_[i];</span>
+<span id="C-L500" class="line"><a href="#C-L500"> 500</a>       // Disabled/calibration states take precedence over emergency damping.</span>
+<span id="C-L501" class="line"><a href="#C-L501"> 501</a>       const auto mapped = motor_mapping_-&gt;commandFor(</span>
+<span id="C-L502" class="line"><a href="#C-L502"> 502</a>           mapping, damping_command ? joint_motor_states_[i].q : command.q_des,</span>
+<span id="C-L503" class="line"><a href="#C-L503"> 503</a>           damping_command ? 0.0 : command.dq_des, damping_command ? 0.0 : command.tau_ff,</span>
+<span id="C-L504" class="line"><a href="#C-L504"> 504</a>           damping_command ? 0.0 : command.kp,</span>
+<span id="C-L505" class="line"><a href="#C-L505"> 505</a>           zero_gain_command ? 0.0 : (damping_command ? emergency_damping_kd_ : command.kd),</span>
+<span id="C-L506" class="line"><a href="#C-L506"> 506</a>           feedback_wrap_[i].offset);</span>
+<span id="C-L507" class="line"><a href="#C-L507"> 507</a>       robot_interfaces::msg::MotorTarget target;</span>
+<span id="C-L508" class="line"><a href="#C-L508"> 508</a>       target.route.motor_type = static_cast&lt;uint8_t&gt;(i);</span>
+<span id="C-L509" class="line"><a href="#C-L509"> 509</a>       target.q = mapped.q;</span>
+<span id="C-L510" class="line"><a href="#C-L510"> 510</a>       target.dq = mapped.dq;</span>
+<span id="C-L511" class="line"><a href="#C-L511"> 511</a>       target.tau = mapped.tau;</span>
+<span id="C-L512" class="line"><a href="#C-L512"> 512</a>       target.kp = mapped.kp;</span>
+<span id="C-L513" class="line"><a href="#C-L513"> 513</a>       target.kd = mapped.kd;</span>
+<span id="C-L514" class="line"><a href="#C-L514"> 514</a>       output.commands.push_back(target);</span>
+<span id="C-L515" class="line"><a href="#C-L515"> 515</a>     }</span>
+<span id="C-L516" class="line"><a href="#C-L516"> 516</a>   } catch (const std::exception&amp; error)</span>
+<span id="C-L517" class="line"><a href="#C-L517"> 517</a>   {</span>
+<span id="C-L518" class="line"><a href="#C-L518"> 518</a>     emergency_stop_triggered_.store(true);</span>
+<span id="C-L519" class="line"><a href="#C-L519"> 519</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;\033[1;31mRejected motor command: %s\033[0m&quot;,</span>
+<span id="C-L520" class="line"><a href="#C-L520"> 520</a>                           error.what());</span>
+<span id="C-L521" class="line"><a href="#C-L521"> 521</a>     return false;</span>
+<span id="C-L522" class="line"><a href="#C-L522"> 522</a>   }</span>
+<span id="C-L523" class="line"><a href="#C-L523"> 523</a>   if (command_publisher_-&gt;get_subscription_count() == 0U)</span>
+<span id="C-L524" class="line"><a href="#C-L524"> 524</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L525" class="line"><a href="#C-L525"> 525</a>                          &quot;\033[1;33mPublishing motor commands without an HPM subscriber\033[0m&quot;);</span>
+<span id="C-L526" class="line"><a href="#C-L526"> 526</a>   if (!damping_command &amp;&amp; active_command)</span>
+<span id="C-L527" class="line"><a href="#C-L527"> 527</a>     for (auto&amp; wrap : feedback_wrap_) wrap.locked = true;</span>
+<span id="C-L528" class="line"><a href="#C-L528"> 528</a>   command_publisher_-&gt;publish(output);</span>
+<span id="C-L529" class="line"><a href="#C-L529"> 529</a>   return true;</span>
+<span id="C-L530" class="line"><a href="#C-L530"> 530</a> }</span>
+<span id="C-L531" class="line"><a href="#C-L531"> 531</a> </span>
+<span id="C-L532" class="line"><a href="#C-L532"> 532</a> void LeggedReal::publishHardwareFault() {</span>
+<span id="C-L533" class="line"><a href="#C-L533"> 533</a>   const bool fault = motor_fault_.load() || imu_fault_.load() || lifecycle_fault_.load();</span>
+<span id="C-L534" class="line"><a href="#C-L534"> 534</a>   std::lock_guard&lt;std::mutex&gt; lock(status_mutex_);</span>
+<span id="C-L535" class="line"><a href="#C-L535"> 535</a>   if (fault == hardware_fault_published_) return;</span>
+<span id="C-L536" class="line"><a href="#C-L536"> 536</a>   std_msgs::msg::Bool message;</span>
+<span id="C-L537" class="line"><a href="#C-L537"> 537</a>   message.data = fault;</span>
+<span id="C-L538" class="line"><a href="#C-L538"> 538</a>   hardware_fault_pub_-&gt;publish(message);</span>
+<span id="C-L539" class="line"><a href="#C-L539"> 539</a>   hardware_fault_published_ = fault;</span>
+<span id="C-L540" class="line"><a href="#C-L540"> 540</a> }</span>
+<span id="C-L541" class="line"><a href="#C-L541"> 541</a> </span>
+<span id="C-L542" class="line"><a href="#C-L542"> 542</a> void LeggedReal::publishMotorsReady(bool ready) {</span>
+<span id="C-L543" class="line"><a href="#C-L543"> 543</a>   std::lock_guard&lt;std::mutex&gt; lock(status_mutex_);</span>
+<span id="C-L544" class="line"><a href="#C-L544"> 544</a>   if (ready == motors_ready_state_) return;</span>
+<span id="C-L545" class="line"><a href="#C-L545"> 545</a>   std_msgs::msg::Bool message;</span>
+<span id="C-L546" class="line"><a href="#C-L546"> 546</a>   message.data = ready;</span>
+<span id="C-L547" class="line"><a href="#C-L547"> 547</a>   motors_ready_pub_-&gt;publish(message);</span>
+<span id="C-L548" class="line"><a href="#C-L548"> 548</a>   motors_ready_state_ = ready;</span>
+<span id="C-L549" class="line"><a href="#C-L549"> 549</a>   if (ready)</span>
+<span id="C-L550" class="line"><a href="#C-L550"> 550</a>     RCLCPP_INFO(nh_-&gt;get_logger(),</span>
+<span id="C-L551" class="line"><a href="#C-L551"> 551</a>                 &quot;Motor command path ready for %zu enabled motors after publishing the HPM enable command&quot;,</span>
+<span id="C-L552" class="line"><a href="#C-L552"> 552</a>                 motor_mapping_-&gt;enabledSize());</span>
+<span id="C-L553" class="line"><a href="#C-L553"> 553</a>   else if (motors_enabled_.load())</span>
+<span id="C-L554" class="line"><a href="#C-L554"> 554</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;\033[1;31mMotor readiness lost; inspect preceding per-motor errors\033[0m&quot;);</span>
+<span id="C-L555" class="line"><a href="#C-L555"> 555</a>   else</span>
+<span id="C-L556" class="line"><a href="#C-L556"> 556</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motors disabled; readiness is false&quot;);</span>
+<span id="C-L557" class="line"><a href="#C-L557"> 557</a> }</span>
+<span id="C-L558" class="line"><a href="#C-L558"> 558</a> </span>
+<span id="C-L559" class="line"><a href="#C-L559"> 559</a> bool LeggedReal::requestAllMotorsEnabled(bool enabled) {</span>
+<span id="C-L560" class="line"><a href="#C-L560"> 560</a>   if (!motor_mapping_)</span>
+<span id="C-L561" class="line"><a href="#C-L561"> 561</a>   {</span>
+<span id="C-L562" class="line"><a href="#C-L562"> 562</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Motor lifecycle request blocked before motor mapping is configured&quot;);</span>
+<span id="C-L563" class="line"><a href="#C-L563"> 563</a>     return false;</span>
+<span id="C-L564" class="line"><a href="#C-L564"> 564</a>   }</span>
+<span id="C-L565" class="line"><a href="#C-L565"> 565</a>   std::lock_guard&lt;std::mutex&gt; lock(lifecycle_mutex_);</span>
+<span id="C-L566" class="line"><a href="#C-L566"> 566</a>   if (enabled &amp;&amp; (calibration_mode_.load() || zero_pending_ || zero_failed_))</span>
+<span id="C-L567" class="line"><a href="#C-L567"> 567</a>   {</span>
+<span id="C-L568" class="line"><a href="#C-L568"> 568</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Motor enable blocked by active or failed calibration&quot;);</span>
+<span id="C-L569" class="line"><a href="#C-L569"> 569</a>     return false;</span>
+<span id="C-L570" class="line"><a href="#C-L570"> 570</a>   }</span>
+<span id="C-L571" class="line"><a href="#C-L571"> 571</a>   lifecycle_target_enabled_ = enabled;</span>
+<span id="C-L572" class="line"><a href="#C-L572"> 572</a>   lifecycle_active_ = true;</span>
+<span id="C-L573" class="line"><a href="#C-L573"> 573</a>   lifecycle_started_ = nh_-&gt;now();</span>
+<span id="C-L574" class="line"><a href="#C-L574"> 574</a>   lifecycle_fault_.store(false);</span>
+<span id="C-L575" class="line"><a href="#C-L575"> 575</a>   if (!enabled)</span>
+<span id="C-L576" class="line"><a href="#C-L576"> 576</a>   {</span>
+<span id="C-L577" class="line"><a href="#C-L577"> 577</a>     motors_enabled_.store(false);</span>
+<span id="C-L578" class="line"><a href="#C-L578"> 578</a>     publishMotorsReady(false);</span>
+<span id="C-L579" class="line"><a href="#C-L579"> 579</a>   }</span>
+<span id="C-L580" class="line"><a href="#C-L580"> 580</a>   publishHardwareFault();</span>
+<span id="C-L581" class="line"><a href="#C-L581"> 581</a>   return true;</span>
+<span id="C-L582" class="line"><a href="#C-L582"> 582</a> }</span>
+<span id="C-L583" class="line"><a href="#C-L583"> 583</a> </span>
+<span id="C-L584" class="line"><a href="#C-L584"> 584</a> void LeggedReal::lifecycleTick() {</span>
+<span id="C-L585" class="line"><a href="#C-L585"> 585</a>   std::lock_guard&lt;std::mutex&gt; lock(lifecycle_mutex_);</span>
+<span id="C-L586" class="line"><a href="#C-L586"> 586</a>   if (!lifecycle_active_) return;</span>
+<span id="C-L587" class="line"><a href="#C-L587"> 587</a>   const rclcpp::Time current = nh_-&gt;now();</span>
+<span id="C-L588" class="line"><a href="#C-L588"> 588</a>   if (enable_publisher_-&gt;get_subscription_count() == 0U)</span>
+<span id="C-L589" class="line"><a href="#C-L589"> 589</a>   {</span>
+<span id="C-L590" class="line"><a href="#C-L590"> 590</a>     if ((current - lifecycle_started_).seconds() &gt; 20.0)</span>
+<span id="C-L591" class="line"><a href="#C-L591"> 591</a>     {</span>
+<span id="C-L592" class="line"><a href="#C-L592"> 592</a>       lifecycle_active_ = false;</span>
+<span id="C-L593" class="line"><a href="#C-L593"> 593</a>       motors_enabled_.store(false);</span>
+<span id="C-L594" class="line"><a href="#C-L594"> 594</a>       lifecycle_fault_.store(true);</span>
+<span id="C-L595" class="line"><a href="#C-L595"> 595</a>       publishMotorsReady(false);</span>
+<span id="C-L596" class="line"><a href="#C-L596"> 596</a>       publishHardwareFault();</span>
+<span id="C-L597" class="line"><a href="#C-L597"> 597</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="C-L598" class="line"><a href="#C-L598"> 598</a>                    &quot;\033[1;31mTimed out waiting for /actuator/motor/enable subscriber; motors remain disabled\033[0m&quot;);</span>
+<span id="C-L599" class="line"><a href="#C-L599"> 599</a>     }</span>
+<span id="C-L600" class="line"><a href="#C-L600"> 600</a>     else</span>
+<span id="C-L601" class="line"><a href="#C-L601"> 601</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L602" class="line"><a href="#C-L602"> 602</a>                            &quot;\033[1;33mWaiting for HPM subscriber on /actuator/motor/enable\033[0m&quot;);</span>
+<span id="C-L603" class="line"><a href="#C-L603"> 603</a>     return;</span>
+<span id="C-L604" class="line"><a href="#C-L604"> 604</a>   }</span>
+<span id="C-L605" class="line"><a href="#C-L605"> 605</a> </span>
+<span id="C-L606" class="line"><a href="#C-L606"> 606</a>   robot_interfaces::msg::MotorEnableCommand command;</span>
+<span id="C-L607" class="line"><a href="#C-L607"> 607</a>   command.stamp = current;</span>
+<span id="C-L608" class="line"><a href="#C-L608"> 608</a>   command.sequence_id = ++enable_sequence_;</span>
+<span id="C-L609" class="line"><a href="#C-L609"> 609</a>   command.motor_types.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="C-L610" class="line"><a href="#C-L610"> 610</a>   command.enabled.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="C-L611" class="line"><a href="#C-L611"> 611</a>   for (std::size_t i = 0; i &lt; motor_mapping_-&gt;size(); ++i)</span>
+<span id="C-L612" class="line"><a href="#C-L612"> 612</a>   {</span>
+<span id="C-L613" class="line"><a href="#C-L613"> 613</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="C-L614" class="line"><a href="#C-L614"> 614</a>     command.motor_types.push_back(static_cast&lt;uint8_t&gt;(i));</span>
+<span id="C-L615" class="line"><a href="#C-L615"> 615</a>     command.enabled.push_back(lifecycle_target_enabled_);</span>
+<span id="C-L616" class="line"><a href="#C-L616"> 616</a>   }</span>
+<span id="C-L617" class="line"><a href="#C-L617"> 617</a>   lifecycle_active_ = false;</span>
+<span id="C-L618" class="line"><a href="#C-L618"> 618</a>   {</span>
+<span id="C-L619" class="line"><a href="#C-L619"> 619</a>     // Do not count feedback received before this enable publication toward the</span>
+<span id="C-L620" class="line"><a href="#C-L620"> 620</a>     // first complete post-enable feedback round.</span>
+<span id="C-L621" class="line"><a href="#C-L621"> 621</a>     std::lock_guard&lt;std::mutex&gt; feedback_lock(feedback_mutex_);</span>
+<span id="C-L622" class="line"><a href="#C-L622"> 622</a>     if (lifecycle_target_enabled_)</span>
+<span id="C-L623" class="line"><a href="#C-L623"> 623</a>     {</span>
+<span id="C-L624" class="line"><a href="#C-L624"> 624</a>       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="C-L625" class="line"><a href="#C-L625"> 625</a>       for (auto&amp; wrap : feedback_wrap_)</span>
+<span id="C-L626" class="line"><a href="#C-L626"> 626</a>       {</span>
+<span id="C-L627" class="line"><a href="#C-L627"> 627</a>         wrap.stable_samples = 0U;</span>
+<span id="C-L628" class="line"><a href="#C-L628"> 628</a>         wrap.error_code = 0U;</span>
+<span id="C-L629" class="line"><a href="#C-L629"> 629</a>         wrap.error_samples = 0U;</span>
+<span id="C-L630" class="line"><a href="#C-L630"> 630</a>       }</span>
+<span id="C-L631" class="line"><a href="#C-L631"> 631</a>       for (auto&amp; feedback : latest_feedback_) feedback.valid = false;</span>
+<span id="C-L632" class="line"><a href="#C-L632"> 632</a>       reset_feedback_watchdogs_.store(true);</span>
+<span id="C-L633" class="line"><a href="#C-L633"> 633</a>     }</span>
+<span id="C-L634" class="line"><a href="#C-L634"> 634</a>     else</span>
+<span id="C-L635" class="line"><a href="#C-L635"> 635</a>     {</span>
+<span id="C-L636" class="line"><a href="#C-L636"> 636</a>       for (auto&amp; wrap : feedback_wrap_) wrap = system_command_arbiter::FeedbackWrapState{};</span>
+<span id="C-L637" class="line"><a href="#C-L637"> 637</a>       for (auto&amp; feedback : latest_feedback_) feedback.valid = false;</span>
+<span id="C-L638" class="line"><a href="#C-L638"> 638</a>       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="C-L639" class="line"><a href="#C-L639"> 639</a>     }</span>
+<span id="C-L640" class="line"><a href="#C-L640"> 640</a>     enable_publisher_-&gt;publish(command);</span>
+<span id="C-L641" class="line"><a href="#C-L641"> 641</a>     motors_enabled_.store(lifecycle_target_enabled_);</span>
+<span id="C-L642" class="line"><a href="#C-L642"> 642</a>   }</span>
+<span id="C-L643" class="line"><a href="#C-L643"> 643</a>   if (lifecycle_target_enabled_)</span>
+<span id="C-L644" class="line"><a href="#C-L644"> 644</a>   {</span>
+<span id="C-L645" class="line"><a href="#C-L645"> 645</a>     std::lock_guard&lt;std::mutex&gt; sensor_lock(sensor_mutex_);</span>
+<span id="C-L646" class="line"><a href="#C-L646"> 646</a>     if (!imu_connection_status_) imu_startup_time_ = current;</span>
+<span id="C-L647" class="line"><a href="#C-L647"> 647</a>   }</span>
+<span id="C-L648" class="line"><a href="#C-L648"> 648</a>   lifecycle_fault_.store(false);</span>
+<span id="C-L649" class="line"><a href="#C-L649"> 649</a>   publishHardwareFault();</span>
+<span id="C-L650" class="line"><a href="#C-L650"> 650</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Published HPM %s command for %zu motors&quot;,</span>
+<span id="C-L651" class="line"><a href="#C-L651"> 651</a>               lifecycle_target_enabled_ ? &quot;enable&quot; : &quot;disable&quot;, motor_mapping_-&gt;enabledSize());</span>
+<span id="C-L652" class="line"><a href="#C-L652"> 652</a> }</span>
+<span id="C-L653" class="line"><a href="#C-L653"> 653</a> </span>
+<span id="C-L654" class="line"><a href="#C-L654"> 654</a> }  // namespace legged</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &quot;legged_real/LeggedReal.h&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> </span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;algorithm&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;chrono&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;cmath&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;functional&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;iterator&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;luvbot_hardware_interfaces/msg/motor_state.hpp&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> #include &lt;stdexcept&gt;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> #include &lt;unordered_set&gt;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> namespace legged {</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&amp;) {</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   nh_ = std::move(nh);</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>   auto declare = [this](const std::string&amp; name, const auto&amp; value) {</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     if (!nh_-&gt;has_parameter(name)) nh_-&gt;declare_parameter(name, value);</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   };</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   declare(&quot;/RobotHw/joint_filter_coeff_real&quot;, 1.0);</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>   declare(&quot;/RobotHw/imu_filter_coeff_real&quot;, 1.0);</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>   declare(&quot;/RobotHw/imu_startup_timeout&quot;, 5.0);</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>   declare(&quot;/RobotHw/imu_connection_timeout&quot;, 5.0);</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   declare(&quot;/RobotHw/max_consecutive_missing&quot;, 200);</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   declare(&quot;/RobotHw/imu_enabled&quot;, true);</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   declare(&quot;emergency.damping_kd&quot;, 5.0);</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   declare(&quot;motor_lifecycle_period_ms&quot;, 20);</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>   declare(&quot;robot_type&quot;, std::string{});</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   declare(&quot;robot_cfg_path&quot;, std::string{});</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>   declare(&quot;legged_controller_config_path&quot;, std::string{});</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   declare(&quot;mapping_file&quot;, std::string{});</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> </span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   joint_filter_coeff_real_ = nh_-&gt;get_parameter(&quot;/RobotHw/joint_filter_coeff_real&quot;).as_double();</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   imu_filter_coeff_real_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_filter_coeff_real&quot;).as_double();</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   imu_startup_timeout_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_startup_timeout&quot;).as_double();</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   imu_connection_timeout_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_connection_timeout&quot;).as_double();</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   max_consecutive_missing_ = nh_-&gt;get_parameter(&quot;/RobotHw/max_consecutive_missing&quot;).as_int();</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   imu_enabled_ = nh_-&gt;get_parameter(&quot;/RobotHw/imu_enabled&quot;).as_bool();</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   const double emergency_damping_kd = nh_-&gt;get_parameter(&quot;emergency.damping_kd&quot;).as_double();</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>   if (!std::isfinite(emergency_damping_kd))</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>   {</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;emergency.damping_kd must be finite&quot;);</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>     return false;</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>   }</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>   emergency_damping_kd_ = std::max(0.0, emergency_damping_kd);</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   const int motor_lifecycle_period_ms = nh_-&gt;get_parameter(&quot;motor_lifecycle_period_ms&quot;).as_int();</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>   robot_type_ = nh_-&gt;get_parameter(&quot;robot_type&quot;).as_string();</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>   const std::string robot_cfg_path = nh_-&gt;get_parameter(&quot;robot_cfg_path&quot;).as_string();</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   const std::string mapping_file = nh_-&gt;get_parameter(&quot;mapping_file&quot;).as_string();</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a> </span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>   if (joint_filter_coeff_real_ &lt; 0.0 || joint_filter_coeff_real_ &gt; 1.0 || imu_filter_coeff_real_ &lt; 0.0 ||</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>       imu_filter_coeff_real_ &gt; 1.0 || imu_startup_timeout_ &lt;= 0.0 || imu_connection_timeout_ &lt;= 0.0 ||</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>       max_consecutive_missing_ &lt;= 0 || motor_lifecycle_period_ms &lt;= 0)</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   {</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Invalid hardware filter or timeout parameter&quot;);</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>     return false;</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>   }</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor feedback watchdog: warning after %d missing control cycles, emergency after %d&quot;,</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>               std::max(1, max_consecutive_missing_ / 2), max_consecutive_missing_);</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a> </span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>   if ((robot_type_ != &quot;l0_v3&quot; &amp;&amp; robot_type_ != &quot;l0_v4&quot; &amp;&amp; robot_type_ != &quot;l0_v5&quot;) || robot_cfg_path.empty() ||</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>       mapping_file.empty())</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>   {</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Topic motor control requires robot_type=l0_v3/l0_v4/l0_v5 and both config paths&quot;);</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>     return false;</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>   }</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a> </span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   try</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>   {</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     motor_mapping_ = std::make_unique&lt;system_command_arbiter::MotorMapping&gt;(mapping_file);</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>     if (motor_mapping_-&gt;enabledSize() == 0U) throw std::runtime_error(&quot;motor mapping has no enabled motors&quot;);</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>     const YAML::Node robot_cfg = YAML::LoadFile(robot_cfg_path)[&quot;RobotCfg&quot;];</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     if (!robot_cfg || !robot_cfg[&quot;joint_order_mj&quot;] || !robot_cfg[&quot;joint_order_mj&quot;].IsSequence() ||</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>         !robot_cfg[&quot;default_joint_angles&quot;] || !robot_cfg[&quot;default_joint_angles&quot;].IsSequence())</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>       throw std::runtime_error(&quot;RobotCfg.joint_order_mj and default_joint_angles are required&quot;);</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     for (const auto&amp; joint : robot_cfg[&quot;joint_order_mj&quot;]) joint_names_.push_back(joint.as&lt;std::string&gt;());</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>     if (joint_names_.size() != motor_mapping_-&gt;size()) throw std::runtime_error(&quot;joint order and mapping size differ&quot;);</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>     if (robot_cfg[&quot;default_joint_angles&quot;].size() != joint_names_.size())</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>       throw std::runtime_error(&quot;default joint angle count and mapping size differ&quot;);</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>     std::unordered_set&lt;std::string&gt; seen;</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>     for (std::size_t i = 0; i &lt; joint_names_.size(); ++i)</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>     {</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>       const auto&amp; name = joint_names_[i];</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>       if (!seen.emplace(name).second || motor_mapping_-&gt;entries()[i].joint_name != name)</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>         throw std::runtime_error(&quot;joint order does not match motor mapping at index &quot; + std::to_string(i));</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>     }</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>     default_joint_positions_.reserve(joint_names_.size());</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>     for (const auto&amp; angle : robot_cfg[&quot;default_joint_angles&quot;])</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>     {</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>       const double value = angle.as&lt;double&gt;();</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>       if (!std::isfinite(value)) throw std::runtime_error(&quot;default joint angles must be finite&quot;);</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>       default_joint_positions_.push_back(value);</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>     }</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>   } catch (const std::exception&amp; error)</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>   {</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Failed to configure topic motor mapping: %s&quot;, error.what());</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>     return false;</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   }</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a> </span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>   const auto motor_command_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   const auto safety_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>   imu_subscription_ = nh_-&gt;create_subscription&lt;sensor_msgs::msg::Imu&gt;(</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>       &quot;imu/data&quot;, rclcpp::SensorDataQoS(), std::bind(&amp;LeggedReal::imuCallback, this, std::placeholders::_1));</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   odom_subscription_ = nh_-&gt;create_subscription&lt;nav_msgs::msg::Odometry&gt;(</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>       &quot;odom&quot;, rclcpp::SensorDataQoS(), std::bind(&amp;LeggedReal::odomCallback, this, std::placeholders::_1));</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>   motor_state_subscription_ = nh_-&gt;create_subscription&lt;robot_interfaces::msg::MotorStateArray&gt;(</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>       &quot;actuator/motor/state&quot;, rclcpp::SensorDataQoS(),</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>       std::bind(&amp;LeggedReal::motorStateCallback, this, std::placeholders::_1));</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>   command_publisher_ =</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>       nh_-&gt;create_publisher&lt;robot_interfaces::msg::MotorCommand&gt;(&quot;actuator/motor/command&quot;, motor_command_qos);</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>   enable_publisher_ =</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>       nh_-&gt;create_publisher&lt;robot_interfaces::msg::MotorEnableCommand&gt;(&quot;actuator/motor/enable&quot;, motor_command_qos);</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>   zero_client_ = nh_-&gt;create_client&lt;robot_interfaces::srv::MotorSetZero&gt;(&quot;actuator/motor/set_zero&quot;);</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>   emergency_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;emergency_stop&quot;, safety_qos);</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   hardware_fault_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;hardware_fault&quot;, safety_qos);</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   motors_ready_pub_ = nh_-&gt;create_publisher&lt;std_msgs::msg::Bool&gt;(&quot;motors_ready&quot;, safety_qos);</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a> </span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>   const std::size_t count = motor_mapping_-&gt;size();</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>   latest_feedback_.resize(count);</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>   feedback_updated_.assign(count, false);</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>   feedback_wrap_.resize(count);</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>   control_wrap_offsets_.assign(count, 0.0);</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>   consecutive_missing_feedback_.assign(count, 0);</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>   feedback_fault_.assign(count, false);</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>   joint_data_.resize(count);</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>   joint_motor_states_.resize(count);</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>   joint_motor_commands_.resize(count);</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>   for (std::size_t i = 0; i &lt; count; ++i)</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>   {</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>     if (motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>     joint_data_[i].pos_ = default_joint_positions_[i];</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     joint_motor_states_[i].q = default_joint_positions_[i];</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>   }</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a> </span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>   imu_startup_time_ = nh_-&gt;now();</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>   lifecycle_timer_ = nh_-&gt;create_wall_timer(std::chrono::milliseconds(motor_lifecycle_period_ms),</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>                                             std::bind(&amp;LeggedReal::lifecycleTick, this));</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   if (!requestAllMotorsEnabled(true)) return false;</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a> </span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>   return setupTimestampInterface() &amp;&amp; setupBodyStateInterface() &amp;&amp; setupHybridJointInterface() &amp;&amp;</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>          setupImuSensorInterface() &amp;&amp; setupHardwareCommandInterface();</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a> }</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a> </span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a> void LeggedReal::motorStateCallback(const robot_interfaces::msg::MotorStateArray::SharedPtr msg) {</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>   verifyZeroFeedback(*msg);</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>   std::lock_guard&lt;std::mutex&gt; lock(feedback_mutex_);</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>   for (const auto&amp; state : msg-&gt;states)</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>   {</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>     const std::size_t i = state.route.motor_type;</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>     if (i &gt;= motor_mapping_-&gt;size())</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>     {</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>                            &quot;Ignoring feedback for unknown HPM motor index %u&quot;,</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>                            static_cast&lt;unsigned&gt;(state.route.motor_type));</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>       continue;</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>     }</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>     const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>     luvbot_hardware_interfaces::msg::MotorState mapped_state;</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>     mapped_state.route = mapping.route;</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>     mapped_state.valid = state.valid;</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>     mapped_state.error_code = state.error_code;</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>     mapped_state.operating_mode = state.operating_mode;</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>     mapped_state.q = state.q;</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>     mapped_state.dq = state.dq;</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>     mapped_state.tau = state.tau;</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>     const double previous_offset = feedback_wrap_[i].offset;</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>     const bool was_ready = feedback_wrap_[i].ready();</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>     const bool was_faulted = feedback_wrap_[i].fault;</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>     latest_feedback_[i] = motor_mapping_-&gt;updateFeedback(mapping, mapped_state, feedback_wrap_[i]);</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>     if (latest_feedback_[i].error_pending)</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>                            &quot;Motor %s transient error_code=%u: %u/%u consecutive feedback frames; &quot;</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>                            &quot;holding last good feedback&quot;,</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>                            mapping.joint_name.c_str(), static_cast&lt;unsigned&gt;(state.error_code),</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>                            feedback_wrap_[i].error_samples, system_command_arbiter::kMotorErrorFaultSamples);</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>     if (latest_feedback_[i].initializing &amp;&amp; !latest_feedback_[i].error_pending &amp;&amp;</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>         feedback_wrap_[i].stable_samples == 0U)</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>                            &quot;Motor %s feedback received but joint position/turn is unconfirmed: &quot;</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>                            &quot;motor_q=%.6f joint_limits=[%.6f, %.6f]; check calibration and mechanical pose&quot;,</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>                            mapping.joint_name.c_str(), state.q, mapping.joint_lower, mapping.joint_upper);</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>     if ((!was_ready &amp;&amp; feedback_wrap_[i].ready()) || previous_offset != feedback_wrap_[i].offset)</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor %s turn check: motor_q=%.6f offset=%.6f joint_q=%.6f ready=%s&quot;,</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>                   mapping.joint_name.c_str(), state.q, feedback_wrap_[i].offset, latest_feedback_[i].q,</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>                   feedback_wrap_[i].ready() ? &quot;true&quot; : &quot;false&quot;);</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>     if (!was_faulted &amp;&amp; feedback_wrap_[i].fault)</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>                    &quot;Motor %s feedback fault latched: motor_q=%.6f offset=%.6f joint_q=%.6f &quot;</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>                    &quot;error_code=%u consecutive_error_frames=%u; &quot;</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>                    &quot;active commands blocked; emergency damping remains available; &quot;</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>                    &quot;inspect feedback and disable before recovery&quot;,</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>                    mapping.joint_name.c_str(), state.q, feedback_wrap_[i].offset, latest_feedback_[i].q,</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>                    static_cast&lt;unsigned&gt;(state.error_code), feedback_wrap_[i].error_samples);</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>     feedback_updated_[i] = true;</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>   }</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>   // unsigned int feedback_mask =  msg-&gt;feedback_mask &amp; 0x001F_FFFF;</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>   constexpr unsigned int ALL_FEEDBACK_MASK = 0x001FFFFFu;</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a> </span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>   const uint32_t feedback_mask = static_cast&lt;uint32_t&gt;(msg-&gt;feedback_mask) &amp; ALL_FEEDBACK_MASK;</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a> </span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>   if (feedback_mask != ALL_FEEDBACK_MASK)</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>   {</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>     std::string missing_motors;</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>     for (unsigned int i = 0; i &lt; 21; ++i)</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>     {</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>       if ((feedback_mask &amp; (1u &lt;&lt; i)) == 0u)</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>       {</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>         if (!missing_motors.empty())</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>         {</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>           missing_motors += &quot;, &quot;;</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>         }</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>         missing_motors += std::to_string(i + 1);</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>       }</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>     }</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>     /*</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>     RCLCPP_WARN(</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>         this-&gt;get_logger(),</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>         &quot;电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X&quot;,</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>         missing_motors.c_str(),</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>         static_cast&lt;unsigned int&gt;(feedback_mask));</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>     */</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 5000,</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a>                          &quot;电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X&quot;, missing_motors.c_str(),</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>                          static_cast&lt;unsigned int&gt;(feedback_mask));</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>   }</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a> }</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a> </span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a> bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>   std::vector&lt;system_command_arbiter::JointFeedback&gt; feedback;</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>   std::vector&lt;bool&gt; updated;</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>   bool reset_feedback_watchdogs = false;</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>   bool motors_enabled_at_snapshot = false;</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>   {</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>     std::lock_guard&lt;std::mutex&gt; lock(feedback_mutex_);</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>     reset_feedback_watchdogs = reset_feedback_watchdogs_.exchange(false);</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>     motors_enabled_at_snapshot = motors_enabled_.load();</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>     feedback = latest_feedback_;</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>     updated = feedback_updated_;</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>     control_feedback_ready_ = true;</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>     for (std::size_t i = 0; i &lt; feedback_wrap_.size(); ++i)</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>     {</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>       control_wrap_offsets_[i] = feedback_wrap_[i].offset;</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>       if (motor_mapping_-&gt;entries()[i].enabled &amp;&amp; !feedback_wrap_[i].ready()) control_feedback_ready_ = false;</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>     }</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>     std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>   }</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>   if (reset_feedback_watchdogs)</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>   {</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>     std::fill(consecutive_missing_feedback_.begin(), consecutive_missing_feedback_.end(), 0);</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>     std::fill(feedback_fault_.begin(), feedback_fault_.end(), false);</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a>   }</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a> </span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>   bool motor_fault = false;</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>   for (std::size_t i = 0; i &lt; feedback.size(); ++i)</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>   {</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>     const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>     if (!mapping.enabled)</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>     {</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>       joint_motor_states_[i].q = default_joint_positions_[i];</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>       joint_motor_states_[i].dq = 0.0;</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a>       joint_motor_states_[i].tau = 0.0;</span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>       continue;</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a>     }</span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a> </span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a>     if (updated[i] &amp;&amp; feedback[i].valid &amp;&amp; feedback[i].error == 0U)</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>     {</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>       const bool recovered = feedback_fault_[i];</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>       feedback_fault_[i] = false;</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>       joint_data_[i].pos_ = feedback[i].q;</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>       joint_data_[i].vel_ =</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>           joint_filter_coeff_real_ * feedback[i].dq + (1.0 - joint_filter_coeff_real_) * joint_data_[i].prev_vel_;</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a>       joint_data_[i].tau_ = feedback[i].tau;</span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a>       joint_data_[i].prev_vel_ = joint_data_[i].vel_;</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>       if (recovered)</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>         RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motor %s feedback recovered; motor commands may resume&quot;,</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>                     joint_names_[i].c_str());</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>     }</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>     else if (updated[i] &amp;&amp; feedback[i].error_pending)</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>     {</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a>       // Count received error frames in the callback, not control cycles; keep the last good observation.</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>     }</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>     else if (updated[i] &amp;&amp; feedback[i].initializing)</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>     {</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>       // An uncalibrated joint can be online without a usable control observation.</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>       const bool recovered = feedback_fault_[i];</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>       feedback_fault_[i] = false;</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>       if (recovered)</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>         RCLCPP_INFO(nh_-&gt;get_logger(),</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>                     &quot;Motor %s feedback received again; joint position/turn still unconfirmed&quot;,</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>                     joint_names_[i].c_str());</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>     }</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a>     else if (updated[i])</span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a>     {</span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a>       const bool newly_faulted = !feedback_fault_[i];</span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>       feedback_fault_[i] = true;</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>       consecutive_missing_feedback_[i] = 0;</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a>       if (newly_faulted)</span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a>       {</span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a>         RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>                      &quot;\033[1;31mMotor %s (HPM index %zu) feedback fault: valid=%s error_code=%u; switching to &quot;</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>                      &quot;emergency damping\033[0m&quot;,</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>                      joint_names_[i].c_str(), i, feedback[i].valid ? &quot;true&quot; : &quot;false&quot;,</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a>                      static_cast&lt;unsigned&gt;(feedback[i].error));</span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a>       }</span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>     }</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>     else if (motors_enabled_at_snapshot &amp;&amp; !calibration_mode_.load())</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a>     {</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a>       const int previous_missing = consecutive_missing_feedback_[i];</span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a>       consecutive_missing_feedback_[i] = std::min(previous_missing + 1, max_consecutive_missing_);</span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>       if (consecutive_missing_feedback_[i] == std::max(1, max_consecutive_missing_ / 2))</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>         RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a>                     &quot;\033[1;33mMotor %s (HPM index %zu) no new motor feedback for %d control cycles; &quot;</span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>                     &quot;watchdog grace period remains active\033[0m&quot;,</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>                     joint_names_[i].c_str(), i, consecutive_missing_feedback_[i]);</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a>       if (previous_missing &lt; max_consecutive_missing_ &amp;&amp; consecutive_missing_feedback_[i] == max_consecutive_missing_)</span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a>       {</span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a>         feedback_fault_[i] = true;</span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a>         RCLCPP_ERROR(</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>             nh_-&gt;get_logger(),</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a>             &quot;\033[1;31mMotor %s (HPM index %zu) no new motor feedback for %d consecutive control cycles; &quot;</span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>             &quot;switching to emergency damping\033[0m&quot;,</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>             joint_names_[i].c_str(), i, max_consecutive_missing_);</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>       }</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>     }</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a> </span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a>     joint_motor_states_[i].q = joint_data_[i].pos_;</span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>     joint_motor_states_[i].dq = joint_data_[i].vel_;</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a>     joint_motor_states_[i].tau = joint_data_[i].tau_;</span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>   }</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a> </span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>   motor_fault = std::any_of(feedback_fault_.begin(), feedback_fault_.end(), [](bool value) { return value; });</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>   motor_fault_.store(motor_fault);</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>   emergency_stop_triggered_.store(motor_fault);</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a>   publishMotorsReady(motors_enabled_.load() &amp;&amp; !motor_fault);</span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a>   publishHardwareFault();</span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a> </span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a>   {</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a>     std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a>     imu_qx_ = imu_data_.ori[0];</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>     imu_qy_ = imu_data_.ori[1];</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>     imu_qz_ = imu_data_.ori[2];</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a>     imu_qw_ = imu_data_.ori[3];</span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a>     imu_gyx_ = imu_data_.angular_vel[0];</span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>     imu_gyy_ = imu_data_.angular_vel[1];</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>     imu_gyz_ = imu_data_.angular_vel[2];</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a>     if (odom_received_)</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a>     {</span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a>       base_px_ = odom_position_[0];</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>       base_py_ = odom_position_[1];</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a>       base_pz_ = odom_position_[2];</span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a>       base_qx_ = odom_orientation_[0];</span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a>       base_qy_ = odom_orientation_[1];</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a>       base_qz_ = odom_orientation_[2];</span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a>       base_qw_ = odom_orientation_[3];</span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a>     }</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a>     else</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a>     {</span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>       base_qx_ = imu_qx_;</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>       base_qy_ = imu_qy_;</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>       base_qz_ = imu_qz_;</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>       base_qw_ = imu_qw_;</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a>     }</span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a>   }</span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>   timestamp_ns_ = static_cast&lt;double&gt;(time.nanoseconds());</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>   return true;</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a> }</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a> </span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a> void LeggedReal::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {</span>
+<span id="A-L374" class="line"><a href="#A-L374"> 374</a>   const double quaternion_norm_squared =</span>
+<span id="A-L375" class="line"><a href="#A-L375"> 375</a>       msg-&gt;orientation.x * msg-&gt;orientation.x + msg-&gt;orientation.y * msg-&gt;orientation.y +</span>
+<span id="A-L376" class="line"><a href="#A-L376"> 376</a>       msg-&gt;orientation.z * msg-&gt;orientation.z + msg-&gt;orientation.w * msg-&gt;orientation.w;</span>
+<span id="A-L377" class="line"><a href="#A-L377"> 377</a>   const double values[]{msg-&gt;angular_velocity.x, msg-&gt;angular_velocity.y, msg-&gt;angular_velocity.z,</span>
+<span id="A-L378" class="line"><a href="#A-L378"> 378</a>                         quaternion_norm_squared};</span>
+<span id="A-L379" class="line"><a href="#A-L379"> 379</a>   if (!std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) ||</span>
+<span id="A-L380" class="line"><a href="#A-L380"> 380</a>       quaternion_norm_squared &lt; 1e-12)</span>
+<span id="A-L381" class="line"><a href="#A-L381"> 381</a>   {</span>
+<span id="A-L382" class="line"><a href="#A-L382"> 382</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;Ignoring invalid IMU sample&quot;);</span>
+<span id="A-L383" class="line"><a href="#A-L383"> 383</a>     return;</span>
+<span id="A-L384" class="line"><a href="#A-L384"> 384</a>   }</span>
+<span id="A-L385" class="line"><a href="#A-L385"> 385</a>   const double inverse_norm = 1.0 / std::sqrt(quaternion_norm_squared);</span>
+<span id="A-L386" class="line"><a href="#A-L386"> 386</a>   std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="A-L387" class="line"><a href="#A-L387"> 387</a>   imu_connection_status_ = true;</span>
+<span id="A-L388" class="line"><a href="#A-L388"> 388</a>   last_imu_received_time_ = nh_-&gt;now();</span>
+<span id="A-L389" class="line"><a href="#A-L389"> 389</a>   for (int i = 0; i &lt; 3; ++i)</span>
+<span id="A-L390" class="line"><a href="#A-L390"> 390</a>   {</span>
+<span id="A-L391" class="line"><a href="#A-L391"> 391</a>     imu_data_.angular_vel[i] = imu_first_read_ ? values[i]</span>
+<span id="A-L392" class="line"><a href="#A-L392"> 392</a>                                                : imu_filter_coeff_real_ * values[i] +</span>
+<span id="A-L393" class="line"><a href="#A-L393"> 393</a>                                                      (1.0 - imu_filter_coeff_real_) * imu_data_.prev_angular_vel[i];</span>
+<span id="A-L394" class="line"><a href="#A-L394"> 394</a>     imu_data_.prev_angular_vel[i] = imu_data_.angular_vel[i];</span>
+<span id="A-L395" class="line"><a href="#A-L395"> 395</a>   }</span>
+<span id="A-L396" class="line"><a href="#A-L396"> 396</a>   imu_first_read_ = false;</span>
+<span id="A-L397" class="line"><a href="#A-L397"> 397</a>   imu_data_.ori[0] = msg-&gt;orientation.x * inverse_norm;</span>
+<span id="A-L398" class="line"><a href="#A-L398"> 398</a>   imu_data_.ori[1] = msg-&gt;orientation.y * inverse_norm;</span>
+<span id="A-L399" class="line"><a href="#A-L399"> 399</a>   imu_data_.ori[2] = msg-&gt;orientation.z * inverse_norm;</span>
+<span id="A-L400" class="line"><a href="#A-L400"> 400</a>   imu_data_.ori[3] = msg-&gt;orientation.w * inverse_norm;</span>
+<span id="A-L401" class="line"><a href="#A-L401"> 401</a> }</span>
+<span id="A-L402" class="line"><a href="#A-L402"> 402</a> </span>
+<span id="A-L403" class="line"><a href="#A-L403"> 403</a> void LeggedReal::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {</span>
+<span id="A-L404" class="line"><a href="#A-L404"> 404</a>   const auto&amp; position = msg-&gt;pose.pose.position;</span>
+<span id="A-L405" class="line"><a href="#A-L405"> 405</a>   const auto&amp; orientation = msg-&gt;pose.pose.orientation;</span>
+<span id="A-L406" class="line"><a href="#A-L406"> 406</a>   const double norm_squared = orientation.x * orientation.x + orientation.y * orientation.y +</span>
+<span id="A-L407" class="line"><a href="#A-L407"> 407</a>                               orientation.z * orientation.z + orientation.w * orientation.w;</span>
+<span id="A-L408" class="line"><a href="#A-L408"> 408</a>   if (msg-&gt;header.frame_id.empty() || msg-&gt;child_frame_id.empty() || !std::isfinite(position.x) ||</span>
+<span id="A-L409" class="line"><a href="#A-L409"> 409</a>       !std::isfinite(position.y) || !std::isfinite(position.z) || !std::isfinite(norm_squared) || norm_squared &lt; 1e-12)</span>
+<span id="A-L410" class="line"><a href="#A-L410"> 410</a>   {</span>
+<span id="A-L411" class="line"><a href="#A-L411"> 411</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;Ignoring invalid odometry pose&quot;);</span>
+<span id="A-L412" class="line"><a href="#A-L412"> 412</a>     return;</span>
+<span id="A-L413" class="line"><a href="#A-L413"> 413</a>   }</span>
+<span id="A-L414" class="line"><a href="#A-L414"> 414</a>   const double inverse_norm = 1.0 / std::sqrt(norm_squared);</span>
+<span id="A-L415" class="line"><a href="#A-L415"> 415</a>   std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="A-L416" class="line"><a href="#A-L416"> 416</a>   odom_position_[0] = position.x;</span>
+<span id="A-L417" class="line"><a href="#A-L417"> 417</a>   odom_position_[1] = position.y;</span>
+<span id="A-L418" class="line"><a href="#A-L418"> 418</a>   odom_position_[2] = position.z;</span>
+<span id="A-L419" class="line"><a href="#A-L419"> 419</a>   odom_orientation_[0] = orientation.x * inverse_norm;</span>
+<span id="A-L420" class="line"><a href="#A-L420"> 420</a>   odom_orientation_[1] = orientation.y * inverse_norm;</span>
+<span id="A-L421" class="line"><a href="#A-L421"> 421</a>   odom_orientation_[2] = orientation.z * inverse_norm;</span>
+<span id="A-L422" class="line"><a href="#A-L422"> 422</a>   odom_orientation_[3] = orientation.w * inverse_norm;</span>
+<span id="A-L423" class="line"><a href="#A-L423"> 423</a>   odom_received_ = true;</span>
+<span id="A-L424" class="line"><a href="#A-L424"> 424</a> }</span>
+<span id="A-L425" class="line"><a href="#A-L425"> 425</a> </span>
+<span id="A-L426" class="line"><a href="#A-L426"> 426</a> bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {</span>
+<span id="A-L427" class="line"><a href="#A-L427"> 427</a>   bool imu_failed = false;</span>
+<span id="A-L428" class="line"><a href="#A-L428"> 428</a>   const rclcpp::Time current = nh_-&gt;now();</span>
+<span id="A-L429" class="line"><a href="#A-L429"> 429</a>   const bool motors_enabled = motors_enabled_.load();</span>
+<span id="A-L430" class="line"><a href="#A-L430"> 430</a>   {</span>
+<span id="A-L431" class="line"><a href="#A-L431"> 431</a>     std::lock_guard&lt;std::mutex&gt; lock(sensor_mutex_);</span>
+<span id="A-L432" class="line"><a href="#A-L432"> 432</a>     // No actuator command is published before lifecycle enable completes, so</span>
+<span id="A-L433" class="line"><a href="#A-L433"> 433</a>     // the IMU startup watchdog must not expire while its backend is still absent.</span>
+<span id="A-L434" class="line"><a href="#A-L434"> 434</a>     if (imu_enabled_ &amp;&amp; motors_enabled &amp;&amp; !imu_connection_status_)</span>
+<span id="A-L435" class="line"><a href="#A-L435"> 435</a>       imu_failed = (current - imu_startup_time_).seconds() &gt;= imu_startup_timeout_;</span>
+<span id="A-L436" class="line"><a href="#A-L436"> 436</a>     else if (imu_enabled_ &amp;&amp; motors_enabled &amp;&amp; (current - last_imu_received_time_).seconds() &gt; imu_connection_timeout_)</span>
+<span id="A-L437" class="line"><a href="#A-L437"> 437</a>     {</span>
+<span id="A-L438" class="line"><a href="#A-L438"> 438</a>       imu_connection_status_ = false;</span>
+<span id="A-L439" class="line"><a href="#A-L439"> 439</a>       imu_failed = true;</span>
+<span id="A-L440" class="line"><a href="#A-L440"> 440</a>     }</span>
+<span id="A-L441" class="line"><a href="#A-L441"> 441</a>   }</span>
+<span id="A-L442" class="line"><a href="#A-L442"> 442</a> </span>
+<span id="A-L443" class="line"><a href="#A-L443"> 443</a>   imu_fault_.store(imu_failed);</span>
+<span id="A-L444" class="line"><a href="#A-L444"> 444</a>   publishHardwareFault();</span>
+<span id="A-L445" class="line"><a href="#A-L445"> 445</a>   const bool stop = emergency_stop_triggered_.load() || imu_failed || lifecycle_fault_.load();</span>
+<span id="A-L446" class="line"><a href="#A-L446"> 446</a>   if (stop != emergency_published_)</span>
+<span id="A-L447" class="line"><a href="#A-L447"> 447</a>   {</span>
+<span id="A-L448" class="line"><a href="#A-L448"> 448</a>     std_msgs::msg::Bool message;</span>
+<span id="A-L449" class="line"><a href="#A-L449"> 449</a>     message.data = stop;</span>
+<span id="A-L450" class="line"><a href="#A-L450"> 450</a>     emergency_pub_-&gt;publish(message);</span>
+<span id="A-L451" class="line"><a href="#A-L451"> 451</a>     emergency_published_ = stop;</span>
+<span id="A-L452" class="line"><a href="#A-L452"> 452</a>     if (stop)</span>
+<span id="A-L453" class="line"><a href="#A-L453"> 453</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="A-L454" class="line"><a href="#A-L454"> 454</a>                    &quot;\033[1;31mMotor commands switched to emergency damping: emergency_stop=%s motor_feedback_fault=%s &quot;</span>
+<span id="A-L455" class="line"><a href="#A-L455"> 455</a>                    &quot;imu_fault=%s lifecycle_fault=%s\033[0m&quot;,</span>
+<span id="A-L456" class="line"><a href="#A-L456"> 456</a>                    emergency_stop_triggered_.load() ? &quot;true&quot; : &quot;false&quot;, motor_fault_.load() ? &quot;true&quot; : &quot;false&quot;,</span>
+<span id="A-L457" class="line"><a href="#A-L457"> 457</a>                    imu_failed ? &quot;true&quot; : &quot;false&quot;, lifecycle_fault_.load() ? &quot;true&quot; : &quot;false&quot;);</span>
+<span id="A-L458" class="line"><a href="#A-L458"> 458</a>     else</span>
+<span id="A-L459" class="line"><a href="#A-L459"> 459</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Hardware fault cleared; controller state determines motor commands&quot;);</span>
+<span id="A-L460" class="line"><a href="#A-L460"> 460</a>   }</span>
+<span id="A-L461" class="line"><a href="#A-L461"> 461</a>   // Serialize publication with disable, calibration transitions and SETZERO requests.</span>
+<span id="A-L462" class="line"><a href="#A-L462"> 462</a>   std::lock_guard&lt;std::mutex&gt; lifecycle_lock(lifecycle_mutex_);</span>
+<span id="A-L463" class="line"><a href="#A-L463"> 463</a>   // Serialize turn selection with publication, including the first powered command.</span>
+<span id="A-L464" class="line"><a href="#A-L464"> 464</a>   std::lock_guard&lt;std::mutex&gt; feedback_lock(feedback_mutex_);</span>
+<span id="A-L465" class="line"><a href="#A-L465"> 465</a>   bool zero_gain_command = !motors_enabled_.load() || calibration_mode_.load() || lifecycle_active_ ||</span>
+<span id="A-L466" class="line"><a href="#A-L466"> 466</a>                            lifecycle_fault_.load();</span>
+<span id="A-L467" class="line"><a href="#A-L467"> 467</a>   bool active_command = false;</span>
+<span id="A-L468" class="line"><a href="#A-L468"> 468</a>   bool damping_command = stop || zero_gain_command;</span>
+<span id="A-L469" class="line"><a href="#A-L469"> 469</a>   bool feedback_ready = control_feedback_ready_;</span>
+<span id="A-L470" class="line"><a href="#A-L470"> 470</a>   for (std::size_t i = 0; i &lt; feedback_wrap_.size(); ++i)</span>
+<span id="A-L471" class="line"><a href="#A-L471"> 471</a>   {</span>
+<span id="A-L472" class="line"><a href="#A-L472"> 472</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="A-L473" class="line"><a href="#A-L473"> 473</a>     damping_command = damping_command || feedback_wrap_[i].fault;</span>
+<span id="A-L474" class="line"><a href="#A-L474"> 474</a>     const auto&amp; command = joint_motor_commands_[i];</span>
+<span id="A-L475" class="line"><a href="#A-L475"> 475</a>     active_command = active_command || command.kp != 0.0 || command.dq_des != 0.0 || command.tau_ff != 0.0;</span>
+<span id="A-L476" class="line"><a href="#A-L476"> 476</a>     feedback_ready =</span>
+<span id="A-L477" class="line"><a href="#A-L477"> 477</a>         feedback_ready &amp;&amp; feedback_wrap_[i].ready() &amp;&amp; control_wrap_offsets_[i] == feedback_wrap_[i].offset;</span>
+<span id="A-L478" class="line"><a href="#A-L478"> 478</a>   }</span>
+<span id="A-L479" class="line"><a href="#A-L479"> 479</a>   if (!damping_command &amp;&amp; !feedback_ready)</span>
+<span id="A-L480" class="line"><a href="#A-L480"> 480</a>   {</span>
+<span id="A-L481" class="line"><a href="#A-L481"> 481</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L482" class="line"><a href="#A-L482"> 482</a>                          &quot;Publishing zero-gain MIT until all feedback turns are confirmed in the control snapshot&quot;);</span>
+<span id="A-L483" class="line"><a href="#A-L483"> 483</a>     zero_gain_command = true;</span>
+<span id="A-L484" class="line"><a href="#A-L484"> 484</a>     damping_command = true;</span>
+<span id="A-L485" class="line"><a href="#A-L485"> 485</a>   }</span>
+<span id="A-L486" class="line"><a href="#A-L486"> 486</a>   robot_interfaces::msg::MotorCommand output;</span>
+<span id="A-L487" class="line"><a href="#A-L487"> 487</a>   output.stamp = current;</span>
+<span id="A-L488" class="line"><a href="#A-L488"> 488</a>   output.sequence_id = ++command_sequence_;</span>
+<span id="A-L489" class="line"><a href="#A-L489"> 489</a>   output.control_mode = robot_interfaces::msg::MotorCommand::CONTROL_MODE_MIT;</span>
+<span id="A-L490" class="line"><a href="#A-L490"> 490</a>   output.commands.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="A-L491" class="line"><a href="#A-L491"> 491</a>   try</span>
+<span id="A-L492" class="line"><a href="#A-L492"> 492</a>   {</span>
+<span id="A-L493" class="line"><a href="#A-L493"> 493</a>     for (std::size_t i = 0; i &lt; joint_motor_commands_.size(); ++i)</span>
+<span id="A-L494" class="line"><a href="#A-L494"> 494</a>     {</span>
+<span id="A-L495" class="line"><a href="#A-L495"> 495</a>       const auto&amp; mapping = motor_mapping_-&gt;entries()[i];</span>
+<span id="A-L496" class="line"><a href="#A-L496"> 496</a>       if (!mapping.enabled) continue;</span>
+<span id="A-L497" class="line"><a href="#A-L497"> 497</a>       const auto&amp; command = joint_motor_commands_[i];</span>
+<span id="A-L498" class="line"><a href="#A-L498"> 498</a>       // Disabled/calibration states take precedence over emergency damping.</span>
+<span id="A-L499" class="line"><a href="#A-L499"> 499</a>       const auto mapped = motor_mapping_-&gt;commandFor(</span>
+<span id="A-L500" class="line"><a href="#A-L500"> 500</a>           mapping, damping_command ? joint_motor_states_[i].q : command.q_des,</span>
+<span id="A-L501" class="line"><a href="#A-L501"> 501</a>           damping_command ? 0.0 : command.dq_des, damping_command ? 0.0 : command.tau_ff,</span>
+<span id="A-L502" class="line"><a href="#A-L502"> 502</a>           damping_command ? 0.0 : command.kp,</span>
+<span id="A-L503" class="line"><a href="#A-L503"> 503</a>           zero_gain_command ? 0.0 : (damping_command ? emergency_damping_kd_ : command.kd),</span>
+<span id="A-L504" class="line"><a href="#A-L504"> 504</a>           feedback_wrap_[i].offset);</span>
+<span id="A-L505" class="line"><a href="#A-L505"> 505</a>       robot_interfaces::msg::MotorTarget target;</span>
+<span id="A-L506" class="line"><a href="#A-L506"> 506</a>       target.route.motor_type = static_cast&lt;uint8_t&gt;(i);</span>
+<span id="A-L507" class="line"><a href="#A-L507"> 507</a>       target.q = mapped.q;</span>
+<span id="A-L508" class="line"><a href="#A-L508"> 508</a>       target.dq = mapped.dq;</span>
+<span id="A-L509" class="line"><a href="#A-L509"> 509</a>       target.tau = mapped.tau;</span>
+<span id="A-L510" class="line"><a href="#A-L510"> 510</a>       target.kp = mapped.kp;</span>
+<span id="A-L511" class="line"><a href="#A-L511"> 511</a>       target.kd = mapped.kd;</span>
+<span id="A-L512" class="line"><a href="#A-L512"> 512</a>       output.commands.push_back(target);</span>
+<span id="A-L513" class="line"><a href="#A-L513"> 513</a>     }</span>
+<span id="A-L514" class="line"><a href="#A-L514"> 514</a>   } catch (const std::exception&amp; error)</span>
+<span id="A-L515" class="line"><a href="#A-L515"> 515</a>   {</span>
+<span id="A-L516" class="line"><a href="#A-L516"> 516</a>     emergency_stop_triggered_.store(true);</span>
+<span id="A-L517" class="line"><a href="#A-L517"> 517</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000, &quot;\033[1;31mRejected motor command: %s\033[0m&quot;,</span>
+<span id="A-L518" class="line"><a href="#A-L518"> 518</a>                           error.what());</span>
+<span id="A-L519" class="line"><a href="#A-L519"> 519</a>     return false;</span>
+<span id="A-L520" class="line"><a href="#A-L520"> 520</a>   }</span>
+<span id="A-L521" class="line"><a href="#A-L521"> 521</a>   if (command_publisher_-&gt;get_subscription_count() == 0U)</span>
+<span id="A-L522" class="line"><a href="#A-L522"> 522</a>     RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L523" class="line"><a href="#A-L523"> 523</a>                          &quot;\033[1;33mPublishing motor commands without an HPM subscriber\033[0m&quot;);</span>
+<span id="A-L524" class="line"><a href="#A-L524"> 524</a>   if (!damping_command &amp;&amp; active_command)</span>
+<span id="A-L525" class="line"><a href="#A-L525"> 525</a>     for (auto&amp; wrap : feedback_wrap_) wrap.locked = true;</span>
+<span id="A-L526" class="line"><a href="#A-L526"> 526</a>   command_publisher_-&gt;publish(output);</span>
+<span id="A-L527" class="line"><a href="#A-L527"> 527</a>   return true;</span>
+<span id="A-L528" class="line"><a href="#A-L528"> 528</a> }</span>
+<span id="A-L529" class="line"><a href="#A-L529"> 529</a> </span>
+<span id="A-L530" class="line"><a href="#A-L530"> 530</a> void LeggedReal::publishHardwareFault() {</span>
+<span id="A-L531" class="line"><a href="#A-L531"> 531</a>   const bool fault = motor_fault_.load() || imu_fault_.load() || lifecycle_fault_.load();</span>
+<span id="A-L532" class="line"><a href="#A-L532"> 532</a>   std::lock_guard&lt;std::mutex&gt; lock(status_mutex_);</span>
+<span id="A-L533" class="line"><a href="#A-L533"> 533</a>   if (fault == hardware_fault_published_) return;</span>
+<span id="A-L534" class="line"><a href="#A-L534"> 534</a>   std_msgs::msg::Bool message;</span>
+<span id="A-L535" class="line"><a href="#A-L535"> 535</a>   message.data = fault;</span>
+<span id="A-L536" class="line"><a href="#A-L536"> 536</a>   hardware_fault_pub_-&gt;publish(message);</span>
+<span id="A-L537" class="line"><a href="#A-L537"> 537</a>   hardware_fault_published_ = fault;</span>
+<span id="A-L538" class="line"><a href="#A-L538"> 538</a> }</span>
+<span id="A-L539" class="line"><a href="#A-L539"> 539</a> </span>
+<span id="A-L540" class="line"><a href="#A-L540"> 540</a> void LeggedReal::publishMotorsReady(bool ready) {</span>
+<span id="A-L541" class="line"><a href="#A-L541"> 541</a>   std::lock_guard&lt;std::mutex&gt; lock(status_mutex_);</span>
+<span id="A-L542" class="line"><a href="#A-L542"> 542</a>   if (ready == motors_ready_state_) return;</span>
+<span id="A-L543" class="line"><a href="#A-L543"> 543</a>   std_msgs::msg::Bool message;</span>
+<span id="A-L544" class="line"><a href="#A-L544"> 544</a>   message.data = ready;</span>
+<span id="A-L545" class="line"><a href="#A-L545"> 545</a>   motors_ready_pub_-&gt;publish(message);</span>
+<span id="A-L546" class="line"><a href="#A-L546"> 546</a>   motors_ready_state_ = ready;</span>
+<span id="A-L547" class="line"><a href="#A-L547"> 547</a>   if (ready)</span>
+<span id="A-L548" class="line"><a href="#A-L548"> 548</a>     RCLCPP_INFO(nh_-&gt;get_logger(),</span>
+<span id="A-L549" class="line"><a href="#A-L549"> 549</a>                 &quot;Motor command path ready for %zu enabled motors after publishing the HPM enable command&quot;,</span>
+<span id="A-L550" class="line"><a href="#A-L550"> 550</a>                 motor_mapping_-&gt;enabledSize());</span>
+<span id="A-L551" class="line"><a href="#A-L551"> 551</a>   else if (motors_enabled_.load())</span>
+<span id="A-L552" class="line"><a href="#A-L552"> 552</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;\033[1;31mMotor readiness lost; inspect preceding per-motor errors\033[0m&quot;);</span>
+<span id="A-L553" class="line"><a href="#A-L553"> 553</a>   else</span>
+<span id="A-L554" class="line"><a href="#A-L554"> 554</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Motors disabled; readiness is false&quot;);</span>
+<span id="A-L555" class="line"><a href="#A-L555"> 555</a> }</span>
+<span id="A-L556" class="line"><a href="#A-L556"> 556</a> </span>
+<span id="A-L557" class="line"><a href="#A-L557"> 557</a> bool LeggedReal::requestAllMotorsEnabled(bool enabled) {</span>
+<span id="A-L558" class="line"><a href="#A-L558"> 558</a>   if (!motor_mapping_)</span>
+<span id="A-L559" class="line"><a href="#A-L559"> 559</a>   {</span>
+<span id="A-L560" class="line"><a href="#A-L560"> 560</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Motor lifecycle request blocked before motor mapping is configured&quot;);</span>
+<span id="A-L561" class="line"><a href="#A-L561"> 561</a>     return false;</span>
+<span id="A-L562" class="line"><a href="#A-L562"> 562</a>   }</span>
+<span id="A-L563" class="line"><a href="#A-L563"> 563</a>   std::lock_guard&lt;std::mutex&gt; lock(lifecycle_mutex_);</span>
+<span id="A-L564" class="line"><a href="#A-L564"> 564</a>   if (enabled &amp;&amp; (calibration_mode_.load() || zero_pending_ || zero_failed_))</span>
+<span id="A-L565" class="line"><a href="#A-L565"> 565</a>   {</span>
+<span id="A-L566" class="line"><a href="#A-L566"> 566</a>     RCLCPP_ERROR(nh_-&gt;get_logger(), &quot;Motor enable blocked by active or failed calibration&quot;);</span>
+<span id="A-L567" class="line"><a href="#A-L567"> 567</a>     return false;</span>
+<span id="A-L568" class="line"><a href="#A-L568"> 568</a>   }</span>
+<span id="A-L569" class="line"><a href="#A-L569"> 569</a>   lifecycle_target_enabled_ = enabled;</span>
+<span id="A-L570" class="line"><a href="#A-L570"> 570</a>   lifecycle_active_ = true;</span>
+<span id="A-L571" class="line"><a href="#A-L571"> 571</a>   lifecycle_started_ = nh_-&gt;now();</span>
+<span id="A-L572" class="line"><a href="#A-L572"> 572</a>   lifecycle_fault_.store(false);</span>
+<span id="A-L573" class="line"><a href="#A-L573"> 573</a>   if (!enabled)</span>
+<span id="A-L574" class="line"><a href="#A-L574"> 574</a>   {</span>
+<span id="A-L575" class="line"><a href="#A-L575"> 575</a>     motors_enabled_.store(false);</span>
+<span id="A-L576" class="line"><a href="#A-L576"> 576</a>     publishMotorsReady(false);</span>
+<span id="A-L577" class="line"><a href="#A-L577"> 577</a>   }</span>
+<span id="A-L578" class="line"><a href="#A-L578"> 578</a>   publishHardwareFault();</span>
+<span id="A-L579" class="line"><a href="#A-L579"> 579</a>   return true;</span>
+<span id="A-L580" class="line"><a href="#A-L580"> 580</a> }</span>
+<span id="A-L581" class="line"><a href="#A-L581"> 581</a> </span>
+<span id="A-L582" class="line"><a href="#A-L582"> 582</a> void LeggedReal::lifecycleTick() {</span>
+<span id="A-L583" class="line"><a href="#A-L583"> 583</a>   std::lock_guard&lt;std::mutex&gt; lock(lifecycle_mutex_);</span>
+<span id="A-L584" class="line"><a href="#A-L584"> 584</a>   if (!lifecycle_active_) return;</span>
+<span id="A-L585" class="line"><a href="#A-L585"> 585</a>   const rclcpp::Time current = nh_-&gt;now();</span>
+<span id="A-L586" class="line"><a href="#A-L586"> 586</a>   if (enable_publisher_-&gt;get_subscription_count() == 0U)</span>
+<span id="A-L587" class="line"><a href="#A-L587"> 587</a>   {</span>
+<span id="A-L588" class="line"><a href="#A-L588"> 588</a>     if ((current - lifecycle_started_).seconds() &gt; 20.0)</span>
+<span id="A-L589" class="line"><a href="#A-L589"> 589</a>     {</span>
+<span id="A-L590" class="line"><a href="#A-L590"> 590</a>       lifecycle_active_ = false;</span>
+<span id="A-L591" class="line"><a href="#A-L591"> 591</a>       motors_enabled_.store(false);</span>
+<span id="A-L592" class="line"><a href="#A-L592"> 592</a>       lifecycle_fault_.store(true);</span>
+<span id="A-L593" class="line"><a href="#A-L593"> 593</a>       publishMotorsReady(false);</span>
+<span id="A-L594" class="line"><a href="#A-L594"> 594</a>       publishHardwareFault();</span>
+<span id="A-L595" class="line"><a href="#A-L595"> 595</a>       RCLCPP_ERROR(nh_-&gt;get_logger(),</span>
+<span id="A-L596" class="line"><a href="#A-L596"> 596</a>                    &quot;\033[1;31mTimed out waiting for /actuator/motor/enable subscriber; motors remain disabled\033[0m&quot;);</span>
+<span id="A-L597" class="line"><a href="#A-L597"> 597</a>     }</span>
+<span id="A-L598" class="line"><a href="#A-L598"> 598</a>     else</span>
+<span id="A-L599" class="line"><a href="#A-L599"> 599</a>       RCLCPP_WARN_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L600" class="line"><a href="#A-L600"> 600</a>                            &quot;\033[1;33mWaiting for HPM subscriber on /actuator/motor/enable\033[0m&quot;);</span>
+<span id="A-L601" class="line"><a href="#A-L601"> 601</a>     return;</span>
+<span id="A-L602" class="line"><a href="#A-L602"> 602</a>   }</span>
+<span id="A-L603" class="line"><a href="#A-L603"> 603</a> </span>
+<span id="A-L604" class="line"><a href="#A-L604"> 604</a>   robot_interfaces::msg::MotorEnableCommand command;</span>
+<span id="A-L605" class="line"><a href="#A-L605"> 605</a>   command.stamp = current;</span>
+<span id="A-L606" class="line"><a href="#A-L606"> 606</a>   command.sequence_id = ++enable_sequence_;</span>
+<span id="A-L607" class="line"><a href="#A-L607"> 607</a>   command.motor_types.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="A-L608" class="line"><a href="#A-L608"> 608</a>   command.enabled.reserve(motor_mapping_-&gt;enabledSize());</span>
+<span id="A-L609" class="line"><a href="#A-L609"> 609</a>   for (std::size_t i = 0; i &lt; motor_mapping_-&gt;size(); ++i)</span>
+<span id="A-L610" class="line"><a href="#A-L610"> 610</a>   {</span>
+<span id="A-L611" class="line"><a href="#A-L611"> 611</a>     if (!motor_mapping_-&gt;entries()[i].enabled) continue;</span>
+<span id="A-L612" class="line"><a href="#A-L612"> 612</a>     command.motor_types.push_back(static_cast&lt;uint8_t&gt;(i));</span>
+<span id="A-L613" class="line"><a href="#A-L613"> 613</a>     command.enabled.push_back(lifecycle_target_enabled_);</span>
+<span id="A-L614" class="line"><a href="#A-L614"> 614</a>   }</span>
+<span id="A-L615" class="line"><a href="#A-L615"> 615</a>   lifecycle_active_ = false;</span>
+<span id="A-L616" class="line"><a href="#A-L616"> 616</a>   {</span>
+<span id="A-L617" class="line"><a href="#A-L617"> 617</a>     // Do not count feedback received before this enable publication toward the</span>
+<span id="A-L618" class="line"><a href="#A-L618"> 618</a>     // first complete post-enable feedback round.</span>
+<span id="A-L619" class="line"><a href="#A-L619"> 619</a>     std::lock_guard&lt;std::mutex&gt; feedback_lock(feedback_mutex_);</span>
+<span id="A-L620" class="line"><a href="#A-L620"> 620</a>     if (lifecycle_target_enabled_)</span>
+<span id="A-L621" class="line"><a href="#A-L621"> 621</a>     {</span>
+<span id="A-L622" class="line"><a href="#A-L622"> 622</a>       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="A-L623" class="line"><a href="#A-L623"> 623</a>       for (auto&amp; wrap : feedback_wrap_)</span>
+<span id="A-L624" class="line"><a href="#A-L624"> 624</a>       {</span>
+<span id="A-L625" class="line"><a href="#A-L625"> 625</a>         wrap.stable_samples = 0U;</span>
+<span id="A-L626" class="line"><a href="#A-L626"> 626</a>         wrap.error_code = 0U;</span>
+<span id="A-L627" class="line"><a href="#A-L627"> 627</a>         wrap.error_samples = 0U;</span>
+<span id="A-L628" class="line"><a href="#A-L628"> 628</a>       }</span>
+<span id="A-L629" class="line"><a href="#A-L629"> 629</a>       for (auto&amp; feedback : latest_feedback_) feedback.valid = false;</span>
+<span id="A-L630" class="line"><a href="#A-L630"> 630</a>       reset_feedback_watchdogs_.store(true);</span>
+<span id="A-L631" class="line"><a href="#A-L631"> 631</a>     }</span>
+<span id="A-L632" class="line"><a href="#A-L632"> 632</a>     else</span>
+<span id="A-L633" class="line"><a href="#A-L633"> 633</a>     {</span>
+<span id="A-L634" class="line"><a href="#A-L634"> 634</a>       for (auto&amp; wrap : feedback_wrap_) wrap = system_command_arbiter::FeedbackWrapState{};</span>
+<span id="A-L635" class="line"><a href="#A-L635"> 635</a>       for (auto&amp; feedback : latest_feedback_) feedback.valid = false;</span>
+<span id="A-L636" class="line"><a href="#A-L636"> 636</a>       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);</span>
+<span id="A-L637" class="line"><a href="#A-L637"> 637</a>     }</span>
+<span id="A-L638" class="line"><a href="#A-L638"> 638</a>     enable_publisher_-&gt;publish(command);</span>
+<span id="A-L639" class="line"><a href="#A-L639"> 639</a>     motors_enabled_.store(lifecycle_target_enabled_);</span>
+<span id="A-L640" class="line"><a href="#A-L640"> 640</a>   }</span>
+<span id="A-L641" class="line"><a href="#A-L641"> 641</a>   if (lifecycle_target_enabled_)</span>
+<span id="A-L642" class="line"><a href="#A-L642"> 642</a>   {</span>
+<span id="A-L643" class="line"><a href="#A-L643"> 643</a>     std::lock_guard&lt;std::mutex&gt; sensor_lock(sensor_mutex_);</span>
+<span id="A-L644" class="line"><a href="#A-L644"> 644</a>     if (!imu_connection_status_) imu_startup_time_ = current;</span>
+<span id="A-L645" class="line"><a href="#A-L645"> 645</a>   }</span>
+<span id="A-L646" class="line"><a href="#A-L646"> 646</a>   lifecycle_fault_.store(false);</span>
+<span id="A-L647" class="line"><a href="#A-L647"> 647</a>   publishHardwareFault();</span>
+<span id="A-L648" class="line"><a href="#A-L648"> 648</a>   RCLCPP_INFO(nh_-&gt;get_logger(), &quot;Published HPM %s command for %zu motors&quot;,</span>
+<span id="A-L649" class="line"><a href="#A-L649"> 649</a>               lifecycle_target_enabled_ ? &quot;enable&quot; : &quot;disable&quot;, motor_mapping_-&gt;enabledSize());</span>
+<span id="A-L650" class="line"><a href="#A-L650"> 650</a> }</span>
+<span id="A-L651" class="line"><a href="#A-L651"> 651</a> </span>
+<span id="A-L652" class="line"><a href="#A-L652"> 652</a> }  // namespace legged</span></pre></html>

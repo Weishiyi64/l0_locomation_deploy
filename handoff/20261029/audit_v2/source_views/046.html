@@ -1,0 +1,51 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_env_real/legged_real/package.xml</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_env_real/legged_real/package.xml</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> &lt;?xml version=&quot;1.0&quot;?&gt;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &lt;package format=&quot;3&quot;&gt;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a>     &lt;name&gt;legged_real&lt;/name&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a>     &lt;version&gt;0.0.0&lt;/version&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>     &lt;description&gt;Real robot hardware layer using ROS2 motor command, state, and lifecycle interfaces.&lt;/description&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>     &lt;maintainer email=&quot;2466087629@qq.com&quot;&gt;ShiboMu&lt;/maintainer&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a>     &lt;license&gt;MIT&lt;/license&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>     &lt;buildtool_depend&gt;ament_cmake&lt;/buildtool_depend&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>     &lt;exec_depend&gt;rclpy&lt;/exec_depend&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>     &lt;exec_depend&gt;python3-yaml&lt;/exec_depend&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>     &lt;depend&gt;rclcpp&lt;/depend&gt;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     &lt;depend&gt;nav_msgs&lt;/depend&gt;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>     &lt;depend&gt;sensor_msgs&lt;/depend&gt;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     &lt;depend&gt;std_msgs&lt;/depend&gt;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     &lt;depend&gt;legged_controllers&lt;/depend&gt;</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     &lt;depend&gt;luvbot_hardware_interfaces&lt;/depend&gt;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     &lt;depend&gt;robot_interfaces&lt;/depend&gt;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>     &lt;depend&gt;system_command_arbiter&lt;/depend&gt;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     &lt;depend&gt;yaml_cpp_vendor&lt;/depend&gt;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     &lt;export&gt;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>         &lt;build_type&gt;ament_cmake&lt;/build_type&gt;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     &lt;/export&gt;</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> &lt;/package&gt;</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> &lt;?xml version=&quot;1.0&quot;?&gt;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &lt;package format=&quot;3&quot;&gt;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a>     &lt;name&gt;legged_real&lt;/name&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a>     &lt;version&gt;0.0.0&lt;/version&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a>     &lt;description&gt;Real robot hardware layer using ROS2 motor command, state, and lifecycle interfaces.&lt;/description&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a>     &lt;maintainer email=&quot;2466087629@qq.com&quot;&gt;ShiboMu&lt;/maintainer&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> </span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a>     &lt;license&gt;MIT&lt;/license&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> </span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>     &lt;buildtool_depend&gt;ament_cmake&lt;/buildtool_depend&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>     &lt;depend&gt;rclcpp&lt;/depend&gt;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     &lt;depend&gt;nav_msgs&lt;/depend&gt;</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>     &lt;depend&gt;sensor_msgs&lt;/depend&gt;</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>     &lt;depend&gt;std_msgs&lt;/depend&gt;</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>     &lt;depend&gt;legged_controllers&lt;/depend&gt;</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>     &lt;depend&gt;luvbot_hardware_interfaces&lt;/depend&gt;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     &lt;depend&gt;robot_interfaces&lt;/depend&gt;</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     &lt;depend&gt;system_command_arbiter&lt;/depend&gt;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     &lt;depend&gt;yaml_cpp_vendor&lt;/depend&gt;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> </span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     &lt;export&gt;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>         &lt;build_type&gt;ament_cmake&lt;/build_type&gt;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     &lt;/export&gt;</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> &lt;/package&gt;</span></pre></html>

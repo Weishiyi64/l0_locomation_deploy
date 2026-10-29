@@ -1,0 +1,831 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/rknn_model.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/rknn_model.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;rknn_model.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;algorithm&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;cctype&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;cmath&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;cstdint&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;chrono&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;cstring&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;fstream&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;limits&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;sstream&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &lt;set&gt;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> </span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> namespace {</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> std::string lowercase(std::string value) {</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   std::transform(value.begin(), value.end(), value.begin(),</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>                  [](unsigned char c) { return static_cast&lt;char&gt;(std::tolower(c)); });</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   return value;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> }</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> void checkRknn(int ret, const std::string&amp; operation) {</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   if (ret != RKNN_SUCC) throw std::runtime_error(operation + &quot; failed, ret=&quot; + std::to_string(ret));</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> }</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> </span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> double millisecondsSince(const std::chrono::steady_clock::time_point&amp; start) {</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   return std::chrono::duration&lt;double, std::milli&gt;(std::chrono::steady_clock::now() - start).count();</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> }</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> </span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> std::string describe(const rknn_tensor_attr&amp; attr) {</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   std::ostringstream out;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   out &lt;&lt; attr.name &lt;&lt; &quot;[&quot; &lt;&lt; attr.index &lt;&lt; &quot;] dims=&quot;;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   for (std::uint32_t i = 0; i &lt; attr.n_dims &amp;&amp; i &lt; RKNN_MAX_DIMS; ++i) out &lt;&lt; (i ? &quot;x&quot; : &quot;&quot;) &lt;&lt; attr.dims[i];</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   out &lt;&lt; &quot; fmt=&quot; &lt;&lt; get_format_string(attr.fmt) &lt;&lt; &quot; type=&quot; &lt;&lt; get_type_string(attr.type)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>       &lt;&lt; &quot; qnt=&quot; &lt;&lt; get_qnt_type_string(attr.qnt_type) &lt;&lt; &quot; zp=&quot; &lt;&lt; attr.zp &lt;&lt; &quot; scale=&quot; &lt;&lt; attr.scale</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>       &lt;&lt; &quot; elements=&quot; &lt;&lt; attr.n_elems</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>       &lt;&lt; &quot; size=&quot; &lt;&lt; attr.size &lt;&lt; &quot; stride_size=&quot; &lt;&lt; attr.size_with_stride</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>       &lt;&lt; &quot; w_stride=&quot; &lt;&lt; attr.w_stride &lt;&lt; &quot; h_stride=&quot; &lt;&lt; attr.h_stride;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   return out.str();</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> }</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> bool supportedResidentFloat(const rknn_tensor_attr&amp; attr) {</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   // RKNN can tag FP16 I/O as AFFINE. Rockchip&#x27;s rknpu2 examples explicitly</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   // exclude FP16 from their AFFINE quantization check. Native FP16 bytes still</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   // represent IEEE half values: do not apply integer scale/zp or rewrite attrs.</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   // Keep FP32/NONE support; integer, DFP and unknown encodings remain rejected.</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>   if (attr.type == RKNN_TENSOR_FLOAT16)</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     return attr.qnt_type == RKNN_TENSOR_QNT_NONE || attr.qnt_type == RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   return attr.type == RKNN_TENSOR_FLOAT32 &amp;&amp; attr.qnt_type == RKNN_TENSOR_QNT_NONE;</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> }</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a> </span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> // IEEE 754 binary16, round-to-nearest, ties-to-even, including subnormals.</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> // No ARM-specific casts or FPCR-dependent rounding in the parameter loader.</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> std::uint16_t toHalf(float value) {</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   std::uint32_t bits;</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   std::memcpy(&amp;bits, &amp;value, sizeof(bits));</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   const auto sign = static_cast&lt;std::uint16_t&gt;((bits &gt;&gt; 16U) &amp; 0x8000U);</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   const int exponent = static_cast&lt;int&gt;((bits &gt;&gt; 23U) &amp; 255U) - 127;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   const std::uint32_t fraction = bits &amp; 0x7fffffU;</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   if (exponent &lt; -25) return sign;</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   const unsigned shift = exponent &lt; -14 ? static_cast&lt;unsigned&gt;(-exponent - 1) : 13U;</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   const std::uint32_t significand = exponent &lt; -14 ? fraction | 0x800000U : fraction;</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   std::uint32_t rounded = significand &gt;&gt; shift;</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   const std::uint32_t remainder = significand &amp; ((1U &lt;&lt; shift) - 1U);</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   const std::uint32_t halfway = 1U &lt;&lt; (shift - 1U);</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   if (remainder &gt; halfway || (remainder == halfway &amp;&amp; (rounded &amp; 1U))) ++rounded;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   return static_cast&lt;std::uint16_t&gt;(sign | (exponent &lt; -14 ? rounded :</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>       (static_cast&lt;std::uint32_t&gt;(exponent + 15) &lt;&lt; 10U) + rounded));</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> }</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> </span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a> float fromHalf(std::uint16_t bits) {</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>   const int exponent = (bits &gt;&gt; 10U) &amp; 31U;</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>   if (exponent == 31) return std::numeric_limits&lt;float&gt;::quiet_NaN();</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   const int fraction = bits &amp; 1023U;</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   const float value = std::ldexp(static_cast&lt;float&gt;(exponent ? 1024 + fraction : fraction),</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>                                 exponent ? exponent - 25 : -24);</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   return bits &amp; 0x8000U ? -value : value;</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> }</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a> }  // namespace</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> std::string rknnModelPath(const std::string&amp; onnx_path) {</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>   std::string path = onnx_path;</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   constexpr char extension[] = &quot;.onnx&quot;;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   if (path.size() &gt;= sizeof(extension) - 1 &amp;&amp;</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>       path.compare(path.size() - (sizeof(extension) - 1), sizeof(extension) - 1, extension) == 0)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     path.replace(path.size() - (sizeof(extension) - 1), sizeof(extension) - 1, &quot;.rknn&quot;);</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   else</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     path += &quot;.rknn&quot;;</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   return path;</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a> }</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> </span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> RknnModel::RknnModel(const std::string&amp; model_path, InputMode mode) : input_mode_(mode) {</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   std::ifstream file(model_path, std::ios::binary | std::ios::ate);</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   if (!file.good()) throw std::runtime_error(&quot;RKNN model not found: &quot; + model_path);</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a> </span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   const std::streamsize size = file.tellg();</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>   if (size &lt;= 0 || static_cast&lt;std::uint64_t&gt;(size) &gt; std::numeric_limits&lt;std::uint32_t&gt;::max())</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     throw std::runtime_error(&quot;RKNN model has invalid size: &quot; + model_path);</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a> </span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>   std::vector&lt;char&gt; data(static_cast&lt;std::size_t&gt;(size));</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   file.seekg(0, std::ios::beg);</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   if (!file.read(data.data(), size)) throw std::runtime_error(&quot;Failed to read RKNN model: &quot; + model_path);</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> </span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   // These flags belong only to the persistent context. Copy-mode AMP/static/reference</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   // contexts retain the SDK&#x27;s original cache and inputs_set/outputs_get behavior.</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   const std::uint32_t flags = mode == InputMode::ResidentWbc ?</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>       RKNN_FLAG_DISABLE_FLUSH_INPUT_MEM_CACHE | RKNN_FLAG_DISABLE_FLUSH_OUTPUT_MEM_CACHE : 0;</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   checkRknn(rknn_init(&amp;context_, data.data(), static_cast&lt;std::uint32_t&gt;(data.size()), flags, nullptr),</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>             &quot;rknn_init(&quot; + model_path + &quot;)&quot;);</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a> </span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   try</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>   {</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     rknn_input_output_num io_num{};</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     checkRknn(rknn_query(context_, RKNN_QUERY_IN_OUT_NUM, &amp;io_num, sizeof(io_num)), &quot;RKNN query I/O count&quot;);</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     if (io_num.n_input == 0 || io_num.n_output == 0)</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>       throw std::runtime_error(&quot;RKNN models must have at least one input and one output&quot;);</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a> </span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     input_attrs_.resize(io_num.n_input);</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     input_names_.reserve(io_num.n_input);</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     for (std::uint32_t i = 0; i &lt; io_num.n_input; ++i)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     {</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>       input_attrs_[i].index = i;</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>       checkRknn(rknn_query(context_, RKNN_QUERY_INPUT_ATTR, &amp;input_attrs_[i], sizeof(input_attrs_[i])),</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>                 &quot;RKNN query input &quot; + std::to_string(i));</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>       input_names_.emplace_back(input_attrs_[i].name);</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     }</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a> </span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>     output_names_.reserve(io_num.n_output);</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     output_buffers_.reserve(io_num.n_output);</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     outputs_.resize(io_num.n_output);</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     for (std::uint32_t i = 0; i &lt; io_num.n_output; ++i)</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     {</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>       rknn_tensor_attr output_attr{};</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>       output_attr.index = i;</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>       checkRknn(rknn_query(context_, RKNN_QUERY_OUTPUT_ATTR, &amp;output_attr, sizeof(output_attr)),</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>                 &quot;RKNN query output &quot; + std::to_string(i));</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>       output_names_.emplace_back(output_attr.name);</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>       output_attrs_.push_back(output_attr);</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>       output_buffers_.emplace_back(output_attr.n_elems, 0.0f);</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>       outputs_[i].index = i;</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>       outputs_[i].want_float = 1;</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>     }</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     if (mode == InputMode::ResidentWbc) initializeResident();</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>   } catch (...)</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>   {</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>     releaseResident();</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>     rknn_destroy(context_);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     context_ = 0;</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>     throw;</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>   }</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> }</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a> </span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a> RknnModel::~RknnModel() {</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>   releaseResident();</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   if (context_ != 0) rknn_destroy(context_);</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> }</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a> </span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a> std::size_t RknnModel::inputCount() const { return input_attrs_.size(); }</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a> </span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a> std::size_t RknnModel::inputElements() const { return inputElements(0); }</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a> </span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a> std::size_t RknnModel::inputElements(std::size_t index) const { return input_attrs_.at(index).n_elems; }</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a> </span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a> int RknnModel::inputIndex(const std::string&amp; name) const {</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>   const std::string wanted = lowercase(name);</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>   for (std::size_t i = 0; i &lt; input_names_.size(); ++i)</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>   {</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     if (lowercase(input_names_[i]) == wanted) return static_cast&lt;int&gt;(i);</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>   }</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>   return -1;</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a> }</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a> </span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a> const std::string&amp; RknnModel::inputName(std::size_t index) const { return input_names_.at(index); }</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a> </span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a> std::vector&lt;std::size_t&gt; RknnModel::inputShape(std::size_t index) const {</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>   const auto&amp; attr = input_attrs_.at(index);</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>   return std::vector&lt;std::size_t&gt;(attr.dims, attr.dims + attr.n_dims);</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a> }</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a> </span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a> rknn_tensor_type RknnModel::inputType(std::size_t index) const { return input_attrs_.at(index).type; }</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a> </span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a> std::string RknnModel::runtimeVersion() const {</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>   rknn_sdk_version version{};</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>   checkRknn(rknn_query(context_, RKNN_QUERY_SDK_VERSION, &amp;version, sizeof(version)), &quot;RKNN SDK version&quot;);</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>   return std::string(&quot;runtime=&quot;) + version.api_version + &quot;, driver=&quot; + version.drv_version;</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a> }</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a> </span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a> std::size_t RknnModel::outputElements(std::size_t index) const { return output_buffers_.at(index).size(); }</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a> </span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> std::size_t RknnModel::outputCount() const { return output_buffers_.size(); }</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a> </span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a> int RknnModel::outputIndex(const std::string&amp; name) const {</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>   if (name.empty()) return 0;</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>   const std::string wanted = lowercase(name);</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>   for (std::size_t i = 0; i &lt; output_names_.size(); ++i)</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>   {</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     if (lowercase(output_names_[i]) == wanted) return static_cast&lt;int&gt;(i);</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>   }</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   return -1;</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a> }</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a> </span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a> const std::string&amp; RknnModel::outputName(std::size_t index) const { return output_names_.at(index); }</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a> </span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a> const std::vector&lt;float&gt;&amp; RknnModel::output(std::size_t index) const { return output_buffers_.at(index); }</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a> </span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> const std::string&amp; RknnModel::lastError() const { return last_error_; }</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a> </span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a> bool RknnModel::run(const float* input, std::size_t element_count) {</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>   if (inputCount() != 1)</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>   {</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>     last_error_ = &quot;single-input run called for a model with &quot; + std::to_string(inputCount()) + &quot; inputs&quot;;</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>     return false;</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>   }</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>   return run(std::vector&lt;const float*&gt;{input}, std::vector&lt;std::size_t&gt;{element_count});</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a> }</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a> </span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a> bool RknnModel::run(const std::vector&lt;const float*&gt;&amp; inputs, const std::vector&lt;std::size_t&gt;&amp; element_counts) {</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>   last_error_.clear();</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>   if (input_mode_ != InputMode::Copy) {</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     last_error_ = &quot;inputs_set is forbidden on a resident context&quot;;</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>     return false;</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>   }</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>   if (inputs.size() != inputCount() || element_counts.size() != inputCount())</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>   {</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>     last_error_ =</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>         &quot;input count mismatch: expected &quot; + std::to_string(inputCount()) + &quot;, got &quot; + std::to_string(inputs.size());</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>     return false;</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>   }</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a> </span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>   std::vector&lt;rknn_input&gt; rknn_inputs(inputCount());</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>   for (std::size_t i = 0; i &lt; inputCount(); ++i)</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>   {</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>     if (inputs[i] == nullptr || element_counts[i] != inputElements(i))</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>     {</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>       last_error_ = &quot;input &#x27;&quot; + inputName(i) + &quot;&#x27; element count mismatch: expected &quot; +</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>                     std::to_string(inputElements(i)) + &quot;, got &quot; + std::to_string(element_counts[i]);</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>       return false;</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     }</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     rknn_inputs[i].index = static_cast&lt;std::uint32_t&gt;(i);</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>     rknn_inputs[i].buf = const_cast&lt;float*&gt;(inputs[i]);</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>     rknn_inputs[i].size = static_cast&lt;std::uint32_t&gt;(element_counts[i] * sizeof(float));</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>     rknn_inputs[i].type = RKNN_TENSOR_FLOAT32;</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>     rknn_inputs[i].fmt = input_attrs_[i].fmt;</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>   }</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>   int ret = rknn_inputs_set(context_, static_cast&lt;std::uint32_t&gt;(rknn_inputs.size()), rknn_inputs.data());</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>   if (ret != RKNN_SUCC)</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>   {</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>     last_error_ = &quot;rknn_inputs_set failed, ret=&quot; + std::to_string(ret);</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>     return false;</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>   }</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a> </span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>   ret = rknn_run(context_, nullptr);</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>   if (ret != RKNN_SUCC)</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>   {</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>     last_error_ = &quot;rknn_run failed, ret=&quot; + std::to_string(ret);</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>     return false;</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>   }</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a> </span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>   for (std::size_t i = 0; i &lt; outputs_.size(); ++i)</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>   {</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>     outputs_[i].index = static_cast&lt;std::uint32_t&gt;(i);</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     outputs_[i].want_float = 1;</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>     outputs_[i].buf = nullptr;</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>     outputs_[i].size = 0;</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>     outputs_[i].is_prealloc = 0;</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>   }</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>   ret = rknn_outputs_get(context_, static_cast&lt;std::uint32_t&gt;(outputs_.size()), outputs_.data(), nullptr);</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>   if (ret != RKNN_SUCC)</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>   {</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>     last_error_ = &quot;rknn_outputs_get failed, ret=&quot; + std::to_string(ret);</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>     return false;</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>   }</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a> </span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>   bool valid = true;</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>   for (std::size_t i = 0; i &lt; outputs_.size(); ++i)</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>   {</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>     const std::size_t expected_bytes = output_buffers_[i].size() * sizeof(float);</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>     if (outputs_[i].buf == nullptr || outputs_[i].size &lt; expected_bytes)</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>     {</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>       last_error_ = &quot;RKNN output &#x27;&quot; + output_names_[i] + &quot;&#x27; has an invalid buffer size&quot;;</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>       valid = false;</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>       break;</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     }</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>     std::memcpy(output_buffers_[i].data(), outputs_[i].buf, expected_bytes);</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>     if (!std::all_of(output_buffers_[i].begin(), output_buffers_[i].end(),</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>                      [](float value) { return std::isfinite(value); }))</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>     {</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>       last_error_ = &quot;RKNN output &#x27;&quot; + output_names_[i] + &quot;&#x27; contains a non-finite value&quot;;</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>       valid = false;</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>       break;</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>     }</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>   }</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>   const int release_ret = rknn_outputs_release(context_, static_cast&lt;std::uint32_t&gt;(outputs_.size()), outputs_.data());</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>   if (valid &amp;&amp; release_ret != RKNN_SUCC)</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>   {</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>     last_error_ = &quot;rknn_outputs_release failed, ret=&quot; + std::to_string(release_ret);</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>     valid = false;</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>   }</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>   return valid;</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a> }</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a> </span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a> bool RknnModel::isObservation(std::size_t index) const {</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>   return index == static_cast&lt;std::size_t&gt;(policy_index_) || index == static_cast&lt;std::size_t&gt;(command_index_);</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a> }</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a> </span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a> RknnModel::ResidentTensor RknnModel::residentTensor(const rknn_tensor_attr&amp; logical, rknn_query_cmd query) {</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>   ResidentTensor tensor;</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>   auto&amp; attr = tensor.attr;</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>   attr.index = logical.index;</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>   checkRknn(rknn_query(context_, query, &amp;attr, sizeof(attr)), &quot;RKNN native query &quot; + std::string(logical.name));</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>   const auto reject = [&amp;] {</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>     throw std::runtime_error(&quot;Unsupported resident WBC layout; logical: &quot; + describe(logical) +</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>                              &quot;; native: &quot; + describe(attr));</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>   };</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>   // The exported WBC ABI consists solely of vectors and matrices. Do not interpret</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>   // a blocked/image layout (or padding) as a change to the manifest&#x27;s logical ABI.</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>   // Such a model must be inspected on the board before adding an explicit mapping.</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>   if (attr.n_dims &lt; 1 || attr.n_dims &gt; 2 || logical.n_dims &lt; 1 || logical.n_dims &gt; RKNN_MAX_DIMS ||</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>       attr.fmt != RKNN_TENSOR_UNDEFINED || !supportedResidentFloat(attr) ||</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>       !supportedResidentFloat(logical) || attr.h_stride != 0)</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>     reject();</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>   std::vector&lt;std::uint32_t&gt; logical_shape, native_shape;</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>   for (std::uint32_t i = 0; i &lt; logical.n_dims; ++i) {</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>     if (!logical.dims[i]) reject();</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>     if (logical.dims[i] != 1) logical_shape.push_back(logical.dims[i]);</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>   }</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>   std::uint64_t native_elements = 1;</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>   for (std::uint32_t i = 0; i &lt; attr.n_dims; ++i) {</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>     if (!attr.dims[i]) reject();</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>     if (attr.dims[i] != 1) native_shape.push_back(attr.dims[i]);</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>     native_elements *= attr.dims[i];</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>   }</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>   if (logical_shape.empty() || logical_shape.size() &gt; 2 || logical_shape.size() != native_shape.size()) reject();</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>   std::uint64_t elements = 1;</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>   for (std::size_t i = 0; i &lt; logical_shape.size(); ++i) {</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>     elements *= logical_shape[i];</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>     // Only the last planar dimension may be padded. Never guess an axis permutation.</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>     if (i + 1 == logical_shape.size()) {</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>       if (native_shape[i] &lt; logical_shape[i]) reject();</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>     } else if (native_shape[i] != logical_shape[i]) reject();</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>   }</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a>   if (elements != logical.n_elems || attr.n_elems &lt; elements) reject();</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a>   tensor.elements = logical.n_elems;</span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>   const std::size_t native_width = attr.dims[attr.n_dims - 1];</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>   tensor.width = native_width == 1 ? 1 : logical_shape.back();</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>   tensor.stride = attr.w_stride ? attr.w_stride : native_width;</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>   tensor.element_bytes = attr.type == RKNN_TENSOR_FLOAT16 ? 2 : sizeof(float);</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>   const std::uint64_t capacity = attr.size_with_stride ? attr.size_with_stride : attr.size;</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a>   if (tensor.stride &lt; native_width || attr.size &lt; elements * tensor.element_bytes ||</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>       capacity &lt; attr.size || capacity &gt; 16U * 1024U * 1024U ||</span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a>       native_elements &gt; capacity / tensor.element_bytes || attr.n_elems &gt; capacity / tensor.element_bytes ||</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>       tensor.stride &gt; capacity / tensor.element_bytes / (elements / tensor.width))</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a>     reject();</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a>   attr.size_with_stride = static_cast&lt;std::uint32_t&gt;(capacity);</span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a>   attr.pass_through = 1;  // Bytes written below are genuinely in this native dtype/layout.</span>
+<span id="C-L356" class="line"><a href="#C-L356"> 356</a>   return tensor;</span>
+<span id="C-L357" class="line"><a href="#C-L357"> 357</a> }</span>
+<span id="C-L358" class="line"><a href="#C-L358"> 358</a> </span>
+<span id="C-L359" class="line"><a href="#C-L359"> 359</a> void RknnModel::initializeResident() {</span>
+<span id="C-L360" class="line"><a href="#C-L360"> 360</a>   policy_index_ = inputIndex(&quot;policy&quot;);</span>
+<span id="C-L361" class="line"><a href="#C-L361"> 361</a>   command_index_ = inputIndex(&quot;command_short&quot;);</span>
+<span id="C-L362" class="line"><a href="#C-L362"> 362</a>   if (inputCount() != 33 || outputCount() != 1 || policy_index_ &lt; 0 || command_index_ &lt; 0 ||</span>
+<span id="C-L363" class="line"><a href="#C-L363"> 363</a>       inputElements(policy_index_) != 399 || inputElements(command_index_) != 240 ||</span>
+<span id="C-L364" class="line"><a href="#C-L364"> 364</a>       outputIndex(&quot;action&quot;) != 0 || outputElements(0) != 21)</span>
+<span id="C-L365" class="line"><a href="#C-L365"> 365</a>     throw std::runtime_error(&quot;Resident mode requires the WBC 33-input / action[21] contract&quot;);</span>
+<span id="C-L366" class="line"><a href="#C-L366"> 366</a>   // Query/validate every layout before allocating any device memory.</span>
+<span id="C-L367" class="line"><a href="#C-L367"> 367</a>   for (const auto&amp; attr : input_attrs_) resident_inputs_.push_back(residentTensor(attr, RKNN_QUERY_NATIVE_INPUT_ATTR));</span>
+<span id="C-L368" class="line"><a href="#C-L368"> 368</a>   for (const auto&amp; attr : output_attrs_) resident_outputs_.push_back(residentTensor(attr, RKNN_QUERY_NATIVE_OUTPUT_ATTR));</span>
+<span id="C-L369" class="line"><a href="#C-L369"> 369</a>   const auto allocate = [&amp;](ResidentTensor&amp; tensor, int slots) {</span>
+<span id="C-L370" class="line"><a href="#C-L370"> 370</a>     for (int slot = 0; slot &lt; slots; ++slot) {</span>
+<span id="C-L371" class="line"><a href="#C-L371"> 371</a>       auto*&amp; memory = tensor.memory[slot];</span>
+<span id="C-L372" class="line"><a href="#C-L372"> 372</a>       memory = rknn_create_mem2(context_, tensor.attr.size_with_stride, RKNN_FLAG_MEMORY_CACHEABLE);</span>
+<span id="C-L373" class="line"><a href="#C-L373"> 373</a>       if (!memory || !memory-&gt;virt_addr || memory-&gt;size &lt; tensor.attr.size_with_stride)</span>
+<span id="C-L374" class="line"><a href="#C-L374"> 374</a>         throw std::runtime_error(&quot;RKNN persistent allocation failed: &quot; + describe(tensor.attr));</span>
+<span id="C-L375" class="line"><a href="#C-L375"> 375</a>       resident_stats_.allocated_bytes += memory-&gt;size;</span>
+<span id="C-L376" class="line"><a href="#C-L376"> 376</a>       resident_stats_.layout_bytes += tensor.attr.size_with_stride;</span>
+<span id="C-L377" class="line"><a href="#C-L377"> 377</a>       std::memset(memory-&gt;virt_addr, 0, memory-&gt;size);</span>
+<span id="C-L378" class="line"><a href="#C-L378"> 378</a>     }</span>
+<span id="C-L379" class="line"><a href="#C-L379"> 379</a>   };</span>
+<span id="C-L380" class="line"><a href="#C-L380"> 380</a>   for (std::size_t i = 0; i &lt; resident_inputs_.size(); ++i) allocate(resident_inputs_[i], isObservation(i) ? 1 : 2);</span>
+<span id="C-L381" class="line"><a href="#C-L381"> 381</a>   for (auto&amp; tensor : resident_outputs_) allocate(tensor, 1);</span>
+<span id="C-L382" class="line"><a href="#C-L382"> 382</a>   for (auto&amp; tensor : resident_inputs_) {</span>
+<span id="C-L383" class="line"><a href="#C-L383"> 383</a>     checkRknn(rknn_mem_sync(context_, tensor.memory[0], RKNN_MEMORY_SYNC_TO_DEVICE), &quot;RKNN initial input sync&quot;);</span>
+<span id="C-L384" class="line"><a href="#C-L384"> 384</a>     checkRknn(rknn_set_io_mem(context_, tensor.memory[0], &amp;tensor.attr), &quot;RKNN initial input bind&quot;);</span>
+<span id="C-L385" class="line"><a href="#C-L385"> 385</a>   }</span>
+<span id="C-L386" class="line"><a href="#C-L386"> 386</a>   for (auto&amp; tensor : resident_outputs_) {</span>
+<span id="C-L387" class="line"><a href="#C-L387"> 387</a>     // Padding was CPU-initialized; flush it once before the device owns the output.</span>
+<span id="C-L388" class="line"><a href="#C-L388"> 388</a>     checkRknn(rknn_mem_sync(context_, tensor.memory[0], RKNN_MEMORY_SYNC_TO_DEVICE), &quot;RKNN initial output sync&quot;);</span>
+<span id="C-L389" class="line"><a href="#C-L389"> 389</a>     checkRknn(rknn_set_io_mem(context_, tensor.memory[0], &amp;tensor.attr), &quot;RKNN persistent output bind&quot;);</span>
+<span id="C-L390" class="line"><a href="#C-L390"> 390</a>   }</span>
+<span id="C-L391" class="line"><a href="#C-L391"> 391</a>   // Slot 0 is a complete rollback binding, never a usable all-zero adapter.</span>
+<span id="C-L392" class="line"><a href="#C-L392"> 392</a>   // resident_slot_ remains -1 until a validated parameter package is committed.</span>
+<span id="C-L393" class="line"><a href="#C-L393"> 393</a>   resident_stats_.context_initializations = 1;</span>
+<span id="C-L394" class="line"><a href="#C-L394"> 394</a>   rknn_mem_size sizes{};</span>
+<span id="C-L395" class="line"><a href="#C-L395"> 395</a>   resident_stats_.sdk_memory_query = rknn_query(context_, RKNN_QUERY_MEM_SIZE, &amp;sizes, sizeof(sizes));</span>
+<span id="C-L396" class="line"><a href="#C-L396"> 396</a>   if (resident_stats_.sdk_memory_query == RKNN_SUCC) {</span>
+<span id="C-L397" class="line"><a href="#C-L397"> 397</a>     resident_stats_.sdk_weight_bytes = sizes.total_weight_size;</span>
+<span id="C-L398" class="line"><a href="#C-L398"> 398</a>     resident_stats_.sdk_internal_bytes = sizes.total_internal_size;</span>
+<span id="C-L399" class="line"><a href="#C-L399"> 399</a>     resident_stats_.sdk_dma_bytes = sizes.total_dma_allocated_size;</span>
+<span id="C-L400" class="line"><a href="#C-L400"> 400</a>   }</span>
+<span id="C-L401" class="line"><a href="#C-L401"> 401</a> }</span>
+<span id="C-L402" class="line"><a href="#C-L402"> 402</a> </span>
+<span id="C-L403" class="line"><a href="#C-L403"> 403</a> void RknnModel::releaseResident() noexcept {</span>
+<span id="C-L404" class="line"><a href="#C-L404"> 404</a>   for (auto* tensors : {&amp;resident_inputs_, &amp;resident_outputs_}) {</span>
+<span id="C-L405" class="line"><a href="#C-L405"> 405</a>     for (auto&amp; tensor : *tensors) {</span>
+<span id="C-L406" class="line"><a href="#C-L406"> 406</a>       for (auto*&amp; memory : tensor.memory) {</span>
+<span id="C-L407" class="line"><a href="#C-L407"> 407</a>         if (memory) rknn_destroy_mem(context_, memory);</span>
+<span id="C-L408" class="line"><a href="#C-L408"> 408</a>         memory = nullptr;</span>
+<span id="C-L409" class="line"><a href="#C-L409"> 409</a>       }</span>
+<span id="C-L410" class="line"><a href="#C-L410"> 410</a>     }</span>
+<span id="C-L411" class="line"><a href="#C-L411"> 411</a>   }</span>
+<span id="C-L412" class="line"><a href="#C-L412"> 412</a> }</span>
+<span id="C-L413" class="line"><a href="#C-L413"> 413</a> </span>
+<span id="C-L414" class="line"><a href="#C-L414"> 414</a> void RknnModel::writeResident(ResidentTensor&amp; tensor, int slot, const float* values, std::size_t count) {</span>
+<span id="C-L415" class="line"><a href="#C-L415"> 415</a>   if (!values || count != tensor.elements) throw std::runtime_error(&quot;Resident input size mismatch&quot;);</span>
+<span id="C-L416" class="line"><a href="#C-L416"> 416</a>   // Validate before touching a buffer; FP16 overflow must never silently become Inf.</span>
+<span id="C-L417" class="line"><a href="#C-L417"> 417</a>   for (std::size_t i = 0; i &lt; count; ++i) {</span>
+<span id="C-L418" class="line"><a href="#C-L418"> 418</a>     if (!std::isfinite(values[i]) || (tensor.attr.type == RKNN_TENSOR_FLOAT16 &amp;&amp; std::abs(values[i]) &gt; 65504.0f))</span>
+<span id="C-L419" class="line"><a href="#C-L419"> 419</a>       throw std::runtime_error(&quot;Resident input not representable: &quot; + std::string(tensor.attr.name));</span>
+<span id="C-L420" class="line"><a href="#C-L420"> 420</a>   }</span>
+<span id="C-L421" class="line"><a href="#C-L421"> 421</a>   auto* data = static_cast&lt;unsigned char*&gt;(tensor.memory[slot]-&gt;virt_addr);</span>
+<span id="C-L422" class="line"><a href="#C-L422"> 422</a>   // Initialize all padding, including allocation alignment, on each prepare/write.</span>
+<span id="C-L423" class="line"><a href="#C-L423"> 423</a>   std::memset(data, 0, tensor.memory[slot]-&gt;size);</span>
+<span id="C-L424" class="line"><a href="#C-L424"> 424</a>   for (std::size_t i = 0; i &lt; count; ++i) {</span>
+<span id="C-L425" class="line"><a href="#C-L425"> 425</a>     const auto offset = (i / tensor.width * tensor.stride + i % tensor.width) * tensor.element_bytes;</span>
+<span id="C-L426" class="line"><a href="#C-L426"> 426</a>     if (tensor.attr.type == RKNN_TENSOR_FLOAT16) {</span>
+<span id="C-L427" class="line"><a href="#C-L427"> 427</a>       const auto half = toHalf(values[i]);</span>
+<span id="C-L428" class="line"><a href="#C-L428"> 428</a>       std::memcpy(data + offset, &amp;half, sizeof(half));</span>
+<span id="C-L429" class="line"><a href="#C-L429"> 429</a>     } else std::memcpy(data + offset, values + i, sizeof(float));</span>
+<span id="C-L430" class="line"><a href="#C-L430"> 430</a>   }</span>
+<span id="C-L431" class="line"><a href="#C-L431"> 431</a> }</span>
+<span id="C-L432" class="line"><a href="#C-L432"> 432</a> </span>
+<span id="C-L433" class="line"><a href="#C-L433"> 433</a> void RknnModel::stageResidentParameters(int slot, const std::vector&lt;ParameterInput&gt;&amp; parameters) {</span>
+<span id="C-L434" class="line"><a href="#C-L434"> 434</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L435" class="line"><a href="#C-L435"> 435</a>   if (input_mode_ != InputMode::ResidentWbc || !resident_healthy_ || slot &lt; 0 || slot &gt; 1 ||</span>
+<span id="C-L436" class="line"><a href="#C-L436"> 436</a>       slot == (resident_slot_ &lt; 0 ? 0 : resident_slot_))</span>
+<span id="C-L437" class="line"><a href="#C-L437"> 437</a>     throw std::runtime_error(&quot;Cannot write active/unavailable resident parameter slot&quot;);</span>
+<span id="C-L438" class="line"><a href="#C-L438"> 438</a>   staged_[slot] = false;</span>
+<span id="C-L439" class="line"><a href="#C-L439"> 439</a>   if (parameters.size() != inputCount() - 2) throw std::runtime_error(&quot;Incomplete resident parameter set&quot;);</span>
+<span id="C-L440" class="line"><a href="#C-L440"> 440</a>   std::set&lt;std::size_t&gt; seen;</span>
+<span id="C-L441" class="line"><a href="#C-L441"> 441</a>   for (const auto&amp; value : parameters) {</span>
+<span id="C-L442" class="line"><a href="#C-L442"> 442</a>     if (value.index &gt;= inputCount() || isObservation(value.index) || !seen.insert(value.index).second ||</span>
+<span id="C-L443" class="line"><a href="#C-L443"> 443</a>         !value.data || value.elements != inputElements(value.index))</span>
+<span id="C-L444" class="line"><a href="#C-L444"> 444</a>       throw std::runtime_error(&quot;Invalid resident parameter mapping&quot;);</span>
+<span id="C-L445" class="line"><a href="#C-L445"> 445</a>   }</span>
+<span id="C-L446" class="line"><a href="#C-L446"> 446</a>   ++resident_stats_.parameter_prepares;</span>
+<span id="C-L447" class="line"><a href="#C-L447"> 447</a>   const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L448" class="line"><a href="#C-L448"> 448</a>   try {</span>
+<span id="C-L449" class="line"><a href="#C-L449"> 449</a>     for (const auto&amp; value : parameters) {</span>
+<span id="C-L450" class="line"><a href="#C-L450"> 450</a>       auto&amp; tensor = resident_inputs_[value.index];</span>
+<span id="C-L451" class="line"><a href="#C-L451"> 451</a>       writeResident(tensor, slot, value.data, value.elements);</span>
+<span id="C-L452" class="line"><a href="#C-L452"> 452</a>       resident_stats_.parameter_write_bytes += tensor.memory[slot]-&gt;size;</span>
+<span id="C-L453" class="line"><a href="#C-L453"> 453</a>       if (tensor.attr.type == RKNN_TENSOR_FLOAT16) resident_stats_.parameter_converted_elements += value.elements;</span>
+<span id="C-L454" class="line"><a href="#C-L454"> 454</a>     }</span>
+<span id="C-L455" class="line"><a href="#C-L455"> 455</a>     staged_[slot] = true;</span>
+<span id="C-L456" class="line"><a href="#C-L456"> 456</a>   } catch (...) {</span>
+<span id="C-L457" class="line"><a href="#C-L457"> 457</a>     resident_stats_.pack_ms += millisecondsSince(started);</span>
+<span id="C-L458" class="line"><a href="#C-L458"> 458</a>     throw;</span>
+<span id="C-L459" class="line"><a href="#C-L459"> 459</a>   }</span>
+<span id="C-L460" class="line"><a href="#C-L460"> 460</a>   resident_stats_.pack_ms += millisecondsSince(started);</span>
+<span id="C-L461" class="line"><a href="#C-L461"> 461</a> }</span>
+<span id="C-L462" class="line"><a href="#C-L462"> 462</a> </span>
+<span id="C-L463" class="line"><a href="#C-L463"> 463</a> bool RknnModel::bindResidentSlot(int slot) {</span>
+<span id="C-L464" class="line"><a href="#C-L464"> 464</a>   bool success = true;</span>
+<span id="C-L465" class="line"><a href="#C-L465"> 465</a>   // Attempt the whole set even after a failure, particularly during rollback.</span>
+<span id="C-L466" class="line"><a href="#C-L466"> 466</a>   for (std::size_t i = 0; i &lt; resident_inputs_.size(); ++i) {</span>
+<span id="C-L467" class="line"><a href="#C-L467"> 467</a>     if (isObservation(i)) continue;</span>
+<span id="C-L468" class="line"><a href="#C-L468"> 468</a>     auto&amp; tensor = resident_inputs_[i];</span>
+<span id="C-L469" class="line"><a href="#C-L469"> 469</a>     ++resident_stats_.parameter_bind_calls;</span>
+<span id="C-L470" class="line"><a href="#C-L470"> 470</a>     const int ret = rknn_set_io_mem(context_, tensor.memory[slot], &amp;tensor.attr);</span>
+<span id="C-L471" class="line"><a href="#C-L471"> 471</a>     if (ret != RKNN_SUCC) {</span>
+<span id="C-L472" class="line"><a href="#C-L472"> 472</a>       if (success) last_error_ = &quot;Resident bind failed for &quot; + inputName(i) + &quot;, ret=&quot; + std::to_string(ret);</span>
+<span id="C-L473" class="line"><a href="#C-L473"> 473</a>       success = false;</span>
+<span id="C-L474" class="line"><a href="#C-L474"> 474</a>     }</span>
+<span id="C-L475" class="line"><a href="#C-L475"> 475</a>   }</span>
+<span id="C-L476" class="line"><a href="#C-L476"> 476</a>   return success;</span>
+<span id="C-L477" class="line"><a href="#C-L477"> 477</a> }</span>
+<span id="C-L478" class="line"><a href="#C-L478"> 478</a> </span>
+<span id="C-L479" class="line"><a href="#C-L479"> 479</a> bool RknnModel::restoreResidentSlot(int slot) {</span>
+<span id="C-L480" class="line"><a href="#C-L480"> 480</a>   ++resident_stats_.rollbacks;</span>
+<span id="C-L481" class="line"><a href="#C-L481"> 481</a>   if (!bindResidentSlot(slot &lt; 0 ? 0 : slot)) {</span>
+<span id="C-L482" class="line"><a href="#C-L482"> 482</a>     resident_healthy_ = false;</span>
+<span id="C-L483" class="line"><a href="#C-L483"> 483</a>     resident_slot_ = -1;</span>
+<span id="C-L484" class="line"><a href="#C-L484"> 484</a>     last_error_ += &quot;; complete rollback failed; resident inference disabled until restart&quot;;</span>
+<span id="C-L485" class="line"><a href="#C-L485"> 485</a>     return false;</span>
+<span id="C-L486" class="line"><a href="#C-L486"> 486</a>   }</span>
+<span id="C-L487" class="line"><a href="#C-L487"> 487</a>   resident_slot_ = slot;</span>
+<span id="C-L488" class="line"><a href="#C-L488"> 488</a>   return true;</span>
+<span id="C-L489" class="line"><a href="#C-L489"> 489</a> }</span>
+<span id="C-L490" class="line"><a href="#C-L490"> 490</a> </span>
+<span id="C-L491" class="line"><a href="#C-L491"> 491</a> bool RknnModel::commitResidentParameters(int slot) {</span>
+<span id="C-L492" class="line"><a href="#C-L492"> 492</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L493" class="line"><a href="#C-L493"> 493</a>   last_error_.clear();</span>
+<span id="C-L494" class="line"><a href="#C-L494"> 494</a>   if (input_mode_ != InputMode::ResidentWbc || !resident_healthy_ || slot &lt; 0 || slot &gt; 1 ||</span>
+<span id="C-L495" class="line"><a href="#C-L495"> 495</a>       !staged_[slot] || slot == (resident_slot_ &lt; 0 ? 0 : resident_slot_)) {</span>
+<span id="C-L496" class="line"><a href="#C-L496"> 496</a>     last_error_ = &quot;Resident commit requires a staged spare slot and a healthy context&quot;;</span>
+<span id="C-L497" class="line"><a href="#C-L497"> 497</a>     return false;</span>
+<span id="C-L498" class="line"><a href="#C-L498"> 498</a>   }</span>
+<span id="C-L499" class="line"><a href="#C-L499"> 499</a>   const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L500" class="line"><a href="#C-L500"> 500</a>   // Sync all new tensors before changing any binding. No SDK operation runs in stage.</span>
+<span id="C-L501" class="line"><a href="#C-L501"> 501</a>   for (std::size_t i = 0; i &lt; resident_inputs_.size(); ++i) {</span>
+<span id="C-L502" class="line"><a href="#C-L502"> 502</a>     if (isObservation(i)) continue;</span>
+<span id="C-L503" class="line"><a href="#C-L503"> 503</a>     ++resident_stats_.parameter_sync_calls;</span>
+<span id="C-L504" class="line"><a href="#C-L504"> 504</a>     const int ret = rknn_mem_sync(context_, resident_inputs_[i].memory[slot], RKNN_MEMORY_SYNC_TO_DEVICE);</span>
+<span id="C-L505" class="line"><a href="#C-L505"> 505</a>     if (ret != RKNN_SUCC) {</span>
+<span id="C-L506" class="line"><a href="#C-L506"> 506</a>       last_error_ = &quot;Resident parameter sync failed for &quot; + inputName(i) + &quot;, ret=&quot; + std::to_string(ret);</span>
+<span id="C-L507" class="line"><a href="#C-L507"> 507</a>       resident_stats_.commit_ms += millisecondsSince(started);</span>
+<span id="C-L508" class="line"><a href="#C-L508"> 508</a>       return false;  // Old complete binding is untouched.</span>
+<span id="C-L509" class="line"><a href="#C-L509"> 509</a>     }</span>
+<span id="C-L510" class="line"><a href="#C-L510"> 510</a>   }</span>
+<span id="C-L511" class="line"><a href="#C-L511"> 511</a>   if (!bindResidentSlot(slot)) {</span>
+<span id="C-L512" class="line"><a href="#C-L512"> 512</a>     const auto failure = last_error_;</span>
+<span id="C-L513" class="line"><a href="#C-L513"> 513</a>     if (restoreResidentSlot(resident_slot_)) last_error_ = failure + &quot;; previous complete binding restored&quot;;</span>
+<span id="C-L514" class="line"><a href="#C-L514"> 514</a>     resident_stats_.commit_ms += millisecondsSince(started);</span>
+<span id="C-L515" class="line"><a href="#C-L515"> 515</a>     return false;</span>
+<span id="C-L516" class="line"><a href="#C-L516"> 516</a>   }</span>
+<span id="C-L517" class="line"><a href="#C-L517"> 517</a>   resident_slot_ = slot;</span>
+<span id="C-L518" class="line"><a href="#C-L518"> 518</a>   ++resident_stats_.commits;</span>
+<span id="C-L519" class="line"><a href="#C-L519"> 519</a>   resident_stats_.commit_ms += millisecondsSince(started);</span>
+<span id="C-L520" class="line"><a href="#C-L520"> 520</a>   return true;</span>
+<span id="C-L521" class="line"><a href="#C-L521"> 521</a> }</span>
+<span id="C-L522" class="line"><a href="#C-L522"> 522</a> </span>
+<span id="C-L523" class="line"><a href="#C-L523"> 523</a> bool RknnModel::restoreResidentParameters(int slot) {</span>
+<span id="C-L524" class="line"><a href="#C-L524"> 524</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L525" class="line"><a href="#C-L525"> 525</a>   if (input_mode_ != InputMode::ResidentWbc || !resident_healthy_ || slot &lt; -1 || slot &gt; 1 ||</span>
+<span id="C-L526" class="line"><a href="#C-L526"> 526</a>       (slot &gt;= 0 &amp;&amp; !staged_[slot])) {</span>
+<span id="C-L527" class="line"><a href="#C-L527"> 527</a>     last_error_ = &quot;Resident rollback unavailable; inference disabled until restart&quot;;</span>
+<span id="C-L528" class="line"><a href="#C-L528"> 528</a>     resident_healthy_ = false;</span>
+<span id="C-L529" class="line"><a href="#C-L529"> 529</a>     return false;</span>
+<span id="C-L530" class="line"><a href="#C-L530"> 530</a>   }</span>
+<span id="C-L531" class="line"><a href="#C-L531"> 531</a>   return restoreResidentSlot(slot);</span>
+<span id="C-L532" class="line"><a href="#C-L532"> 532</a> }</span>
+<span id="C-L533" class="line"><a href="#C-L533"> 533</a> </span>
+<span id="C-L534" class="line"><a href="#C-L534"> 534</a> bool RknnModel::runResident(const float* policy, std::size_t policy_size,</span>
+<span id="C-L535" class="line"><a href="#C-L535"> 535</a>                             const float* command, std::size_t command_size) {</span>
+<span id="C-L536" class="line"><a href="#C-L536"> 536</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L537" class="line"><a href="#C-L537"> 537</a>   last_error_.clear();</span>
+<span id="C-L538" class="line"><a href="#C-L538"> 538</a>   if (input_mode_ != InputMode::ResidentWbc || !resident_healthy_ || resident_slot_ &lt; 0) {</span>
+<span id="C-L539" class="line"><a href="#C-L539"> 539</a>     last_error_ = &quot;Resident inference requires a complete prepared parameter set&quot;;</span>
+<span id="C-L540" class="line"><a href="#C-L540"> 540</a>     return false;</span>
+<span id="C-L541" class="line"><a href="#C-L541"> 541</a>   }</span>
+<span id="C-L542" class="line"><a href="#C-L542"> 542</a>   try {</span>
+<span id="C-L543" class="line"><a href="#C-L543"> 543</a>     const auto observation_started = std::chrono::steady_clock::now();</span>
+<span id="C-L544" class="line"><a href="#C-L544"> 544</a>     writeResident(resident_inputs_[policy_index_], 0, policy, policy_size);</span>
+<span id="C-L545" class="line"><a href="#C-L545"> 545</a>     writeResident(resident_inputs_[command_index_], 0, command, command_size);</span>
+<span id="C-L546" class="line"><a href="#C-L546"> 546</a>     for (int index : {policy_index_, command_index_}) {</span>
+<span id="C-L547" class="line"><a href="#C-L547"> 547</a>       ++resident_stats_.observation_sync_calls;</span>
+<span id="C-L548" class="line"><a href="#C-L548"> 548</a>       checkRknn(rknn_mem_sync(context_, resident_inputs_[index].memory[0], RKNN_MEMORY_SYNC_TO_DEVICE),</span>
+<span id="C-L549" class="line"><a href="#C-L549"> 549</a>                 &quot;RKNN observation sync&quot;);</span>
+<span id="C-L550" class="line"><a href="#C-L550"> 550</a>     }</span>
+<span id="C-L551" class="line"><a href="#C-L551"> 551</a>     const double observation_ms = millisecondsSince(observation_started);</span>
+<span id="C-L552" class="line"><a href="#C-L552"> 552</a>     resident_stats_.observation_ms += observation_ms;</span>
+<span id="C-L553" class="line"><a href="#C-L553"> 553</a>     resident_stats_.observation_max_ms = std::max(resident_stats_.observation_max_ms, observation_ms);</span>
+<span id="C-L554" class="line"><a href="#C-L554"> 554</a>     const auto run_started = std::chrono::steady_clock::now();</span>
+<span id="C-L555" class="line"><a href="#C-L555"> 555</a>     ++resident_stats_.runs;</span>
+<span id="C-L556" class="line"><a href="#C-L556"> 556</a>     // Synchronous set_io_mem API, no ASYNC_MASK, non-block or external fences.</span>
+<span id="C-L557" class="line"><a href="#C-L557"> 557</a>     // rknn_run includes this frame&#x27;s completion wait; never use outputs_get/release here.</span>
+<span id="C-L558" class="line"><a href="#C-L558"> 558</a>     const int ret = rknn_run(context_, nullptr);</span>
+<span id="C-L559" class="line"><a href="#C-L559"> 559</a>     const double execution_ms = millisecondsSince(run_started);</span>
+<span id="C-L560" class="line"><a href="#C-L560"> 560</a>     resident_stats_.execution_ms += execution_ms;</span>
+<span id="C-L561" class="line"><a href="#C-L561"> 561</a>     resident_stats_.execution_max_ms = std::max(resident_stats_.execution_max_ms, execution_ms);</span>
+<span id="C-L562" class="line"><a href="#C-L562"> 562</a>     if (ret != RKNN_SUCC) {</span>
+<span id="C-L563" class="line"><a href="#C-L563"> 563</a>       // No asynchronous submission is used. Treat any execution/driver error as</span>
+<span id="C-L564" class="line"><a href="#C-L564"> 564</a>       // terminal, and report the extra wait result instead of retrying the frame.</span>
+<span id="C-L565" class="line"><a href="#C-L565"> 565</a>       const int wait_ret = rknn_wait(context_, nullptr);</span>
+<span id="C-L566" class="line"><a href="#C-L566"> 566</a>       resident_healthy_ = false;</span>
+<span id="C-L567" class="line"><a href="#C-L567"> 567</a>       checkRknn(ret, &quot;RKNN resident run (context disabled; wait_ret=&quot; + std::to_string(wait_ret) + &quot;)&quot;);</span>
+<span id="C-L568" class="line"><a href="#C-L568"> 568</a>     }</span>
+<span id="C-L569" class="line"><a href="#C-L569"> 569</a>     const auto output_started = std::chrono::steady_clock::now();</span>
+<span id="C-L570" class="line"><a href="#C-L570"> 570</a>     for (std::size_t index = 0; index &lt; resident_outputs_.size(); ++index) {</span>
+<span id="C-L571" class="line"><a href="#C-L571"> 571</a>       const auto&amp; tensor = resident_outputs_[index];</span>
+<span id="C-L572" class="line"><a href="#C-L572"> 572</a>       ++resident_stats_.output_sync_calls;</span>
+<span id="C-L573" class="line"><a href="#C-L573"> 573</a>       checkRknn(rknn_mem_sync(context_, tensor.memory[0], RKNN_MEMORY_SYNC_FROM_DEVICE), &quot;RKNN output sync&quot;);</span>
+<span id="C-L574" class="line"><a href="#C-L574"> 574</a>       const auto* bytes = static_cast&lt;const unsigned char*&gt;(tensor.memory[0]-&gt;virt_addr);</span>
+<span id="C-L575" class="line"><a href="#C-L575"> 575</a>       for (std::size_t i = 0; i &lt; tensor.elements; ++i) {</span>
+<span id="C-L576" class="line"><a href="#C-L576"> 576</a>         const auto offset = (i / tensor.width * tensor.stride + i % tensor.width) * tensor.element_bytes;</span>
+<span id="C-L577" class="line"><a href="#C-L577"> 577</a>         float value;</span>
+<span id="C-L578" class="line"><a href="#C-L578"> 578</a>         if (tensor.attr.type == RKNN_TENSOR_FLOAT16) {</span>
+<span id="C-L579" class="line"><a href="#C-L579"> 579</a>           std::uint16_t half;</span>
+<span id="C-L580" class="line"><a href="#C-L580"> 580</a>           std::memcpy(&amp;half, bytes + offset, sizeof(half));</span>
+<span id="C-L581" class="line"><a href="#C-L581"> 581</a>           value = fromHalf(half);</span>
+<span id="C-L582" class="line"><a href="#C-L582"> 582</a>         } else std::memcpy(&amp;value, bytes + offset, sizeof(value));</span>
+<span id="C-L583" class="line"><a href="#C-L583"> 583</a>         if (!std::isfinite(value)) throw std::runtime_error(&quot;Non-finite resident output&quot;);</span>
+<span id="C-L584" class="line"><a href="#C-L584"> 584</a>         output_buffers_[index][i] = value;</span>
+<span id="C-L585" class="line"><a href="#C-L585"> 585</a>       }</span>
+<span id="C-L586" class="line"><a href="#C-L586"> 586</a>     }</span>
+<span id="C-L587" class="line"><a href="#C-L587"> 587</a>     const double output_ms = millisecondsSince(output_started);</span>
+<span id="C-L588" class="line"><a href="#C-L588"> 588</a>     resident_stats_.output_ms += output_ms;</span>
+<span id="C-L589" class="line"><a href="#C-L589"> 589</a>     resident_stats_.output_max_ms = std::max(resident_stats_.output_max_ms, output_ms);</span>
+<span id="C-L590" class="line"><a href="#C-L590"> 590</a>     return true;</span>
+<span id="C-L591" class="line"><a href="#C-L591"> 591</a>   } catch (const std::exception&amp; exception) {</span>
+<span id="C-L592" class="line"><a href="#C-L592"> 592</a>     last_error_ = exception.what();</span>
+<span id="C-L593" class="line"><a href="#C-L593"> 593</a>     return false;</span>
+<span id="C-L594" class="line"><a href="#C-L594"> 594</a>   }</span>
+<span id="C-L595" class="line"><a href="#C-L595"> 595</a> }</span>
+<span id="C-L596" class="line"><a href="#C-L596"> 596</a> </span>
+<span id="C-L597" class="line"><a href="#C-L597"> 597</a> int RknnModel::residentSlot() const {</span>
+<span id="C-L598" class="line"><a href="#C-L598"> 598</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L599" class="line"><a href="#C-L599"> 599</a>   return resident_slot_;</span>
+<span id="C-L600" class="line"><a href="#C-L600"> 600</a> }</span>
+<span id="C-L601" class="line"><a href="#C-L601"> 601</a> </span>
+<span id="C-L602" class="line"><a href="#C-L602"> 602</a> RknnModel::ResidentStats RknnModel::residentStats() const {</span>
+<span id="C-L603" class="line"><a href="#C-L603"> 603</a>   std::lock_guard&lt;std::mutex&gt; lock(resident_mutex_);</span>
+<span id="C-L604" class="line"><a href="#C-L604"> 604</a>   return resident_stats_;</span>
+<span id="C-L605" class="line"><a href="#C-L605"> 605</a> }</span>
+<span id="C-L606" class="line"><a href="#C-L606"> 606</a> </span>
+<span id="C-L607" class="line"><a href="#C-L607"> 607</a> std::string RknnModel::residentLayout() const {</span>
+<span id="C-L608" class="line"><a href="#C-L608"> 608</a>   std::ostringstream out;</span>
+<span id="C-L609" class="line"><a href="#C-L609"> 609</a>   for (std::size_t i = 0; i &lt; resident_inputs_.size(); ++i)</span>
+<span id="C-L610" class="line"><a href="#C-L610"> 610</a>     out &lt;&lt; &quot;input logical &quot; &lt;&lt; describe(input_attrs_[i]) &lt;&lt; &quot;\ninput native &quot; &lt;&lt; describe(resident_inputs_[i].attr) &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L611" class="line"><a href="#C-L611"> 611</a>   for (std::size_t i = 0; i &lt; resident_outputs_.size(); ++i)</span>
+<span id="C-L612" class="line"><a href="#C-L612"> 612</a>     out &lt;&lt; &quot;output logical &quot; &lt;&lt; describe(output_attrs_[i]) &lt;&lt; &quot;\noutput native &quot; &lt;&lt; describe(resident_outputs_[i].attr) &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L613" class="line"><a href="#C-L613"> 613</a>   return out.str();</span>
+<span id="C-L614" class="line"><a href="#C-L614"> 614</a> }</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &quot;rknn_model.h&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;algorithm&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &lt;cctype&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;cmath&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;cstdint&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;cstring&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;fstream&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;limits&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> #include &lt;stdexcept&gt;</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> namespace {</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> std::string lowercase(std::string value) {</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>   std::transform(value.begin(), value.end(), value.begin(),</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>                  [](unsigned char c) { return static_cast&lt;char&gt;(std::tolower(c)); });</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>   return value;</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> }</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> void checkRknn(int ret, const std::string&amp; operation) {</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   if (ret != RKNN_SUCC) throw std::runtime_error(operation + &quot; failed, ret=&quot; + std::to_string(ret));</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a> }</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> }  // namespace</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a> </span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> std::string rknnModelPath(const std::string&amp; onnx_path) {</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   std::string path = onnx_path;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   constexpr char extension[] = &quot;.onnx&quot;;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   if (path.size() &gt;= sizeof(extension) - 1 &amp;&amp;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>       path.compare(path.size() - (sizeof(extension) - 1), sizeof(extension) - 1, extension) == 0)</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     path.replace(path.size() - (sizeof(extension) - 1), sizeof(extension) - 1, &quot;.rknn&quot;);</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   else</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     path += &quot;.rknn&quot;;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   return path;</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a> }</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> </span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a> RknnModel::RknnModel(const std::string&amp; model_path) {</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   std::ifstream file(model_path, std::ios::binary | std::ios::ate);</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   if (!file.good()) throw std::runtime_error(&quot;RKNN model not found: &quot; + model_path);</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> </span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   const std::streamsize size = file.tellg();</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   if (size &lt;= 0 || static_cast&lt;std::uint64_t&gt;(size) &gt; std::numeric_limits&lt;std::uint32_t&gt;::max())</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>     throw std::runtime_error(&quot;RKNN model has invalid size: &quot; + model_path);</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> </span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>   std::vector&lt;char&gt; data(static_cast&lt;std::size_t&gt;(size));</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   file.seekg(0, std::ios::beg);</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>   if (!file.read(data.data(), size)) throw std::runtime_error(&quot;Failed to read RKNN model: &quot; + model_path);</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a> </span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>   checkRknn(rknn_init(&amp;context_, data.data(), static_cast&lt;std::uint32_t&gt;(data.size()), 0, nullptr),</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>             &quot;rknn_init(&quot; + model_path + &quot;)&quot;);</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a> </span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   try</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>   {</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>     rknn_input_output_num io_num{};</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>     checkRknn(rknn_query(context_, RKNN_QUERY_IN_OUT_NUM, &amp;io_num, sizeof(io_num)), &quot;RKNN query I/O count&quot;);</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>     if (io_num.n_input == 0 || io_num.n_output == 0)</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>       throw std::runtime_error(&quot;RKNN models must have at least one input and one output&quot;);</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a> </span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>     input_attrs_.resize(io_num.n_input);</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>     input_names_.reserve(io_num.n_input);</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>     for (std::uint32_t i = 0; i &lt; io_num.n_input; ++i)</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>     {</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>       input_attrs_[i].index = i;</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>       checkRknn(rknn_query(context_, RKNN_QUERY_INPUT_ATTR, &amp;input_attrs_[i], sizeof(input_attrs_[i])),</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>                 &quot;RKNN query input &quot; + std::to_string(i));</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>       input_names_.emplace_back(input_attrs_[i].name);</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>     }</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>     output_names_.reserve(io_num.n_output);</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>     output_buffers_.reserve(io_num.n_output);</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>     outputs_.resize(io_num.n_output);</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     for (std::uint32_t i = 0; i &lt; io_num.n_output; ++i)</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     {</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>       rknn_tensor_attr output_attr{};</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>       output_attr.index = i;</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>       checkRknn(rknn_query(context_, RKNN_QUERY_OUTPUT_ATTR, &amp;output_attr, sizeof(output_attr)),</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>                 &quot;RKNN query output &quot; + std::to_string(i));</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>       output_names_.emplace_back(output_attr.name);</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>       output_buffers_.emplace_back(output_attr.n_elems, 0.0f);</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>       outputs_[i].index = i;</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>       outputs_[i].want_float = 1;</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>     }</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>   } catch (...)</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>   {</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>     rknn_destroy(context_);</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>     context_ = 0;</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>     throw;</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   }</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a> }</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a> </span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a> RknnModel::~RknnModel() {</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   if (context_ != 0) rknn_destroy(context_);</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a> }</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a> </span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> std::size_t RknnModel::inputCount() const { return input_attrs_.size(); }</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a> </span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a> std::size_t RknnModel::inputElements() const { return inputElements(0); }</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a> </span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a> std::size_t RknnModel::inputElements(std::size_t index) const { return input_attrs_.at(index).n_elems; }</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a> </span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a> int RknnModel::inputIndex(const std::string&amp; name) const {</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>   const std::string wanted = lowercase(name);</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>   for (std::size_t i = 0; i &lt; input_names_.size(); ++i)</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>   {</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>     if (lowercase(input_names_[i]) == wanted) return static_cast&lt;int&gt;(i);</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>   }</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   return -1;</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a> }</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a> </span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a> const std::string&amp; RknnModel::inputName(std::size_t index) const { return input_names_.at(index); }</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a> </span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a> std::size_t RknnModel::outputElements(std::size_t index) const { return output_buffers_.at(index).size(); }</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a> </span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a> std::size_t RknnModel::outputCount() const { return output_buffers_.size(); }</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a> </span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a> int RknnModel::outputIndex(const std::string&amp; name) const {</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>   if (name.empty()) return 0;</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>   const std::string wanted = lowercase(name);</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   for (std::size_t i = 0; i &lt; output_names_.size(); ++i)</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>   {</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>     if (lowercase(output_names_[i]) == wanted) return static_cast&lt;int&gt;(i);</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>   }</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>   return -1;</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a> }</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> </span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a> const std::string&amp; RknnModel::outputName(std::size_t index) const { return output_names_.at(index); }</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a> </span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a> const std::vector&lt;float&gt;&amp; RknnModel::output(std::size_t index) const { return output_buffers_.at(index); }</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a> </span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a> const std::string&amp; RknnModel::lastError() const { return last_error_; }</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a> </span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a> bool RknnModel::run(const float* input, std::size_t element_count) {</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>   if (inputCount() != 1)</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>   {</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     last_error_ = &quot;single-input run called for a model with &quot; + std::to_string(inputCount()) + &quot; inputs&quot;;</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>     return false;</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>   }</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>   return run(std::vector&lt;const float*&gt;{input}, std::vector&lt;std::size_t&gt;{element_count});</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a> }</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a> </span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a> bool RknnModel::run(const std::vector&lt;const float*&gt;&amp; inputs, const std::vector&lt;std::size_t&gt;&amp; element_counts) {</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>   last_error_.clear();</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>   if (inputs.size() != inputCount() || element_counts.size() != inputCount())</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>   {</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>     last_error_ =</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>         &quot;input count mismatch: expected &quot; + std::to_string(inputCount()) + &quot;, got &quot; + std::to_string(inputs.size());</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     return false;</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>   }</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a> </span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>   std::vector&lt;rknn_input&gt; rknn_inputs(inputCount());</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>   for (std::size_t i = 0; i &lt; inputCount(); ++i)</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>   {</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>     if (inputs[i] == nullptr || element_counts[i] != inputElements(i))</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>     {</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>       last_error_ = &quot;input &#x27;&quot; + inputName(i) + &quot;&#x27; element count mismatch: expected &quot; +</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>                     std::to_string(inputElements(i)) + &quot;, got &quot; + std::to_string(element_counts[i]);</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>       return false;</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>     }</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>     rknn_inputs[i].index = static_cast&lt;std::uint32_t&gt;(i);</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>     rknn_inputs[i].buf = const_cast&lt;float*&gt;(inputs[i]);</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>     rknn_inputs[i].size = static_cast&lt;std::uint32_t&gt;(element_counts[i] * sizeof(float));</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>     rknn_inputs[i].type = RKNN_TENSOR_FLOAT32;</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>     rknn_inputs[i].fmt = input_attrs_[i].fmt;</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>   }</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>   int ret = rknn_inputs_set(context_, static_cast&lt;std::uint32_t&gt;(rknn_inputs.size()), rknn_inputs.data());</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>   if (ret != RKNN_SUCC)</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>   {</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>     last_error_ = &quot;rknn_inputs_set failed, ret=&quot; + std::to_string(ret);</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>     return false;</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>   }</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a> </span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>   ret = rknn_run(context_, nullptr);</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>   if (ret != RKNN_SUCC)</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>   {</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>     last_error_ = &quot;rknn_run failed, ret=&quot; + std::to_string(ret);</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>     return false;</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>   }</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a> </span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>   for (std::size_t i = 0; i &lt; outputs_.size(); ++i)</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>   {</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     outputs_[i].index = static_cast&lt;std::uint32_t&gt;(i);</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>     outputs_[i].want_float = 1;</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>     outputs_[i].buf = nullptr;</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>     outputs_[i].size = 0;</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>     outputs_[i].is_prealloc = 0;</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>   }</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>   ret = rknn_outputs_get(context_, static_cast&lt;std::uint32_t&gt;(outputs_.size()), outputs_.data(), nullptr);</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>   if (ret != RKNN_SUCC)</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>   {</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>     last_error_ = &quot;rknn_outputs_get failed, ret=&quot; + std::to_string(ret);</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>     return false;</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>   }</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a> </span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>   bool valid = true;</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>   for (std::size_t i = 0; i &lt; outputs_.size(); ++i)</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>   {</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>     const std::size_t expected_bytes = output_buffers_[i].size() * sizeof(float);</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>     if (outputs_[i].buf == nullptr || outputs_[i].size &lt; expected_bytes)</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>     {</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>       last_error_ = &quot;RKNN output &#x27;&quot; + output_names_[i] + &quot;&#x27; has an invalid buffer size&quot;;</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>       valid = false;</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>       break;</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>     }</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>     std::memcpy(output_buffers_[i].data(), outputs_[i].buf, expected_bytes);</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>     if (!std::all_of(output_buffers_[i].begin(), output_buffers_[i].end(),</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>                      [](float value) { return std::isfinite(value); }))</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>     {</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>       last_error_ = &quot;RKNN output &#x27;&quot; + output_names_[i] + &quot;&#x27; contains a non-finite value&quot;;</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>       valid = false;</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>       break;</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>     }</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>   }</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>   const int release_ret = rknn_outputs_release(context_, static_cast&lt;std::uint32_t&gt;(outputs_.size()), outputs_.data());</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>   if (valid &amp;&amp; release_ret != RKNN_SUCC)</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>   {</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>     last_error_ = &quot;rknn_outputs_release failed, ret=&quot; + std::to_string(release_ret);</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>     valid = false;</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>   }</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>   return valid;</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a> }</span></pre></html>

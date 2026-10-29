@@ -1,0 +1,25 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_env_real/legged_real/launch/isolated_hpm.launch.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_env_real/legged_real/launch/isolated_hpm.launch.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> import os</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> from ament_index_python.packages import get_package_share_directory</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> from launch import LaunchDescription</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> from launch.actions import DeclareLaunchArgument, OpaqueFunction</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> from launch_ros.actions import Node</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> def setup(context):</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>     cfg = context.launch_configurations</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>     robot = cfg[&#x27;robot_type&#x27;]</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>     if robot not in (&#x27;l0_v3&#x27;, &#x27;l0_v4&#x27;, &#x27;l0_v5&#x27;):</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>         raise RuntimeError(&#x27;Unsupported isolated HPM robot_type&#x27;)</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>     return [Node(</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>         package=&#x27;legged_real&#x27;, executable=&#x27;isolated_hpm.py&#x27;, name=&#x27;isolated_hpm&#x27;, output=&#x27;screen&#x27;,</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>         parameters=[{</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>             &#x27;mapping_file&#x27;: os.path.join(get_package_share_directory(&#x27;system_command_arbiter&#x27;), &#x27;config&#x27;, robot + &#x27;.yaml&#x27;),</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>             &#x27;robot_cfg_path&#x27;: os.path.join(get_package_share_directory(&#x27;legged_deploy&#x27;), &#x27;policy&#x27;, robot,</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>                                           cfg[&#x27;subpolicy&#x27;], &#x27;rl_config.yaml&#x27;),</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>         }])]</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> def generate_launch_description():</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     return LaunchDescription([DeclareLaunchArgument(&#x27;robot_type&#x27;), DeclareLaunchArgument(&#x27;subpolicy&#x27;),</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>                               OpaqueFunction(function=setup)])</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

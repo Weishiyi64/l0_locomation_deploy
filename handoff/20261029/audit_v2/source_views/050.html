@@ -1,0 +1,163 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/build_wbc_lora_rk3588.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/build_wbc_lora_rk3588.sh</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> # RK3588 deployment build entry. Does not launch ROS, simulation or hardware.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> set -euo pipefail</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> usage() {</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   cat &lt;&lt;&#x27;EOF&#x27;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> Usage: bash scripts/build_wbc_lora_rk3588.sh BUNDLE [options]</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> Default: compile one shared FP16 base_lora.rknn and all action reference models.</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> LoRA/Base parameter packages stay as weights.bin; no per-action policy is built.</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>   --python PATH       Toolkit2 Python (default: /usr/bin/python3)</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>   --policy-only       Compile only the shared policy, keeping all 33 inputs</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   --include-probes    Also compile the manifest&#x27;s diagnostic probes</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   --skip-existing     Reuse only models with matching conversion provenance</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   --log-dir DIR       New directory for build/model logs (default: workspace log)</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   --install-to DIR    After conversion, install into a new versioned policy directory</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   --colcon            Then build ROS packages from the workspace root (source ROS first)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   --dry-run           Validate the bundle and print commands; no writes/build/install</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   -h, --help          Show this help</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> Actual execution requires Linux/aarch64 RK3588 and rknn-toolkit2 2.3.2.</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> --build-only is always used: no Python NPU Runtime, no claim of runtime acceptance.</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> After successful colcon, source WORKSPACE/install/setup.bash in your own terminal.</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> EOF</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> }</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> die() { printf &#x27;ERROR: %s\n&#x27; &quot;$*&quot; &gt;&amp;2; exit 2; }</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> need_value() { [[ $# -ge 2 &amp;&amp; -n ${2-} ]] || die &quot;$1 requires a value&quot;; }</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> print_command() { printf &#x27;  &#x27;; printf &#x27;%q &#x27; &quot;$@&quot;; printf &#x27;\n&#x27;; }</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> </span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> [[ $# -ge 1 ]] || { usage &gt;&amp;2; exit 2; }</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> bundle_arg=$1</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> shift</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> python_bin=/usr/bin/python3</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> policy_only=false</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> include_probes=false</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> skip_existing=false</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> dry_run=false</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> do_colcon=false</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> install_to=</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> requested_log_dir=</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> while [[ $# -gt 0 ]]; do</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   case &quot;$1&quot; in</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     --python) need_value &quot;$@&quot;; python_bin=$2; shift 2 ;;</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     --log-dir) need_value &quot;$@&quot;; requested_log_dir=$2; shift 2 ;;</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     --install-to) need_value &quot;$@&quot;; install_to=$2; shift 2 ;;</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     --policy-only) policy_only=true; shift ;;</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     --include-probes) include_probes=true; shift ;;</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     --skip-existing) skip_existing=true; shift ;;</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     --dry-run) dry_run=true; shift ;;</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     --colcon) do_colcon=true; shift ;;</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     -h|--help) usage; exit 0 ;;</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     *) die &quot;unknown option: $1&quot; ;;</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>   esac</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> done</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> $policy_only &amp;&amp; $include_probes &amp;&amp; die &quot;--policy-only cannot be combined with --include-probes&quot;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a> if $policy_only &amp;&amp; [[ -n $install_to ]]; then die &quot;--install-to requires a full bundle build&quot;; fi</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> script_dir=$(cd -- &quot;$(dirname -- &quot;${BASH_SOURCE[0]}&quot;)&quot; &amp;&amp; pwd -P)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> repo=$(cd -- &quot;$script_dir/..&quot; &amp;&amp; pwd -P)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a> workspace=$(cd -- &quot;$repo/../..&quot; &amp;&amp; pwd -P)</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> [[ -d $bundle_arg ]] || die &quot;bundle directory not found: $bundle_arg&quot;</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> bundle=$(realpath -- &quot;$bundle_arg&quot;)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> [[ -f $bundle/base_manifest.json ]] || die &quot;bundle is missing base_manifest.json&quot;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a> command -v &quot;$python_bin&quot; &gt;/dev/null || die &quot;Python not found: $python_bin&quot;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> export PYTHONDONTWRITEBYTECODE=1</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> if [[ -n $install_to ]]; then</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   install_to=$(realpath -m -- &quot;$install_to&quot;)</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>   [[ ! -e $install_to &amp;&amp; ! -L $install_to ]] || die &quot;installation destination already exists: $install_to&quot;</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>   [[ &quot;$install_to/&quot; != &quot;$bundle/&quot;* ]] || die &quot;installation destination must be outside source bundle&quot;</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a> fi</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> if $do_colcon; then</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   [[ -d $workspace/src/luvbot_ros_interfaces &amp;&amp; -f $repo/legged_deploy/CMakeLists.txt ]] ||</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     die &quot;--colcon requires this script inside the deployment workspace src repository&quot;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a> fi</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> </span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> conversion=(&quot;$python_bin&quot; -B &quot;$script_dir/batch_convert_onnx_to_rknn_rk3588.py&quot; &quot;$bundle&quot;</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>             --manifest &quot;$bundle/base_manifest.json&quot; --build-only)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> if $policy_only; then conversion+=(--policy-only); fi</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> if $include_probes; then conversion+=(--include-probes); fi</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> if $skip_existing; then conversion+=(--skip-existing); fi</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a> colcon_command=(colcon build --packages-up-to legged_deploy legged_real legged_controllers</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>                 --cmake-args -DLEGGED_DEPLOY_BACKEND=RKNN)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> if $dry_run; then</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   &quot;${conversion[@]}&quot; --dry-run</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   if [[ -n $install_to ]]; then</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     print_command &quot;$python_bin&quot; -B &quot;$script_dir/prepare_wbc_deploy.py&quot; &quot;$bundle&quot; &quot;$install_to&quot; --mode install-lora</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   fi</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   if $do_colcon; then</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>     printf &#x27;Workspace for colcon: %s\n&#x27; &quot;$workspace&quot;</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>     print_command &quot;${colcon_command[@]}&quot;</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   fi</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   printf &#x27;DRY-RUN: no RKNN/ROS build, files, installation or hardware execution.\n&#x27;</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   exit 0</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a> fi</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a> </span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a> [[ $(uname -s) == Linux &amp;&amp; $(uname -m) == aarch64 ]] || die &quot;actual builds must run on the RK3588 Linux/aarch64 board&quot;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a> compatible_file=/proc/device-tree/compatible</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a> if [[ ! -r $compatible_file ]]; then compatible_file=/sys/firmware/devicetree/base/compatible; fi</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a> [[ -r $compatible_file ]] || die &quot;cannot identify RK3588: device-tree compatible is unavailable&quot;</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a> board_compatible=$(tr &#x27;\0&#x27; &#x27;\n&#x27; &lt; &quot;$compatible_file&quot;)</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> [[ $board_compatible == *rockchip,rk3588* ]] || die &quot;this device-tree does not identify an RK3588 board&quot;</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a> if $do_colcon; then</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   command -v colcon &gt;/dev/null || die &quot;colcon not found; source the existing ROS environment first&quot;</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>   [[ -n ${AMENT_PREFIX_PATH-} ]] || die &quot;source the existing ROS underlay before --colcon&quot;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a> fi</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a> if [[ -n $requested_log_dir ]]; then</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>   run_dir=$(realpath -m -- &quot;$requested_log_dir&quot;)</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   [[ ! -e $run_dir &amp;&amp; ! -L $run_dir ]] || die &quot;log directory must be new: $run_dir&quot;</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   mkdir -p -- &quot;$run_dir&quot;</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a> else</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   log_root=&quot;$workspace/smoke_logs/wbc_lora_build&quot;</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>   mkdir -p -- &quot;$log_root&quot;</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>   run_dir=$(mktemp -d &quot;$log_root/$(date +%Y%m%d_%H%M%S)_XXXXXX&quot;)</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a> fi</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a> printf &#x27;run_dir=%s\n&#x27; &quot;$run_dir&quot;</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a> run_step() {</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   local step=$1</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>   shift</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>   local step_rc=0</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>   printf &#x27;[%s] log=%s/%s.log\n&#x27; &quot;$step&quot; &quot;$run_dir&quot; &quot;$step&quot;</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>   if &quot;$@&quot; &gt; &quot;$run_dir/$step.log&quot; 2&gt;&amp;1; then step_rc=0; else step_rc=$?; fi</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>   printf &#x27;%s\n&#x27; &quot;$step_rc&quot; &gt; &quot;$run_dir/$step.exitcode&quot;</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>   if [[ $step_rc -ne 0 ]]; then</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>     tail -n 40 -- &quot;$run_dir/$step.log&quot; &gt;&amp;2</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     printf &#x27;[%s] failed, exit=%s; subsequent steps skipped\n&#x27; &quot;$step&quot; &quot;$step_rc&quot; &gt;&amp;2</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>     return &quot;$step_rc&quot;</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   fi</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   printf &#x27;[%s] OK\n&#x27; &quot;$step&quot;</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a> }</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> run_step environment &quot;$python_bin&quot; -B - &lt;&lt;&#x27;PY&#x27;</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> import importlib.metadata</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> import platform</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a> import sys</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a> print(platform.platform())</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a> print(&#x27;Python:&#x27;, sys.executable, sys.version)</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a> for package in (&#x27;rknn-toolkit2&#x27;, &#x27;numpy&#x27;, &#x27;onnx&#x27;):</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>     print(package, importlib.metadata.version(package))</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> if importlib.metadata.version(&#x27;rknn-toolkit2&#x27;).split(&#x27;+&#x27;)[0] != &#x27;2.3.2&#x27;:</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>     raise SystemExit(&#x27;Expected the validated conversion toolchain rknn-toolkit2 2.3.2&#x27;)</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a> from rknn.api import RKNN</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a> import onnx</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a> import numpy</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a> print(&#x27;Imports OK; no NPU Runtime initialized&#x27;)</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a> PY</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a> if [[ -f $bundle/ASSETS.sha256 ]]; then</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>   run_step assets bash -c &#x27;cd -- &quot;$1&quot; &amp;&amp; sha256sum -c ASSETS.sha256&#x27; _ &quot;$bundle&quot;</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> fi</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> if [[ -f $bundle/SOURCE.sha256 ]]; then</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>   run_step source bash -c &#x27;cd -- &quot;$1&quot; &amp;&amp; sha256sum -c &quot;$2&quot;&#x27; _ &quot;$repo&quot; &quot;$bundle/SOURCE.sha256&quot;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a> fi</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a> run_step convert &quot;${conversion[@]}&quot; --log-dir &quot;$run_dir/models&quot;</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a> if [[ -n $install_to ]]; then</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   run_step install &quot;$python_bin&quot; -B &quot;$script_dir/prepare_wbc_deploy.py&quot; &quot;$bundle&quot; &quot;$install_to&quot; --mode install-lora</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a> fi</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a> if $do_colcon; then</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>   cd -- &quot;$workspace&quot;</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>   run_step build &quot;${colcon_command[@]}&quot;</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>   printf &#x27;Build succeeded. In your launch terminal run:\n&#x27;</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>   print_command source &quot;$workspace/install/setup.bash&quot;</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a> fi</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a> printf &#x27;Completed requested build steps. Formal C++ numerical/action/timing acceptance remains pending.\n&#x27;</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

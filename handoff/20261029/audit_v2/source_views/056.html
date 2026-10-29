@@ -1,0 +1,327 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/preprocess_wbc_lora_fp16.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/preprocess_wbc_lora_fp16.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Stage an FP16 WBC delivery for the existing RK3588 build-only converters.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Never changes the delivery, loads checkpoints, runs inference or compiles RKNN.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> The shared policy and adapters are copied byte-for-byte. Reference table/Cast</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> paths are materialized as FP32 tables with six direct Gather outputs, preserving</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> the delivered FP16 values and the original frame-index calculation.</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> &quot;&quot;&quot;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import argparse</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import copy</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import importlib.metadata</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> import json</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import sys</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> import tempfile</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> from contextlib import ExitStack</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> from pathlib import Path</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> </span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> import numpy as np</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> import yaml</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> from convert_onnx_to_rknn_rk3588_wbc_reference import (</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     REFERENCE_OUTPUTS, check_reference_model, pack_reference_gathers,</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> )</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> from wbc_lora_assets import ID_PATTERN, asset_path, check_graph, load_adapter, read_json, sha256</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> def load_embedded_model(path):</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     import onnx</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> </span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     model = onnx.load(str(path), load_external_data=False)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     if any(t.data_location == onnx.TensorProto.EXTERNAL for t in model.graph.initializer):</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>         raise ValueError(f&quot;External ONNX tensor data is not supported: {path}&quot;)</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     if any(a.type in (onnx.AttributeProto.GRAPH, onnx.AttributeProto.GRAPHS)</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>            for n in model.graph.node for a in n.attribute):</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>         raise ValueError(f&quot;Subgraphs are not supported by this preprocessing contract: {path}&quot;)</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     onnx.checker.check_model(model, full_check=True)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     return model</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> </span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> </span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> def check_fp16_policy(path, graph):</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     &quot;&quot;&quot;Check the fixed Base matrices without evaluating the policy.&quot;&quot;&quot;</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     import onnx</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     from onnx import numpy_helper</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> </span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     model = load_embedded_model(path)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     shapes = {p[&quot;name&quot;]: p[&quot;shape&quot;] for p in graph[&quot;parameters&quot;]}</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     expected = sorted((shapes[f&quot;lora_{i}_a&quot;][1], shapes[f&quot;lora_{i}_b&quot;][0]) for i in range(7))</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     matrices = []</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     for tensor in model.graph.initializer:</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         if tensor.data_type not in (onnx.TensorProto.FLOAT, onnx.TensorProto.FLOAT16):</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>             continue</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         values = numpy_helper.to_array(tensor)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>         if not np.isfinite(values).all():</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>             raise ValueError(f&quot;Non-finite policy initializer: {tensor.name}&quot;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>         if len(tensor.dims) == 2:</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>             if tensor.data_type != onnx.TensorProto.FLOAT16:</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>                 raise ValueError(f&quot;Expected an FP16 Base matrix: {tensor.name}; finish training-side export first&quot;)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>             matrices.append(tuple(tensor.dims))</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>     if sorted(matrices) != expected:</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         raise ValueError(&quot;Expected the seven native FP16 Base matrix initializers; optimized/fused graphs are unsupported&quot;)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a> </span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> </span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> def normalize_reference(path):</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     &quot;&quot;&quot;Only rewrite constant-table -&gt; Gather -&gt; Cast/Identity output paths.&quot;&quot;&quot;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     model = load_embedded_model(path)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     _, _, meta = check_reference_model(path)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     return normalize_reference_graph(model, meta), meta</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> </span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> </span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a> def normalize_reference_graph(model, meta):</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     import onnx</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     from onnx import helper, numpy_helper</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> </span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     count = int(meta[&quot;num_frames&quot;])</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     nodes = list(model.graph.node)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     producers = {name: (i, node) for i, node in enumerate(nodes) for name in node.output if name}</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     tensors = {t.name: t for t in model.graph.initializer}</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     allowed_types = {onnx.TensorProto.FLOAT: np.float32, onnx.TensorProto.FLOAT16: np.float16}</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     def unwrap(value):</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>         casts, visited = [], set()</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         while value in producers:</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>             index, node = producers[value]</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>             if node.op_type not in (&quot;Identity&quot;, &quot;Cast&quot;):</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>                 break</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>             if index in visited or node.domain not in (&quot;&quot;, &quot;ai.onnx&quot;) or \</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>                     len(node.input) != 1 or len(node.output) != 1:</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>                 raise ValueError(f&quot;Unsupported or cyclic reference wrapper: {value}&quot;)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>             visited.add(index)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>             attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>             if node.op_type == &quot;Identity&quot;:</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>                 if attrs:</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>                     raise ValueError(&quot;Unexpected reference Identity attributes&quot;)</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>             else:</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>                 if set(attrs) != {&quot;to&quot;} or attrs[&quot;to&quot;] not in allowed_types:</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>                     raise ValueError(&quot;Reference table/output Cast must only convert FP16/FP32&quot;)</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>                 casts.append(allowed_types[attrs[&quot;to&quot;]])</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>             value = node.input[0]</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>         return value, list(reversed(casts))</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a> </span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     tables, gather_indices, frame_index = {}, set(), None</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>     for name, shape in REFERENCE_OUTPUTS.items():</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>         value, output_casts = unwrap(name)</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>         if value not in producers:</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>             raise ValueError(f&quot;{name}: expected a Gather producer&quot;)</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>         index, node = producers[value]</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>         attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>         if node.domain not in (&quot;&quot;, &quot;ai.onnx&quot;) or node.op_type != &quot;Gather&quot; or \</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>                 len(node.input) != 2 or len(node.output) != 1 or \</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>                 set(attrs) - {&quot;axis&quot;} or attrs.get(&quot;axis&quot;, 0) != 0:</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>             raise ValueError(f&quot;{name}: expected one axis-0 table Gather&quot;)</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         gather_indices.add(index)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>         if frame_index is None:</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>             frame_index = node.input[1]</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         if frame_index != node.input[1]:</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>             raise ValueError(&quot;All reference outputs must share the same frame-index tensor&quot;)</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         table_name, input_casts = unwrap(node.input[0])</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         if table_name not in tensors or tensors[table_name].data_type != onnx.TensorProto.FLOAT16:</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>             raise ValueError(f&quot;{name}: expected an embedded FP16 reference table&quot;)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>         table = numpy_helper.to_array(tensors[table_name])</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         if table.shape != (count,) + shape[1:] or not np.isfinite(table).all():</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>             raise ValueError(f&quot;{name}: invalid reference table shape or value&quot;)</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>         # Float Cast commutes with Gather. Materialize only the declared data</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>         # casts; leave all computation of the frame index unchanged.</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         for dtype in input_casts + output_casts:</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>             table = table.astype(dtype)</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         if table.dtype != np.float32:</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>             raise ValueError(f&quot;{name}: the table/output path does not produce the required FP32 interface&quot;)</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         tables[name] = table</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     if len(gather_indices) != 6 or sum(n.op_type == &quot;Gather&quot; for n in nodes) != 6:</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         raise ValueError(&quot;Expected six distinct native reference table Gather branches&quot;)</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> </span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>     # Keep the exact original subgraph feeding the common frame index.</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     retained_nodes, retained_values, pending = set(), set(), [frame_index]</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     graph_inputs = {v.name for v in model.graph.input}</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     while pending:</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         value = pending.pop()</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         if not value or value in retained_values:</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>             continue</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         retained_values.add(value)</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>         if value in producers:</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>             index, node = producers[value]</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>             if index in gather_indices:</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>                 raise ValueError(&quot;Reference frame index must not depend on a trajectory Gather&quot;)</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>             retained_nodes.add(index)</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>             pending.extend(node.input)</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>         elif value not in tensors and value not in graph_inputs:</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>             raise ValueError(f&quot;Unresolved reference frame-index input: {value}&quot;)</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> </span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>     prefix = &quot;wbc_preprocess_reference_&quot;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     names = set(tensors) | set(producers) | graph_inputs</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     if any(name.startswith(prefix) for name in names):</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>         raise ValueError(&quot;Reference already uses preprocessing names; supply the original FP16 delivery&quot;)</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     retained = [node for i, node in enumerate(nodes) if i in retained_nodes]</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     initializers = [t for t in model.graph.initializer if t.name in retained_values]</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>     for name in REFERENCE_OUTPUTS:</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>         table_name = prefix + name + &quot;_table&quot;</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>         initializers.append(numpy_helper.from_array(tables[name], table_name))</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>         retained.append(helper.make_node(&quot;Gather&quot;, [table_name, frame_index], [name],</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>                                          axis=0, name=prefix + name + &quot;_gather&quot;))</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     del model.graph.node[:]</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     model.graph.node.extend(retained)</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     del model.graph.initializer[:]</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     model.graph.initializer.extend(initializers)</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     del model.graph.value_info[:]</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     onnx.checker.check_model(model, full_check=True)</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     # Exercise the existing converter&#x27;s graph rewrite, without RKNN or inference.</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     packed = copy.deepcopy(model)</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     pack_reference_gathers(packed)</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     onnx.checker.check_model(packed, full_check=True)</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     return model</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a> </span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a> </span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a> def prepare(source, output, dry_run=False):</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>     import onnx</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a> </span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     source, output = source.resolve(), output.resolve()</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     if not source.is_dir() or output.exists() or output.is_symlink():</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>         raise ValueError(&quot;Source must be a directory and output must not exist&quot;)</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     if output.is_relative_to(source) or source.is_relative_to(output):</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>         raise ValueError(&quot;Source and output must be separate, non-nested directories&quot;)</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     manifest_path = source / &quot;base_manifest.json&quot;</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     manifest_hash = sha256(manifest_path)</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>     graph = read_json(manifest_path)</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     model_path = asset_path(source, graph[&quot;model&quot;][&quot;onnx&quot;])</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     graph = check_graph(model_path, manifest_path)</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>     if graph[&quot;kind&quot;] != &quot;policy&quot;:</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>         raise ValueError(&quot;Preprocessing requires a full shared policy bundle, not a probe&quot;)</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>     check_fp16_policy(model_path, graph)</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>     actions = graph.get(&quot;actions&quot;, [])</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>     ids = [a[&quot;action_id&quot;] for a in actions]</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>     if not ids or len(ids) != len(set(ids)) or any(not ID_PATTERN.fullmatch(x) for x in ids):</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>         raise ValueError(&quot;Expected unique, valid action IDs&quot;)</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a> </span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>     input_hashes = {&quot;base_manifest.json&quot;: manifest_hash}</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     output_hashes, reserved, references = {}, set(), []</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a> </span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>     def reserve(relative):</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>         path = Path(relative)</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>         if not relative or path.is_absolute() or &quot;..&quot; in path.parts or path == Path(&quot;.&quot;):</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>             raise ValueError(f&quot;Invalid bundle path: {relative}&quot;)</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>         if any(path == old or path in old.parents or old in path.parents for old in reserved):</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>             raise ValueError(f&quot;Overlapping bundle destinations: {relative}&quot;)</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>         reserved.add(path)</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> </span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>     reserve(&quot;base_manifest.json&quot;)</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     reserve(&quot;PREPROCESSING.json&quot;)</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     reserve(&quot;ASSETS.sha256&quot;)</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>     for model in [graph[&quot;model&quot;]] + [</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>             {&quot;rknn&quot;: a[&quot;reference_rknn&quot;], &quot;rknn_record&quot;: a[&quot;reference_rknn_record&quot;]} for a in actions]:</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>         if not model[&quot;rknn&quot;].endswith(&quot;.rknn&quot;) or model[&quot;rknn_record&quot;] != model[&quot;rknn&quot;] + &quot;.json&quot;:</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>             raise ValueError(&quot;Expected adjacent RKNN model/conversion record paths&quot;)</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>         reserve(model[&quot;rknn&quot;])</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>         reserve(model[&quot;rknn_record&quot;])</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a> </span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>     with ExitStack() as stack:</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>         stage = None</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>         if not dry_run:</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>             output.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>             temporary = stack.enter_context(tempfile.TemporaryDirectory(prefix=&quot;.wbc_preprocess_&quot;, dir=output.parent))</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>             stage = Path(temporary) / &quot;bundle&quot;</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>             stage.mkdir()</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a> </span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>         def include(relative, expected=None, copy_file=True):</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>             reserve(relative)</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>             path = asset_path(source, relative)</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>             digest = sha256(path)</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>             if expected is not None and digest != expected:</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>                 raise ValueError(f&quot;Delivery checksum mismatch: {relative}; do not regenerate stale hashes on the board&quot;)</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>             input_hashes[relative] = digest</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>             if copy_file:</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>                 output_hashes[relative] = digest</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>                 if stage:</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>                     import shutil</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>                     destination = stage / relative</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>                     destination.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>                     shutil.copyfile(path, destination)</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>                     if sha256(destination) != digest:</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>                         raise ValueError(f&quot;Delivery changed while copying: {relative}&quot;)</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>             return path</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a> </span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>         include(graph[&quot;model&quot;][&quot;onnx&quot;], graph[&quot;model&quot;][&quot;sha256&quot;])</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>         for action in actions:</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>             action_id = action[&quot;action_id&quot;]</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>             adapter_path = include(action[&quot;adapter_manifest&quot;])</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>             load_adapter(adapter_path, graph, action_id)</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>             adapter = read_json(adapter_path)</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>             asset_path(adapter_path.parent, adapter[&quot;weights&quot;][&quot;path&quot;])</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>             weights_relative = str(Path(action[&quot;adapter_manifest&quot;]).parent / adapter[&quot;weights&quot;][&quot;path&quot;])</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>             include(weights_relative, adapter[&quot;weights&quot;][&quot;sha256&quot;])</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>             config_path = include(action[&quot;config&quot;], action[&quot;config_sha256&quot;])</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>             reference = include(action[&quot;reference_onnx&quot;], action[&quot;reference_onnx_sha256&quot;], copy_file=False)</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>             normalized, meta = normalize_reference(reference)</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>             config = yaml.safe_load(config_path.read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a>             robot, wbc = config[&quot;RobotCfg&quot;], config[&quot;WbcCfg&quot;]</span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>             joints = meta[&quot;joint_names&quot;].split(&quot;,&quot;)</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>             if wbc[&quot;motion_id&quot;] != action_id or robot[&quot;policy_type&quot;] != &quot;rl_wbc&quot; or \</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>                     robot[&quot;joint_order_mj&quot;] != joints or robot[&quot;joint_order_isaac&quot;] != joints or \</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>                     robot[&quot;num_actions&quot;] != 21 or robot[&quot;policy_frequency&quot;] != 50 or \</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a>                     wbc[&quot;reference_num_frames&quot;] != int(meta[&quot;num_frames&quot;]) or \</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>                     wbc[&quot;reference_root_body_index&quot;] != meta[&quot;body_names&quot;].split(&quot;,&quot;).index(&quot;base_link&quot;):</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>                 raise ValueError(f&quot;Action/config/reference contract mismatch: {action_id}&quot;)</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>             record = {&quot;action_id&quot;: action_id, &quot;reference&quot;: action[&quot;reference_onnx&quot;],</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>                       &quot;source_sha256&quot;: action[&quot;reference_onnx_sha256&quot;],</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>                       &quot;source_table_dtype&quot;: &quot;float16&quot;, &quot;prepared_table_dtype&quot;: &quot;float32&quot;,</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>                       &quot;frame_index_subgraph&quot;: &quot;preserved&quot;, &quot;num_frames&quot;: int(meta[&quot;num_frames&quot;])}</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>             if stage:</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>                 destination = stage / action[&quot;reference_onnx&quot;]</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>                 destination.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>                 onnx.save_model(normalized, str(destination), save_as_external_data=False)</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>                 check_reference_model(destination)</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>                 prepared_hash = sha256(destination)</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>                 output_hashes[action[&quot;reference_onnx&quot;]] = prepared_hash</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>                 action[&quot;reference_onnx_sha256&quot;] = prepared_hash</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>                 record[&quot;prepared_sha256&quot;] = prepared_hash</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>             references.append(record)</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a> </span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>         # Diagnostics belong to the training archive, not the build-only bundle.</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>         graph[&quot;probes&quot;] = []</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>         for key in (&quot;verification_data&quot;, &quot;verification_expected&quot;, &quot;verification_data_sha256&quot;,</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>                     &quot;verification_expected_sha256&quot;):</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>             graph.pop(key, None)</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>         for relative, digest in input_hashes.items():</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>             if sha256(asset_path(source, relative)) != digest:</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>                 raise ValueError(f&quot;Delivery changed during preprocessing: {relative}&quot;)</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>         report = {&quot;format&quot;: &quot;wbc_lora_preprocess_v1&quot;, &quot;source_manifest_sha256&quot;: manifest_hash,</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>                   &quot;source_directory&quot;: str(source), &quot;prepared_directory&quot;: str(output),</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>                   &quot;preprocessor_sha256&quot;: sha256(Path(__file__).resolve()),</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>                   &quot;onnx_version&quot;: importlib.metadata.version(&quot;onnx&quot;),</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>                   &quot;numpy_version&quot;: np.__version__, &quot;numerical_verification&quot;: &quot;not_run&quot;,</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>                   &quot;source_files&quot;: input_hashes, &quot;references&quot;: references, &quot;dry_run&quot;: dry_run}</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>         if stage:</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>             (stage / &quot;base_manifest.json&quot;).write_text(json.dumps(graph, indent=2, ensure_ascii=False) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>             check_graph(stage / graph[&quot;model&quot;][&quot;onnx&quot;], stage / &quot;base_manifest.json&quot;)</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>             output_hashes[&quot;base_manifest.json&quot;] = sha256(stage / &quot;base_manifest.json&quot;)</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>             report[&quot;prepared_files&quot;] = output_hashes</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a>             (stage / &quot;PREPROCESSING.json&quot;).write_text(json.dumps(report, indent=2, ensure_ascii=False) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>             checksums = [f&quot;{sha256(path)}  {path.relative_to(stage).as_posix()}\n&quot;</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>                          for path in sorted(stage.rglob(&quot;*&quot;)) if path.is_file()]</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>             (stage / &quot;ASSETS.sha256&quot;).write_text(&quot;&quot;.join(checksums), encoding=&quot;utf-8&quot;)</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a>             if output.exists() or output.is_symlink():</span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>                 raise ValueError(&quot;Output appeared during preprocessing; refusing to replace it&quot;)</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>             stage.rename(output)</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>     print(f&quot;{&#x27;DRY-RUN checked&#x27; if dry_run else &#x27;Prepared&#x27;} {len(actions)} actions: {output}&quot;)</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>     print(&quot;Source delivery unchanged; no checkpoint loading, inference or RKNN compilation&quot;)</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>     return report</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a> </span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a> </span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a> def main():</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>     parser.add_argument(&quot;source&quot;, type=Path, help=&quot;complete training FP16 delivery directory (read-only)&quot;)</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>     parser.add_argument(&quot;output&quot;, type=Path, help=&quot;new prepared bundle directory outside source&quot;)</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>     parser.add_argument(&quot;--dry-run&quot;, action=&quot;store_true&quot;, help=&quot;check the entire delivery and reference rewrite without writing files&quot;)</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>     args = parser.parse_args()</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>     if args.output.is_symlink():</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>         parser.error(&quot;output must not be a symlink&quot;)</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>     prepare(args.source, args.output, args.dry_run)</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>     return 0</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a> </span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a> </span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>     try:</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>         sys.exit(main())</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>     except Exception as error:</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

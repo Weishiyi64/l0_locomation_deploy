@@ -1,0 +1,762 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/src/LeggedControllerSequenceBridge.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/src/LeggedControllerSequenceBridge.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &lt;algorithm&gt;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> #include &lt;cmath&gt;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;vector&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &quot;legged_controllers/LeggedController.h&quot;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> </span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> namespace legged {</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> namespace {</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> </span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> constexpr double kFullCsvVxDeadzone = 0.05;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> constexpr double kFullCsvWzDeadzone = 0.10;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> std::string relativeToBasePath(const std::string&amp; path, const std::string&amp; base) {</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   if (path.empty() || base.empty()) return path;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   std::string normalized_base = base;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   while (normalized_base.size() &gt; 1 &amp;&amp; normalized_base.back() == &#x27;/&#x27;)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   {</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     normalized_base.pop_back();</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   }</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   if (path == normalized_base) return &quot;.&quot;;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   const std::string prefix = normalized_base + &quot;/&quot;;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   if (path.rfind(prefix, 0) == 0) return path.substr(prefix.size());</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   return path;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> }</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a> </span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> geometry_msgs::msg::Twist twistFromVelocityTimeline(const std::vector&lt;ActionSequenceVelocityKeyframe&gt;&amp; timeline,</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>                                                     double elapsed_sec) {</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   geometry_msgs::msg::Twist out;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   if (timeline.empty()) return out;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   std::size_t idx = 0;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   constexpr double kEps = 1e-9;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   for (std::size_t k = 0; k &lt; timeline.size(); ++k)</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   {</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     if (timeline[k].time_from_phase_start_sec &lt;= elapsed_sec + kEps) idx = k;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   }</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   out.linear.x = timeline[idx].velocity.linear.x;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   out.linear.y = timeline[idx].velocity.linear.y;</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   out.angular.z = timeline[idx].velocity.angular.z;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>   return out;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> }</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> </span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> }  // namespace</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> </span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> bool LeggedController::fullCsvVelocityAllowed() const {</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   return std::abs(policy_observation_.velocity_command.linear.x) &lt;= kFullCsvVxDeadzone &amp;&amp;</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>          std::abs(policy_observation_.velocity_command.angular.z) &lt;= kFullCsvWzDeadzone;</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> }</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> </span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> void LeggedController::logFullCsvVelocityBlocked(const char* context, const std::string&amp; target) const {</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>   RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>               &quot;%s blocked full_csv &#x27;%s&#x27;: cmd_vel vx=%.3f m/s, wz=%.3f rad/s outside deadzone &quot;</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>               &quot;(|vx|&lt;=%.3f, |wz|&lt;=%.3f)&quot;,</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>               context != nullptr ? context : &quot;[ActionSequence]&quot;, target.c_str(),</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>               policy_observation_.velocity_command.linear.x, policy_observation_.velocity_command.angular.z,</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>               kFullCsvVxDeadzone, kFullCsvWzDeadzone);</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> }</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a> </span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> bool LeggedController::prepareImitationPolicyForLoadedSequence(const char* context) {</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   const bool requires_walking_policy = sequenceRuntime_.requiresWalkingPolicy();</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   const bool uses_rl_imitation = sequenceRuntime_.usesRlImitation();</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   const std::string imitation_policy = sequenceRuntime_.imitationPolicy();</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> </span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   if (requires_walking_policy &amp;&amp; fsm_ &amp;&amp; !fsm_-&gt;isWalking())</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   {</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>                 &quot;%s ignored: this sequence uses walking/imitation policy phases. Enter walk mode before triggering it.&quot;,</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>                 context != nullptr ? context : &quot;ActionSequence&quot;);</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     return false;</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   }</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   if (!uses_rl_imitation) return true;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   return switchImitationPolicy(imitation_policy, context);</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> }</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a> </span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a> bool LeggedController::loadActionSequenceForPlayback(const std::string&amp; path, const char* context) {</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   return sequenceRuntime_.loadActionSequenceForPlayback(path, context);</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a> }</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> </span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a> void LeggedController::clearSequenceReleaseHandoff() { sequenceRuntime_.clearReleaseHandoff(); }</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a> </span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> void LeggedController::beginSequenceReleaseHandoff(double wall_sec) {</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   sequenceRuntime_.beginReleaseHandoff(wall_sec, is_leg_joint_);</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a> }</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> </span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a> std::string LeggedController::displayControllerPath(const std::string&amp; path) const {</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   return relativeToBasePath(path, legged_controllers_share_);</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> }</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> </span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a> bool LeggedController::triggerSequenceFromPath(const std::string&amp; sequence_path, const char* context,</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>                                                const std::function&lt;void()&gt;&amp; after_start) {</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   if (!sequenceRuntime_.loadedPathMatches(sequence_path))</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   {</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     if (!loadActionSequenceForPlayback(sequence_path, context))</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     {</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>       return false;</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     }</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   }</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   if (!sequenceRuntime_.isLoaded()) return false;</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> </span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   if (sequenceRuntime_.usesFullCsv() &amp;&amp; !fullCsvVelocityAllowed())</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>   {</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     logFullCsvVelocityBlocked(context, sequence_path);</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     return false;</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>   }</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a> </span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>   if (!prepareImitationPolicyForLoadedSequence(context))</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>   {</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>     return false;</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>   }</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a> </span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>   if (!startActionSequence())</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>   {</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     return false;</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>   }</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>   if (after_start)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>   {</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     after_start();</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>   }</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>   return true;</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a> }</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a> </span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a> bool LeggedController::startActionSequence() {</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>   // Timeline is anchored on the next controller update(time) — do not use node clock here or</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>   // remainingPhaseSeconds / base_vel ramp will disagree with step() (common in sim).</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>   return sequenceRuntime_.triggerLoaded();</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a> }</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> </span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> void LeggedController::stopActionSequence(const char* reason, double wall_sec) {</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>   (void)reason;</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a> </span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>   if (walkStartPolicySource() == PolicyCmdSource::kRl)</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>   {</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>   }</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>   else</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>   {</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>     publishImitationActive(false);</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>   }</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>   applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a> }</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> </span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> void LeggedController::finishActionSequenceNormally(double wall_sec) {</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>   sequenceRuntime_.resetForNormalFinish(wall_sec, is_leg_joint_);</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a> </span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>   if (walkStartPolicySource() == PolicyCmdSource::kRl)</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>   {</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>   }</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>   else</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>   {</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     publishImitationActive(false);</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>   }</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>   applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a> }</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a> </span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a> void LeggedController::configureActionSequencePhase(const ActionSequencePhase&amp; phase, double wall_sec) {</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>   if (phase.mode == ActionSequenceMode::kRlImitation)</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>   {</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     sequenceRuntime_.resetPhaseFlags();</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     sequenceRuntime_.jointCsv().setHoldLastFrame(false);</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     sequenceRuntime_.jointCsv().stop();</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a> </span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     policyMux_.publishImitationReset();</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     publishImitationActive(true);</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>     applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     return;</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>   }</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a> </span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>   if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; !fullCsvVelocityAllowed())</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>   {</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     logFullCsvVelocityBlocked(&quot;[ActionSequence] Phase guard&quot;, phase.name);</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     stopActionSequence(&quot;[ActionSequence] full_csv blocked by cmd_vel deadzone -&gt; default policy&quot;, wall_sec);</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     return;</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>   }</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a> </span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>   publishImitationActive(false);</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>   sequenceRuntime_.setFullCsvPhase(phase.mode == ActionSequenceMode::kFullCsv);</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>   if (phase.mode == ActionSequenceMode::kRlWithCsv)</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>   {</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>     setPolicySource(walkStartPolicySource());</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>   }</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>   else if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; policyMux_.source() == PolicyCmdSource::kImitation)</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>   {</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>   }</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a> </span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>   sequenceRuntime_.jointCsv().setHoldLastFrame(true);</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>   sequenceRuntime_.jointCsv().stop();</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>   if (!sequenceRuntime_.jointCsv().load(phase.csv_path))</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>   {</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>     stopActionSequence(&quot;[ActionSequence] Failed to load phase CSV -&gt; default policy&quot;, wall_sec);</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     return;</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>   }</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>   if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; !sequenceRuntime_.jointCsv().coversAllJoints())</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>   {</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[ActionSequence] full_csv phase &#x27;%s&#x27; does not cover all robot joints&quot;,</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>                 phase.name.c_str());</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>   }</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>   const double csv_playback_sec = sequenceRuntime_.jointCsv().duration();</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>   if (phase.duration_explicit &amp;&amp; phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; csv_playback_sec &gt; 1e-9 &amp;&amp;</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>       phase.duration + 1e-3 &lt; csv_playback_sec)</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>   {</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>                 &quot;[ActionSequence] Phase &#x27;%s&#x27;: YAML duration %.3fs &lt; CSV playback %.3fs — phase ends before clip; &quot;</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>                 &quot;omit duration or use duration: auto to match the file.&quot;,</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>                 phase.name.c_str(), phase.duration, csv_playback_sec);</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>   }</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a> </span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>   applyJointCsvPhaseTriggerBlendAndCmdVel(wall_sec);</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a> }</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a> </span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a> void LeggedController::handleActionSequenceUpdate(const rclcpp::Time&amp; time) {</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>   if (!sequence_engine_enabled_) return;</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a> </span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>   if (sequenceRuntime_.isActive())</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>   {</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>     sequenceRuntime_.step(time.seconds());</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a> </span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>     ActionSequencePhase phase;</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>     if (sequenceRuntime_.consumePhaseStartEvent(phase))</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>     {</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>       configureActionSequencePhase(phase, time.seconds());</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a>     }</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>   }</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a> </span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>   if (sequenceRuntime_.consumeFinishedEvent())</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>   {</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     if (sequence_finish_emergency_pending_)</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>     {</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>       sequence_finish_emergency_pending_ = false;</span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[BackEmergency] Sequence finished: entering EmergencyStop&quot;);</span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a>       triggerEmergencyStop();</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>       return;</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>     }</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a> </span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>     finishActionSequenceNormally(time.seconds());</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>   }</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a> }</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a> </span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a> geometry_msgs::msg::Twist LeggedController::computeJoystickTrim(const JoystickCommand&amp; command) {</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>   geometry_msgs::msg::Twist input;</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>   input.linear.x = command.vx;</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>   input.linear.y = command.vy;</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>   input.angular.z = command.wz;</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a> </span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a>   updateSpeedMultiplier(command.lt_axis);</span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a>   return velLimiter_ ? velLimiter_-&gt;filter(input) : input;</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a> }</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a> </span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a> geometry_msgs::msg::Twist LeggedController::selectedOperatorVelocity(</span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     const geometry_msgs::msg::Twist&amp; joystick_velocity) {</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>   if (!radarControlEnabled_)</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a>   {</span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>     return joystick_velocity;</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>   }</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a> </span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>   if (!fsm_ || !fsm_-&gt;isWalking())</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>   {</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a>     return geometry_msgs::msg::Twist();</span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>   }</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a> </span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>   std::lock_guard&lt;std::mutex&gt; lock(plannerCommandMutex_);</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>   if (!plannerCommandSeen_)</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>   {</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>                           &quot;Planner velocity command has not been received; commanding zero velocity&quot;);</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>     return geometry_msgs::msg::Twist();</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a>   }</span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a> </span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>   if (!plannerCommandValid_)</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>   {</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>                           &quot;Planner velocity command is invalid; commanding zero velocity&quot;);</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>     return geometry_msgs::msg::Twist();</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>   }</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a> </span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>   const bool fresh =</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>       std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - plannerCommandReceiveTime_).count() &lt;= 0.5;</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>   if (fresh)</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>   {</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>     return plannerCommand_;</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>   }</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a> </span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a>   RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>                         &quot;Planner velocity command is stale; commanding zero velocity&quot;);</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>   return geometry_msgs::msg::Twist();</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a> }</span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a> </span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a> geometry_msgs::msg::Twist LeggedController::computeCommandVelocity(const JoystickCommand&amp; command, double wall_sec) {</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>   const geometry_msgs::msg::Twist trim = computeJoystickTrim(command);</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a> </span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a>   const ActiveSequencePhaseSnapshot snapshot = sequenceRuntime_.activePhaseSnapshot(wall_sec);</span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a>   if (!snapshot.active)</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>   {</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>     return selectedOperatorVelocity(trim);</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>   }</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>   const ActionSequencePhase&amp; active_phase = snapshot.phase;</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a> </span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>   if (active_phase.mode == ActionSequenceMode::kFullCsv)</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>   {</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a>     return geometry_msgs::msg::Twist();</span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>   }</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a> </span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>   if (active_phase.mode == ActionSequenceMode::kRlImitation)</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>   {</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>     return selectedOperatorVelocity(trim);</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>   }</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a> </span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>   const geometry_msgs::msg::Twist operator_velocity = selectedOperatorVelocity(trim);</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a> </span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>   geometry_msgs::msg::Twist out;</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>   if (!active_phase.velocity_timeline.empty())</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a>   {</span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>     out = twistFromVelocityTimeline(active_phase.velocity_timeline, snapshot.elapsed_sec);</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>   }</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>   else</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>   {</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a>     out.linear.x = active_phase.base_velocity.linear.x;</span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>     out.linear.y = active_phase.base_velocity.linear.y;</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>     out.angular.z = active_phase.base_velocity.angular.z;</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>   }</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a> </span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>   double scale = 1.0;</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>   if (snapshot.base_vel_ramp_sec &gt; 1e-9)</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a>   {</span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a>     const double eff_ramp = std::min(snapshot.base_vel_ramp_sec, std::max(active_phase.duration, 1e-9));</span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a>     if (snapshot.remaining_sec &lt; eff_ramp) scale = std::max(0.0, std::min(1.0, snapshot.remaining_sec / eff_ramp));</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>   }</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>   out.linear.x *= scale;</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>   out.linear.y *= scale;</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a>   out.angular.z *= scale;</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a> </span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>   out.linear.x += operator_velocity.linear.x;</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>   out.linear.y += operator_velocity.linear.y;</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>   out.angular.z += operator_velocity.angular.z;</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a> </span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>   return out;</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a> }</span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a> </span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a> void LeggedController::applyJoystickMotion(const JoystickCommand&amp; command, double wall_sec) {</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>   policy_observation_.velocity_command = computeCommandVelocity(command, wall_sec);</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a> }</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a> </span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a> }  // namespace legged</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &lt;algorithm&gt;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> #include &lt;cmath&gt;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;vector&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> </span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &quot;legged_controllers/LeggedController.h&quot;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> </span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> namespace legged {</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> namespace {</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> </span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> constexpr double kFullCsvVxDeadzone = 0.05;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> constexpr double kFullCsvWzDeadzone = 0.10;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> </span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> std::string relativeToBasePath(const std::string&amp; path, const std::string&amp; base) {</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>   if (path.empty() || base.empty()) return path;</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   std::string normalized_base = base;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>   while (normalized_base.size() &gt; 1 &amp;&amp; normalized_base.back() == &#x27;/&#x27;)</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>   {</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     normalized_base.pop_back();</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   }</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a> </span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>   if (path == normalized_base) return &quot;.&quot;;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> </span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   const std::string prefix = normalized_base + &quot;/&quot;;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   if (path.rfind(prefix, 0) == 0) return path.substr(prefix.size());</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> </span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   return path;</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> }</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> </span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> geometry_msgs::msg::Twist twistFromVelocityTimeline(const std::vector&lt;ActionSequenceVelocityKeyframe&gt;&amp; timeline,</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>                                                     double elapsed_sec) {</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>   geometry_msgs::msg::Twist out;</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>   if (timeline.empty()) return out;</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>   std::size_t idx = 0;</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   constexpr double kEps = 1e-9;</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   for (std::size_t k = 0; k &lt; timeline.size(); ++k)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   {</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     if (timeline[k].time_from_phase_start_sec &lt;= elapsed_sec + kEps) idx = k;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   }</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>   out.linear.x = timeline[idx].velocity.linear.x;</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>   out.linear.y = timeline[idx].velocity.linear.y;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>   out.angular.z = timeline[idx].velocity.angular.z;</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>   return out;</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> }</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a> </span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a> }  // namespace</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a> </span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a> bool LeggedController::fullCsvVelocityAllowed() const {</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>   return std::abs(policy_observation_.velocity_command.linear.x) &lt;= kFullCsvVxDeadzone &amp;&amp;</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>          std::abs(policy_observation_.velocity_command.angular.z) &lt;= kFullCsvWzDeadzone;</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a> }</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a> </span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a> void LeggedController::logFullCsvVelocityBlocked(const char* context, const std::string&amp; target) const {</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>   RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>               &quot;%s blocked full_csv &#x27;%s&#x27;: cmd_vel vx=%.3f m/s, wz=%.3f rad/s outside deadzone &quot;</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>               &quot;(|vx|&lt;=%.3f, |wz|&lt;=%.3f)&quot;,</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>               context != nullptr ? context : &quot;[ActionSequence]&quot;, target.c_str(),</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>               policy_observation_.velocity_command.linear.x, policy_observation_.velocity_command.angular.z,</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>               kFullCsvVxDeadzone, kFullCsvWzDeadzone);</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a> }</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a> </span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a> bool LeggedController::prepareImitationPolicyForLoadedSequence(const char* context) {</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>   const bool requires_walking_policy = sequenceRuntime_.requiresWalkingPolicy();</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>   const bool uses_rl_imitation = sequenceRuntime_.usesRlImitation();</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>   const std::string imitation_policy = sequenceRuntime_.imitationPolicy();</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> </span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>   if (requires_walking_policy &amp;&amp; fsm_ &amp;&amp; !fsm_-&gt;isWalking())</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>   {</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>                 &quot;%s ignored: this sequence uses walking/imitation policy phases. Enter walk mode before triggering it.&quot;,</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>                 context != nullptr ? context : &quot;ActionSequence&quot;);</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>     return false;</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>   }</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>   if (!uses_rl_imitation) return true;</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>   return switchImitationPolicy(imitation_policy, context);</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a> }</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a> </span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a> bool LeggedController::loadActionSequenceForPlayback(const std::string&amp; path, const char* context) {</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>   return sequenceRuntime_.loadActionSequenceForPlayback(path, context);</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a> }</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a> </span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a> void LeggedController::clearSequenceReleaseHandoff() { sequenceRuntime_.clearReleaseHandoff(); }</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a> </span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a> void LeggedController::beginSequenceReleaseHandoff(double wall_sec) {</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>   sequenceRuntime_.beginReleaseHandoff(wall_sec, is_leg_joint_);</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a> }</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a> </span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a> bool LeggedController::loadKeyboardActionMap(const std::string&amp; path) {</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>   return sequenceRuntime_.loadKeyboardActionMap(path);</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a> }</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a> </span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> std::string LeggedController::displayControllerPath(const std::string&amp; path) const {</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>   return relativeToBasePath(path, legged_controllers_share_);</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a> }</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a> </span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a> bool LeggedController::triggerSequenceFromPath(const std::string&amp; sequence_path, const char* context,</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>                                                const std::function&lt;void()&gt;&amp; after_start) {</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>   if (!sequenceRuntime_.loadedPathMatches(sequence_path))</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>   {</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>     if (!loadActionSequenceForPlayback(sequence_path, context))</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>     {</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>       return false;</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>     }</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>   }</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>   if (!sequenceRuntime_.isLoaded()) return false;</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a> </span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>   if (sequenceRuntime_.usesFullCsv() &amp;&amp; !fullCsvVelocityAllowed())</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>   {</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>     logFullCsvVelocityBlocked(context, sequence_path);</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>     return false;</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>   }</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a> </span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>   if (!prepareImitationPolicyForLoadedSequence(context))</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>   {</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>     return false;</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>   }</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a> </span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>   if (!startActionSequence())</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>   {</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>     return false;</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>   }</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>   if (after_start)</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>   {</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>     after_start();</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>   }</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>   return true;</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a> }</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a> </span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a> bool LeggedController::startActionSequence() {</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>   // Timeline is anchored on the next controller update(time) — do not use node clock here or</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>   // remainingPhaseSeconds / base_vel ramp will disagree with step() (common in sim).</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>   return sequenceRuntime_.triggerLoaded();</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a> }</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a> </span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a> void LeggedController::stopActionSequence(const char* reason, double wall_sec) {</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>   (void)reason;</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>   sequenceRuntime_.resetForAbort();</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a> </span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>   if (walkStartPolicySource() == PolicyCmdSource::kRl)</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>   {</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>   }</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>   else</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>   {</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>     publishImitationActive(false);</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>   }</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>   applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a> }</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a> </span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a> void LeggedController::finishActionSequenceNormally(double wall_sec) {</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>   sequence_finish_emergency_pending_ = false;</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>   sequenceRuntime_.resetForNormalFinish(wall_sec, is_leg_joint_);</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a> </span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>   if (walkStartPolicySource() == PolicyCmdSource::kRl)</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>   {</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>   }</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>   else</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>   {</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>     publishImitationActive(false);</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>   }</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>   applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a> }</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a> </span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a> void LeggedController::configureActionSequencePhase(const ActionSequencePhase&amp; phase, double wall_sec) {</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>   if (phase.mode == ActionSequenceMode::kRlImitation)</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>   {</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>     sequenceRuntime_.resetPhaseFlags();</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>     sequenceRuntime_.jointCsv().setHoldLastFrame(false);</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>     sequenceRuntime_.jointCsv().stop();</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a> </span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>     setPolicySource(PolicyCmdSource::kImitation);</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>     policyMux_.publishImitationReset();</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     publishImitationActive(true);</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>     applyJoystickMotion(lastJoystickCommand_, wall_sec);</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>     return;</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>   }</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a> </span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>   if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; !fullCsvVelocityAllowed())</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>   {</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>     logFullCsvVelocityBlocked(&quot;[ActionSequence] Phase guard&quot;, phase.name);</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>     stopActionSequence(&quot;[ActionSequence] full_csv blocked by cmd_vel deadzone -&gt; default policy&quot;, wall_sec);</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>     return;</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>   }</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a> </span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>   publishImitationActive(false);</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>   sequenceRuntime_.setFullCsvPhase(phase.mode == ActionSequenceMode::kFullCsv);</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>   if (phase.mode == ActionSequenceMode::kRlWithCsv)</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>   {</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>     setPolicySource(walkStartPolicySource());</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>   }</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>   else if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; policyMux_.source() == PolicyCmdSource::kImitation)</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>   {</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>     returnToRlWithoutGainRamp(nullptr);</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>   }</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a> </span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>   sequenceRuntime_.jointCsv().setHoldLastFrame(true);</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>   sequenceRuntime_.jointCsv().stop();</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>   if (!sequenceRuntime_.jointCsv().load(phase.csv_path))</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>   {</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>     stopActionSequence(&quot;[ActionSequence] Failed to load phase CSV -&gt; default policy&quot;, wall_sec);</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>     return;</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>   }</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>   if (phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; !sequenceRuntime_.jointCsv().coversAllJoints())</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>   {</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[ActionSequence] full_csv phase &#x27;%s&#x27; does not cover all robot joints&quot;,</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>                 phase.name.c_str());</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>   }</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>   const double csv_playback_sec = sequenceRuntime_.jointCsv().duration();</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>   if (phase.duration_explicit &amp;&amp; phase.mode == ActionSequenceMode::kFullCsv &amp;&amp; csv_playback_sec &gt; 1e-9 &amp;&amp;</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>       phase.duration + 1e-3 &lt; csv_playback_sec)</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>   {</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>                 &quot;[ActionSequence] Phase &#x27;%s&#x27;: YAML duration %.3fs &lt; CSV playback %.3fs — phase ends before clip; &quot;</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>                 &quot;omit duration or use duration: auto to match the file.&quot;,</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>                 phase.name.c_str(), phase.duration, csv_playback_sec);</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>   }</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a> </span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>   applyJointCsvPhaseTriggerBlendAndCmdVel(wall_sec);</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a> }</span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a> </span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a> void LeggedController::handleActionSequenceUpdate(const rclcpp::Time&amp; time) {</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>   if (!sequence_engine_enabled_) return;</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a> </span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>   if (sequenceRuntime_.isActive())</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>   {</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>     sequenceRuntime_.step(time.seconds());</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a> </span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a>     ActionSequencePhase phase;</span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>     if (sequenceRuntime_.consumePhaseStartEvent(phase))</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>     {</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>       configureActionSequencePhase(phase, time.seconds());</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>     }</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>   }</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a> </span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>   if (sequenceRuntime_.consumeFinishedEvent())</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>   {</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>     if (sequence_finish_emergency_pending_)</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>     {</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>       sequence_finish_emergency_pending_ = false;</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>       RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[BackEmergency] Sequence finished: entering EmergencyStop&quot;);</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>       triggerEmergencyStop();</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>       return;</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>     }</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a> </span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>     finishActionSequenceNormally(time.seconds());</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>   }</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a> }</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a> </span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a> void LeggedController::requestKeyboardAction(const std::string&amp; action_name) {</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>   if (!keyboard_action_enabled_) return;</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a> </span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>   const KeyboardActionBinding* binding_ptr = sequenceRuntime_.findKeyboardAction(action_name);</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>   if (binding_ptr == nullptr)</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>   {</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[KeyboardAction] Ignoring unknown action &#x27;%s&#x27;&quot;, action_name.c_str());</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>     return;</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a>   }</span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>   const KeyboardActionBinding&amp; binding = *binding_ptr;</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a> </span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a>   if (sequenceRuntime_.isActive())</span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a>   {</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>     RCLCPP_WARN(nh_-&gt;get_logger(), &quot;[KeyboardAction] Ignoring action &#x27;%s&#x27; because an action sequence is already active&quot;,</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>                 action_name.c_str());</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>     return;</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>   }</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a> </span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>   if (fsm_ &amp;&amp; (fsm_-&gt;isEmergency() || fsm_-&gt;isCalibration()))</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>   {</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a>                 &quot;[KeyboardAction] Ignoring trigger because the controller is not in a sequence-safe state&quot;);</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>     return;</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>   }</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>   if (binding.requires_walking_policy &amp;&amp; fsm_ &amp;&amp; !fsm_-&gt;isWalking())</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>   {</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>     RCLCPP_WARN(nh_-&gt;get_logger(),</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>                 &quot;[KeyboardAction] Ignoring action &#x27;%s&#x27; because it uses walking/imitation policy phases. Enter walk &quot;</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a>                 &quot;mode before triggering it.&quot;,</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>                 action_name.c_str());</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>     return;</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>   }</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a> </span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>   const auto publish_auxiliary_commands_and_log = [this, &amp;action_name, &amp;binding]() {</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>     if (keyboardActionAudioPub_ &amp;&amp; !binding.audio_cmd.empty())</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>     {</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>       std_msgs::msg::String audio_msg;</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>       audio_msg.data = binding.audio_cmd;</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>       keyboardActionAudioPub_-&gt;publish(audio_msg);</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>       RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KeyboardAction] Action &#x27;%s&#x27; published audio command to %s: &#x27;%s&#x27;&quot;,</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>                   action_name.c_str(), sequenceRuntime_.keyboardAudioTopic().c_str(), binding.audio_cmd.c_str());</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>     }</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a> </span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a>     RCLCPP_INFO(nh_-&gt;get_logger(), &quot;[KeyboardAction] Starting action &#x27;%s&#x27; sequence: %s&quot;, action_name.c_str(),</span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a>                 binding.sequence_path.c_str());</span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>   };</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>   (void)triggerSequenceFromPath(binding.sequence_path, &quot;[KeyboardAction] Trigger&quot;, publish_auxiliary_commands_and_log);</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a> }</span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a> </span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a> geometry_msgs::msg::Twist LeggedController::computeJoystickTrim(const JoystickCommand&amp; command) {</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>   geometry_msgs::msg::Twist input;</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>   input.linear.x = command.vx;</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>   input.linear.y = command.vy;</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a>   input.angular.z = command.wz;</span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a> </span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>   updateSpeedMultiplier(command.lt_axis);</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>   return velLimiter_ ? velLimiter_-&gt;filter(input) : input;</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a> }</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a> </span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a> geometry_msgs::msg::Twist LeggedController::selectedOperatorVelocity(</span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>     const geometry_msgs::msg::Twist&amp; joystick_velocity) {</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>   if (!radarControlEnabled_)</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a>   {</span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>     return joystick_velocity;</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>   }</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a> </span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a>   if (!fsm_ || !fsm_-&gt;isWalking())</span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a>   {</span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a>     return geometry_msgs::msg::Twist();</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>   }</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a> </span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>   std::lock_guard&lt;std::mutex&gt; lock(plannerCommandMutex_);</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>   if (!plannerCommandSeen_)</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>   {</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a>                           &quot;Planner velocity command has not been received; commanding zero velocity&quot;);</span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a>     return geometry_msgs::msg::Twist();</span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>   }</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a> </span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>   if (!plannerCommandValid_)</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a>   {</span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>     RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>                           &quot;Planner velocity command is invalid; commanding zero velocity&quot;);</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>     return geometry_msgs::msg::Twist();</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a>   }</span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a> </span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a>   const bool fresh =</span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a>       std::chrono::duration&lt;double&gt;(std::chrono::steady_clock::now() - plannerCommandReceiveTime_).count() &lt;= 0.5;</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a>   if (fresh)</span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a>   {</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>     return plannerCommand_;</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>   }</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a> </span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a>   RCLCPP_ERROR_THROTTLE(nh_-&gt;get_logger(), *nh_-&gt;get_clock(), 1000,</span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>                         &quot;Planner velocity command is stale; commanding zero velocity&quot;);</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>   return geometry_msgs::msg::Twist();</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a> }</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a> </span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a> geometry_msgs::msg::Twist LeggedController::computeCommandVelocity(const JoystickCommand&amp; command, double wall_sec) {</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>   const geometry_msgs::msg::Twist trim = computeJoystickTrim(command);</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a> </span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a>   const ActiveSequencePhaseSnapshot snapshot = sequenceRuntime_.activePhaseSnapshot(wall_sec);</span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a>   if (!snapshot.active)</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a>   {</span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a>     return selectedOperatorVelocity(trim);</span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a>   }</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a>   const ActionSequencePhase&amp; active_phase = snapshot.phase;</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a> </span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>   if (active_phase.mode == ActionSequenceMode::kFullCsv)</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>   {</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>     return geometry_msgs::msg::Twist();</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>   }</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a> </span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a>   if (active_phase.mode == ActionSequenceMode::kRlImitation)</span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>   {</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>     return selectedOperatorVelocity(trim);</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a>   }</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a> </span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a>   const geometry_msgs::msg::Twist operator_velocity = selectedOperatorVelocity(trim);</span>
+<span id="A-L374" class="line"><a href="#A-L374"> 374</a> </span>
+<span id="A-L375" class="line"><a href="#A-L375"> 375</a>   geometry_msgs::msg::Twist out;</span>
+<span id="A-L376" class="line"><a href="#A-L376"> 376</a>   if (!active_phase.velocity_timeline.empty())</span>
+<span id="A-L377" class="line"><a href="#A-L377"> 377</a>   {</span>
+<span id="A-L378" class="line"><a href="#A-L378"> 378</a>     out = twistFromVelocityTimeline(active_phase.velocity_timeline, snapshot.elapsed_sec);</span>
+<span id="A-L379" class="line"><a href="#A-L379"> 379</a>   }</span>
+<span id="A-L380" class="line"><a href="#A-L380"> 380</a>   else</span>
+<span id="A-L381" class="line"><a href="#A-L381"> 381</a>   {</span>
+<span id="A-L382" class="line"><a href="#A-L382"> 382</a>     out.linear.x = active_phase.base_velocity.linear.x;</span>
+<span id="A-L383" class="line"><a href="#A-L383"> 383</a>     out.linear.y = active_phase.base_velocity.linear.y;</span>
+<span id="A-L384" class="line"><a href="#A-L384"> 384</a>     out.angular.z = active_phase.base_velocity.angular.z;</span>
+<span id="A-L385" class="line"><a href="#A-L385"> 385</a>   }</span>
+<span id="A-L386" class="line"><a href="#A-L386"> 386</a> </span>
+<span id="A-L387" class="line"><a href="#A-L387"> 387</a>   double scale = 1.0;</span>
+<span id="A-L388" class="line"><a href="#A-L388"> 388</a>   if (snapshot.base_vel_ramp_sec &gt; 1e-9)</span>
+<span id="A-L389" class="line"><a href="#A-L389"> 389</a>   {</span>
+<span id="A-L390" class="line"><a href="#A-L390"> 390</a>     const double eff_ramp = std::min(snapshot.base_vel_ramp_sec, std::max(active_phase.duration, 1e-9));</span>
+<span id="A-L391" class="line"><a href="#A-L391"> 391</a>     if (snapshot.remaining_sec &lt; eff_ramp) scale = std::max(0.0, std::min(1.0, snapshot.remaining_sec / eff_ramp));</span>
+<span id="A-L392" class="line"><a href="#A-L392"> 392</a>   }</span>
+<span id="A-L393" class="line"><a href="#A-L393"> 393</a>   out.linear.x *= scale;</span>
+<span id="A-L394" class="line"><a href="#A-L394"> 394</a>   out.linear.y *= scale;</span>
+<span id="A-L395" class="line"><a href="#A-L395"> 395</a>   out.angular.z *= scale;</span>
+<span id="A-L396" class="line"><a href="#A-L396"> 396</a> </span>
+<span id="A-L397" class="line"><a href="#A-L397"> 397</a>   out.linear.x += operator_velocity.linear.x;</span>
+<span id="A-L398" class="line"><a href="#A-L398"> 398</a>   out.linear.y += operator_velocity.linear.y;</span>
+<span id="A-L399" class="line"><a href="#A-L399"> 399</a>   out.angular.z += operator_velocity.angular.z;</span>
+<span id="A-L400" class="line"><a href="#A-L400"> 400</a> </span>
+<span id="A-L401" class="line"><a href="#A-L401"> 401</a>   return out;</span>
+<span id="A-L402" class="line"><a href="#A-L402"> 402</a> }</span>
+<span id="A-L403" class="line"><a href="#A-L403"> 403</a> </span>
+<span id="A-L404" class="line"><a href="#A-L404"> 404</a> void LeggedController::applyJoystickMotion(const JoystickCommand&amp; command, double wall_sec) {</span>
+<span id="A-L405" class="line"><a href="#A-L405"> 405</a>   policy_observation_.velocity_command = computeCommandVelocity(command, wall_sec);</span>
+<span id="A-L406" class="line"><a href="#A-L406"> 406</a> }</span>
+<span id="A-L407" class="line"><a href="#A-L407"> 407</a> </span>
+<span id="A-L408" class="line"><a href="#A-L408"> 408</a> }  // namespace legged</span></pre></html>

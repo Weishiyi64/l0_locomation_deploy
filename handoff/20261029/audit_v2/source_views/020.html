@@ -1,0 +1,550 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/sim2sim_path_planner.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/sim2sim_path_planner.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> &quot;&quot;&quot;Obstacle-aware A* with a checked escape segment for an occupied start.</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> Only the first, outward-moving segment may leave an already occupied inflation</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> layer. The remainder of the route uses the original inflated occupancy grid.</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> &quot;&quot;&quot;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> </span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> from __future__ import annotations</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> import heapq</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> import math</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> from collections import deque</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> </span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> import numpy as np</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> from astar_global_planner import AStarPlanner</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> </span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> def sample_guidance_path(vertices, planner, spacing=1.0):</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     &quot;&quot;&quot;Use a fixed-distance lookahead, shortening only for corners/the goal.</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> </span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     Intersect the remaining polyline with a circle around the current anchor.</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     Only skip bends if the direct connector passes the original clearance test.</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     Unlike equal subdivision, a 1.2 m straight leg starts with a 1 m target.</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     &quot;&quot;&quot;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     remaining = np.asarray(vertices, dtype=np.float64)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     result = [remaining[0]]</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>     while len(remaining) &gt; 1:</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>         anchor = remaining[0]</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>         candidate = remaining[-1]</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>         segment_end = len(remaining) - 1</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>         for index in range(1, len(remaining)):</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>             if np.linalg.norm(remaining[index] - anchor) &lt; spacing - 1e-9:</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>                 continue</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>             start, end = remaining[index - 1 : index + 1]</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>             direction, offset = end - start, start - anchor</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>             a = float(np.dot(direction, direction))</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>             if a &lt; 1e-16:</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>                 continue</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>             b = float(np.dot(offset, direction))</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>             c = float(np.dot(offset, offset) - spacing**2)</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>             fraction = np.clip((-b + math.sqrt(max(0.0, b * b - a * c))) / a, 0.0, 1.0)</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>             candidate = start + fraction * direction</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>             segment_end = index</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>             break</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>         if not planner.segment_is_free(anchor, candidate):</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>             # A mandatory bend may be closer than the lookahead. Never turn a</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>             # spacing preference into a connector through an occupied corner.</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>             for index in range(segment_end - 1, 0, -1):</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>                 if planner.segment_is_free(anchor, remaining[index]):</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>                     candidate, segment_end = remaining[index], index</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>                     break</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>             else:</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>                 raise ValueError(&quot;无法在保持净空的同时采样前视路径点&quot;)</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>         if np.linalg.norm(candidate - anchor) &lt; 1e-8:</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>             raise ValueError(&quot;前视路径点未沿路线推进&quot;)</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>         result.append(candidate)</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         tail = remaining[segment_end:]</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>         # The intersection can coincide with an existing vertex (or the goal).</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>         if len(tail) and np.linalg.norm(tail[0] - candidate) &lt; 1e-8:</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>             tail = tail[1:]</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>         remaining = np.concatenate((candidate[None], tail))</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>     return np.asarray(result, dtype=np.float32)</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a> </span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a> </span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a> def refresh_committed_path(path_xy, waypoint_index, start, planner, spacing=1.0):</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>     &quot;&quot;&quot;Re-anchor a still-valid committed route at the live robot position.</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a> </span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>     Periodic replanning used to discard the entire route and solve an equally</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>     valid A* homotopy from scratch.  Around a doorway, small tracking errors can</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a>     then make successive solutions alternate between opposite obstacle sides.</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     Keep only the unvisited suffix and search a fresh full-distance connector</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     into it before falling back to a necessary short bend. Returning</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>     ``None`` asks the caller for a genuine A* replan/recovery when the committed</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>     corridor is no longer safely reachable.</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     &quot;&quot;&quot;</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>     path = np.asarray(path_xy, dtype=np.float64)</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>     start = np.asarray(start, dtype=np.float64)</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     if (</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         path.ndim != 2</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>         or path.shape[1:] != (2,)</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>         or len(path) &lt; 2</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>         or not 1 &lt;= waypoint_index &lt; len(path)</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>         or not np.isfinite(path).all()</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>         or not np.isfinite(start).all()</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>         or not planner.start_is_free(start)</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>     ):</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>         return None</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a> </span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>     # Retain the corridor, not the exact old sampling vertices. A vertex-only</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>     # reconnect leaves a 0.2--0.3 m target at a doorway even when a checked</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>     # two-segment connection through a fresh 1 m target is available.</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>     suffix = path[waypoint_index:]</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>     if np.linalg.norm(suffix[-1] - start) &lt;= spacing and planner.segment_is_free(start, suffix[-1]):</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>         return np.asarray((start, suffix[-1]), dtype=np.float32)</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>     remaining_lengths = np.r_[np.cumsum(np.linalg.norm(np.diff(suffix, axis=0), axis=1)[::-1])[::-1], 0.0]</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>     direction = suffix[0] - start</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>     bearing = math.atan2(direction[1], direction[0])</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>     angles = np.r_[bearing, np.linspace(-math.pi, math.pi, 128, endpoint=False)]</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>     endpoints = start + spacing * np.stack((np.cos(angles), np.sin(angles)), axis=1)</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>     best = None</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>     for endpoint in endpoints:</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         if not planner.segment_is_free(start, endpoint):</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>             continue</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>         for index in range(len(suffix) - 1, -1, -1):</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>             outgoing = suffix[index] - endpoint</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>             # Do not create a new target beyond a corner and then turn back</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>             # towards the old point. A genuine tight turn uses the fallback.</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>             if np.dot(outgoing, endpoint - start) &lt; -1.0e-8:</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>                 continue</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>             if not planner.segment_is_free(endpoint, suffix[index]):</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>                 continue</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>             cost = np.linalg.norm(outgoing) + remaining_lengths[index]</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>             if best is None or cost &lt; best[0]:</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>                 best = (cost, endpoint.copy(), index)</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>             break</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>     if best is not None:</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>         _, endpoint, index = best</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>         vertices = np.concatenate((endpoint[None], suffix[index:]))</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>         keep = np.r_[True, np.linalg.norm(np.diff(vertices, axis=0), axis=1) &gt; 1.0e-7]</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>         vertices = vertices[keep]</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>         try:</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>             tail = sample_guidance_path(vertices, planner, spacing)</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>         except ValueError:</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>             return None</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>         refreshed = np.concatenate((start[None], tail)).astype(np.float32)</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         if all(planner.segment_is_free(a, b) for a, b in zip(refreshed[:-1], refreshed[1:])):</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a>             return refreshed</span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>         return None</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a> </span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>     # Never reconnect to a visited point.  Among the outstanding points, the</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>     # farthest visible one is guaranteed to make route progress and removes</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>     # redundant points made visible by the robot&#x27;s actual motion.</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>     reconnect = None</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>     for index in range(len(path) - 1, waypoint_index - 1, -1):</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>         if planner.segment_is_free(start, path[index]):</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>             reconnect = index</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>             break</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>     if reconnect is None:</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>         return None</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a> </span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>     vertices = np.concatenate((start[None], path[reconnect:]))</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>     keep = np.r_[True, np.any(np.diff(vertices, axis=0) != 0.0, axis=1)]</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a>     vertices = vertices[keep]</span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>     if len(vertices) &lt; 2:</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>         return None</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     try:</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>         refreshed = sample_guidance_path(vertices, planner, spacing)</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>     except ValueError:</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>         return None</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>     if len(refreshed) &lt; 2 or not all(planner.segment_is_free(a, b) for a, b in zip(refreshed[:-1], refreshed[1:])):</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>         return None</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>     return refreshed</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a> </span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a> </span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a> class RecoveryAStarPlanner(AStarPlanner):</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>     def __init__(self, obstacles, terrain_size, resolution=0.1):</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>         self.terrain_size = np.asarray(terrain_size, dtype=np.float64)</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>         self.robot_radius = 0.2</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>         clearance = self.robot_radius + resolution / math.sqrt(2.0)</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>         width, height = terrain_size</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>         origin = (-width / 2, -height / 2)</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>         xs = origin[0] + (np.arange(math.ceil(width / resolution)) + 0.5) * resolution</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>         ys = origin[1] + (np.arange(math.ceil(height / resolution)) + 0.5) * resolution</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>         xx, yy = np.meshgrid(xs, ys)</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>         # Separate layers let recovery relax only the constraints occupied at</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>         # the real start, never an entire neighborhood or the normal A* map.</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>         self.layers = []</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>         for axis, coordinate in enumerate((xx, yy)):</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>             half = self.terrain_size[axis] / 2</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>             for sign in (-1, 1):</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>                 mask = sign * coordinate &gt;= half - clearance</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>                 self.layers.append((dict(shape=&quot;boundary&quot;, axis=axis, sign=sign), mask))</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>         for obstacle in obstacles:</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>             if obstacle.get(&quot;shape&quot;) == &quot;box&quot;:</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>                 mask = (np.abs(xx - obstacle[&quot;x&quot;]) &lt;= obstacle[&quot;size_x&quot;] / 2 + clearance) &amp; (</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>                     np.abs(yy - obstacle[&quot;y&quot;]) &lt;= obstacle[&quot;size_y&quot;] / 2 + clearance</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>                 )</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>             else:</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>                 mask = (xx - obstacle[&quot;x&quot;]) ** 2 + (yy - obstacle[&quot;y&quot;]) ** 2 &lt;= (obstacle[&quot;radius&quot;] + clearance) ** 2</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>             self.layers.append((dict(obstacle), mask))</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         grid = np.logical_or.reduce([mask for _, mask in self.layers])</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>         super().__init__(grid, resolution, origin, prevent_corner_cutting=True)</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>         self.layer_planners = [AStarPlanner(mask, resolution, origin) for _, mask in self.layers]</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>         # Binary A* has no preference inside a free corridor and therefore hugs</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>         # an inflated obstacle boundary.  The local policy&#x27;s tracking error can</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>         # then alternate between the two inflation layers of a narrow passage.</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>         # Keep the same hard occupancy map, but add a soft cost within 0.50 m of</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>         # it so the global guide stays near the passage centre when space allows.</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>         self.preferred_clearance_m = 0.50</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>         self.clearance_cost_weight = 8.0</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>         self.clearance_m = self._distance_to_occupied()</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>         self._goal_cost_cache = {}</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a> </span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>     def _distance_to_occupied(self):</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>         &quot;&quot;&quot;Return an 8-connected distance field without a SciPy dependency.&quot;&quot;&quot;</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>         distances = np.full(self.grid.shape, np.inf, dtype=np.float64)</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>         pending = []</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>         for row, col in np.argwhere(self.grid != 0):</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>             cell = int(row), int(col)</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>             distances[cell] = 0.0</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>             pending.append((0.0, cell))</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>         heapq.heapify(pending)</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>         while pending:</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>             distance, current = heapq.heappop(pending)</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>             if distance != distances[current]:</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>                 continue</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>             for dr, dc, move_cost in self.neighbors:</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>                 nxt = current[0] + dr, current[1] + dc</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>                 if not (0 &lt;= nxt[0] &lt; self.h and 0 &lt;= nxt[1] &lt; self.w):</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>                     continue</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>                 candidate = distance + move_cost * self.resolution</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>                 if candidate &lt; distances[nxt]:</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>                     distances[nxt] = candidate</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>                     heapq.heappush(pending, (candidate, nxt))</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>         return distances</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a> </span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>     def _step_cost(self, current, nxt, move_cost):</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>         &quot;&quot;&quot;Symmetric path cost: geometric length plus a near-obstacle premium.&quot;&quot;&quot;</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>         preferred = self.preferred_clearance_m</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>         current_deficit = max(0.0, preferred - self.clearance_m[current]) / preferred</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>         next_deficit = max(0.0, preferred - self.clearance_m[nxt]) / preferred</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>         multiplier = 1.0 + self.clearance_cost_weight * 0.5 * (</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>             current_deficit * current_deficit + next_deficit * next_deficit</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>         )</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>         return move_cost * multiplier</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a> </span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a>     def plan(self, start_xy, goal_xy):</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>         &quot;&quot;&quot;A* on the unchanged hard grid with a deterministic clearance cost.&quot;&quot;&quot;</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>         start = self.world_to_grid(start_xy)</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>         goal = self.world_to_grid(goal_xy)</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>         if not self.valid(start):</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>             raise ValueError(f&quot;start is invalid: rc={start}, xy={start_xy}&quot;)</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>         if not self.valid(goal):</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>             raise ValueError(f&quot;goal is invalid: rc={goal}, xy={goal_xy}&quot;)</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a> </span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a>         pending = [(0.0, start)]</span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a>         came_from = {}</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>         costs = {start: 0.0}</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>         closed = set()</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>         while pending:</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>             _, current = heapq.heappop(pending)</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>             if current in closed:</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>                 continue</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>             closed.add(current)</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>             if current == goal:</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>                 return self._reconstruct(came_from, current)</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>             for dr, dc, move_cost in self.neighbors:</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>                 nxt = current[0] + dr, current[1] + dc</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>                 if not self.valid(nxt):</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>                     continue</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>                 if (</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a>                     dr</span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a>                     and dc</span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a>                     and (not self.valid((current[0] + dr, current[1])) or not self.valid((current[0], current[1] + dc)))</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a>                 ):</span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>                     continue</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>                 candidate = costs[current] + self._step_cost(current, nxt, move_cost)</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>                 if candidate &lt; costs.get(nxt, np.inf):</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>                     came_from[nxt] = current</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>                     costs[nxt] = candidate</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a>                     score = candidate + self.heuristic(nxt, goal)</span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a>                     heapq.heappush(pending, (score, nxt))</span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a>         return None</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a> </span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>     def _cost_to_goal(self, goal):</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a>         &quot;&quot;&quot;Return an exact grid cost-to-go map for the static obstacle layer.&quot;&quot;&quot;</span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a>         goal_cell = self.world_to_grid(goal)</span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a>         if not self.valid(goal_cell):</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>             return np.full(self.grid.shape, np.inf, dtype=np.float64)</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>         cached = self._goal_cost_cache.get(goal_cell)</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>         if cached is not None:</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>             return cached</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>         costs = np.full(self.grid.shape, np.inf, dtype=np.float64)</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>         costs[goal_cell] = 0.0</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>         pending = [(0.0, goal_cell)]</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a>         while pending:</span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a>             cost, current = heapq.heappop(pending)</span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a>             if cost != costs[current]:</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>                 continue</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>             for dr, dc, move_cost in self.neighbors:</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a>                 nxt = current[0] + dr, current[1] + dc</span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>                 if not self.valid(nxt):</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>                     continue</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a>                 if (</span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>                     dr</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>                     and dc</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>                     and (not self.valid((current[0] + dr, current[1])) or not self.valid((current[0], current[1] + dc)))</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>                 ):</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>                     continue</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a>                 candidate = cost + self._step_cost(current, nxt, move_cost)</span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>                 if candidate &lt; costs[nxt]:</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>                     costs[nxt] = candidate</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>                     heapq.heappush(pending, (candidate, nxt))</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>         # The final goal remains fixed during a replay; retaining a small cache</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>         # also supports interactive replacement without recomputing every 1 Hz.</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>         if len(self._goal_cost_cache) &gt;= 4:</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>             self._goal_cost_cache.pop(next(iter(self._goal_cost_cache)))</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a>         self._goal_cost_cache[goal_cell] = costs</span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a>         return costs</span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a> </span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>     def safe_lookahead_endpoint(self, start, goal, distance=1.0, preferred_direction=None):</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>         &quot;&quot;&quot;Choose an exactly ``distance``-away point inside the A* corridor.</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a> </span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a>         A shortest grid path can contain a mandatory bend only a few centimetres</span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a>         ahead. Publishing that bend directly makes a 5 Hz consumer overrun it.</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>         Search the lookahead circle for a collision-free connector, but only</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>         accept candidates that remain close to the actual shortest path.  An</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>         unconstrained circle search can otherwise erase a necessary turn by</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a>         choosing a globally cheaper point across the inside of a corner.  When</span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a>         no full-distance point satisfies both constraints, return ``None`` so</span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>         the caller publishes the mandatory clearance-preserving bend instead.</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>         &quot;&quot;&quot;</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a>         start = np.asarray(start, dtype=np.float64)</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a>         goal = np.asarray(goal, dtype=np.float64)</span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a>         if distance &lt;= 0.0 or not np.isfinite((start, goal)).all():</span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>             return None</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>         goal_delta = goal - start</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a>         goal_distance = float(np.linalg.norm(goal_delta))</span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>         if goal_distance &lt;= distance and self.segment_is_free(start, goal):</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>             return goal.astype(np.float32)</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a> </span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a>         dense_path = self.plan(start, goal)</span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a>         if dense_path is None:</span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a>             return None</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>         dense_path = np.concatenate((start[None], dense_path, goal[None]))</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a>         keep = np.r_[True, np.any(np.diff(dense_path, axis=0) != 0.0, axis=1)]</span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>         dense_path = dense_path[keep].astype(np.float64)</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>         path_starts = dense_path[:-1]</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>         path_vectors = np.diff(dense_path, axis=0)</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>         path_length_squared = np.sum(path_vectors * path_vectors, axis=1)</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a> </span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a>         def distance_to_shortest_path(point):</span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>             fractions = np.clip(</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a>                 np.sum((point - path_starts) * path_vectors, axis=1) / np.maximum(path_length_squared, 1.0e-12),</span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>                 0.0,</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a>                 1.0,</span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>             )</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>             projections = path_starts + fractions[:, None] * path_vectors</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>             return float(np.min(np.linalg.norm(point - projections, axis=1)))</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a> </span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a>         goal_cost = self._cost_to_goal(goal)</span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a>         start_cell = self.world_to_grid(start)</span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a>         start_cost = goal_cost[start_cell] if self.valid(start_cell) else np.inf</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a>         goal_bearing = math.atan2(goal_delta[1], goal_delta[0])</span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a>         # Keep adjacent samples no farther apart than half a grid cell on the</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>         # circle; explicitly add the goal bearing so straight routes stay exact.</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>         count = max(72, int(math.ceil(4.0 * math.pi * distance / self.resolution)))</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a>         angles = np.concatenate(</span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a>             (</span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>                 np.array([goal_bearing], dtype=np.float64),</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>                 np.linspace(-math.pi, math.pi, count, endpoint=False, dtype=np.float64),</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a>             )</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a>         )</span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a>         candidates = start + distance * np.stack((np.cos(angles), np.sin(angles)), axis=-1)</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>         preferred = None</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a>         if preferred_direction is not None:</span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a>             preferred = np.asarray(preferred_direction, dtype=np.float64)</span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a>             preferred_norm = float(np.linalg.norm(preferred))</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a>             preferred = preferred / preferred_norm if preferred_norm &gt; 1.0e-8 else None</span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a>         options = []</span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a>         # One and a half cells absorbs raster-centre quantisation, while still</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a>         # rejecting the 0.3--0.4 m corner cuts observed in the house map.</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a>         corridor_radius = 1.5 * self.resolution</span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>         for angle, endpoint in zip(angles, candidates):</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>             cell = self.world_to_grid(endpoint)</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>             if not self.valid(cell) or not np.isfinite(goal_cost[cell]):</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>                 continue</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a>             # A full-distance candidate must advance on the static global cost</span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a>             # field. If no such endpoint exists, the caller retains the short</span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>             # mandatory bend from the actual shortest path instead of looping.</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>             if np.isfinite(start_cost) and goal_cost[cell] &gt;= start_cost - 0.25:</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a>                 continue</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a>             if not self.segment_is_free(start, endpoint):</span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a>                 continue</span>
+<span id="A-L374" class="line"><a href="#A-L374"> 374</a>             route_deviation = distance_to_shortest_path(endpoint)</span>
+<span id="A-L375" class="line"><a href="#A-L375"> 375</a>             if route_deviation &gt; corridor_radius + 1.0e-9:</span>
+<span id="A-L376" class="line"><a href="#A-L376"> 376</a>                 continue</span>
+<span id="A-L377" class="line"><a href="#A-L377"> 377</a>             cell_center = self.grid_to_world(cell)</span>
+<span id="A-L378" class="line"><a href="#A-L378"> 378</a>             cost = float(goal_cost[cell] * self.resolution + np.linalg.norm(endpoint - cell_center))</span>
+<span id="A-L379" class="line"><a href="#A-L379"> 379</a>             bearing_error = abs(math.atan2(math.sin(angle - goal_bearing), math.cos(angle - goal_bearing)))</span>
+<span id="A-L380" class="line"><a href="#A-L380"> 380</a>             alignment = float(np.dot((endpoint - start) / distance, preferred)) if preferred is not None else 1.0</span>
+<span id="A-L381" class="line"><a href="#A-L381"> 381</a>             continuity_cost = 0.15 * (1.0 - alignment)</span>
+<span id="A-L382" class="line"><a href="#A-L382"> 382</a>             options.append(</span>
+<span id="A-L383" class="line"><a href="#A-L383"> 383</a>                 (</span>
+<span id="A-L384" class="line"><a href="#A-L384"> 384</a>                     (cost + continuity_cost, route_deviation, cost, bearing_error),</span>
+<span id="A-L385" class="line"><a href="#A-L385"> 385</a>                     endpoint.copy(),</span>
+<span id="A-L386" class="line"><a href="#A-L386"> 386</a>                 )</span>
+<span id="A-L387" class="line"><a href="#A-L387"> 387</a>             )</span>
+<span id="A-L388" class="line"><a href="#A-L388"> 388</a>         if not options:</span>
+<span id="A-L389" class="line"><a href="#A-L389"> 389</a>             return None</span>
+<span id="A-L390" class="line"><a href="#A-L390"> 390</a>         # Continuity only breaks near-ties; global progress remains dominant.</span>
+<span id="A-L391" class="line"><a href="#A-L391"> 391</a>         best = min(options, key=lambda option: option[0])</span>
+<span id="A-L392" class="line"><a href="#A-L392"> 392</a>         return best[1].astype(np.float32)</span>
+<span id="A-L393" class="line"><a href="#A-L393"> 393</a> </span>
+<span id="A-L394" class="line"><a href="#A-L394"> 394</a>     def start_is_free(self, xy):</span>
+<span id="A-L395" class="line"><a href="#A-L395"> 395</a>         &quot;&quot;&quot;Include closed-cell edge checks, not just the containing cell.&quot;&quot;&quot;</span>
+<span id="A-L396" class="line"><a href="#A-L396"> 396</a>         return self.segment_is_free(xy, xy)</span>
+<span id="A-L397" class="line"><a href="#A-L397"> 397</a> </span>
+<span id="A-L398" class="line"><a href="#A-L398"> 398</a>     def recovery_segment_is_safe(self, start, end):</span>
+<span id="A-L399" class="line"><a href="#A-L399"> 399</a>         &quot;&quot;&quot;Check whether a cached target safely exits current inflation layers.</span>
+<span id="A-L400" class="line"><a href="#A-L400"> 400</a> </span>
+<span id="A-L401" class="line"><a href="#A-L401"> 401</a>         Entering the conservative inflated grid does not invalidate a target</span>
+<span id="A-L402" class="line"><a href="#A-L402"> 402</a>         that is already leading monotonically out of exactly those layers.</span>
+<span id="A-L403" class="line"><a href="#A-L403"> 403</a>         Keeping that target avoids replacing a nearly reached corner with a</span>
+<span id="A-L404" class="line"><a href="#A-L404"> 404</a>         newly sampled exit on the opposite side of the robot.</span>
+<span id="A-L405" class="line"><a href="#A-L405"> 405</a>         &quot;&quot;&quot;</span>
+<span id="A-L406" class="line"><a href="#A-L406"> 406</a>         start = np.asarray(start, dtype=np.float64)</span>
+<span id="A-L407" class="line"><a href="#A-L407"> 407</a>         end = np.asarray(end, dtype=np.float64)</span>
+<span id="A-L408" class="line"><a href="#A-L408"> 408</a>         if not np.isfinite((start, end)).all() or not self.start_is_free(end):</span>
+<span id="A-L409" class="line"><a href="#A-L409"> 409</a>             return False</span>
+<span id="A-L410" class="line"><a href="#A-L410"> 410</a>         initial = [not layer.segment_is_free(start, start) for layer in self.layer_planners]</span>
+<span id="A-L411" class="line"><a href="#A-L411"> 411</a>         if not any(initial):</span>
+<span id="A-L412" class="line"><a href="#A-L412"> 412</a>             return self.segment_is_free(start, end)</span>
+<span id="A-L413" class="line"><a href="#A-L413"> 413</a>         for occupied, layer in zip(initial, self.layer_planners):</span>
+<span id="A-L414" class="line"><a href="#A-L414"> 414</a>             if not occupied and not layer.segment_is_free(start, end):</span>
+<span id="A-L415" class="line"><a href="#A-L415"> 415</a>                 return False</span>
+<span id="A-L416" class="line"><a href="#A-L416"> 416</a>         return all(</span>
+<span id="A-L417" class="line"><a href="#A-L417"> 417</a>             self._moves_outward(obstacle, start, end)</span>
+<span id="A-L418" class="line"><a href="#A-L418"> 418</a>             for occupied, (obstacle, _) in zip(initial, self.layers)</span>
+<span id="A-L419" class="line"><a href="#A-L419"> 419</a>             if occupied</span>
+<span id="A-L420" class="line"><a href="#A-L420"> 420</a>         )</span>
+<span id="A-L421" class="line"><a href="#A-L421"> 421</a> </span>
+<span id="A-L422" class="line"><a href="#A-L422"> 422</a>     def _moves_outward(self, obstacle, start, end):</span>
+<span id="A-L423" class="line"><a href="#A-L423"> 423</a>         &quot;&quot;&quot;Analytic nondecreasing physical clearance along a straight segment.</span>
+<span id="A-L424" class="line"><a href="#A-L424"> 424</a> </span>
+<span id="A-L425" class="line"><a href="#A-L425"> 425</a>         For a convex box/cylinder, a nonnegative outward directional derivative</span>
+<span id="A-L426" class="line"><a href="#A-L426"> 426</a>         makes distance nondecreasing along the entire ray. Contact is allowed to</span>
+<span id="A-L427" class="line"><a href="#A-L427"> 427</a>         separate; starting with the base center inside a solid is not certified.</span>
+<span id="A-L428" class="line"><a href="#A-L428"> 428</a>         &quot;&quot;&quot;</span>
+<span id="A-L429" class="line"><a href="#A-L429"> 429</a>         direction = end - start</span>
+<span id="A-L430" class="line"><a href="#A-L430"> 430</a>         if obstacle[&quot;shape&quot;] == &quot;boundary&quot;:</span>
+<span id="A-L431" class="line"><a href="#A-L431"> 431</a>             axis, sign = obstacle[&quot;axis&quot;], obstacle[&quot;sign&quot;]</span>
+<span id="A-L432" class="line"><a href="#A-L432"> 432</a>             return sign * direction[axis] &lt; -1e-8</span>
+<span id="A-L433" class="line"><a href="#A-L433"> 433</a>         center = np.array([obstacle[&quot;x&quot;], obstacle[&quot;y&quot;]])</span>
+<span id="A-L434" class="line"><a href="#A-L434"> 434</a>         if obstacle.get(&quot;shape&quot;) == &quot;box&quot;:</span>
+<span id="A-L435" class="line"><a href="#A-L435"> 435</a>             half = np.array([obstacle[&quot;size_x&quot;], obstacle[&quot;size_y&quot;]]) / 2</span>
+<span id="A-L436" class="line"><a href="#A-L436"> 436</a>             relative = start - center</span>
+<span id="A-L437" class="line"><a href="#A-L437"> 437</a>             outside = np.abs(relative) - half</span>
+<span id="A-L438" class="line"><a href="#A-L438"> 438</a>             if np.max(outside) &lt; -1e-8:</span>
+<span id="A-L439" class="line"><a href="#A-L439"> 439</a>                 return False</span>
+<span id="A-L440" class="line"><a href="#A-L440"> 440</a>             separation = relative - np.clip(relative, -half, half)</span>
+<span id="A-L441" class="line"><a href="#A-L441"> 441</a>             if np.linalg.norm(separation) &lt;= 1e-8:</span>
+<span id="A-L442" class="line"><a href="#A-L442"> 442</a>                 # At a physical face/corner, at least one active face must</span>
+<span id="A-L443" class="line"><a href="#A-L443"> 443</a>                 # strictly separate; do not traverse the solid or its surface.</span>
+<span id="A-L444" class="line"><a href="#A-L444"> 444</a>                 active = outside &gt;= -1e-8</span>
+<span id="A-L445" class="line"><a href="#A-L445"> 445</a>                 return bool(np.any(active &amp; (np.sign(relative) * direction &gt; 1e-8)))</span>
+<span id="A-L446" class="line"><a href="#A-L446"> 446</a>         else:</span>
+<span id="A-L447" class="line"><a href="#A-L447"> 447</a>             separation = start - center</span>
+<span id="A-L448" class="line"><a href="#A-L448"> 448</a>             if np.linalg.norm(separation) &lt; obstacle[&quot;radius&quot;] - 1e-8:</span>
+<span id="A-L449" class="line"><a href="#A-L449"> 449</a>                 return False</span>
+<span id="A-L450" class="line"><a href="#A-L450"> 450</a>         return float(np.dot(separation, direction)) &gt;= -1e-10</span>
+<span id="A-L451" class="line"><a href="#A-L451"> 451</a> </span>
+<span id="A-L452" class="line"><a href="#A-L452"> 452</a>     def recovery_exits(self, start, goal, max_distance=1.0, preferred_direction=None):</span>
+<span id="A-L453" class="line"><a href="#A-L453"> 453</a>         &quot;&quot;&quot;Rank checked exits by full route cost, allowing a necessary short bend.</span>
+<span id="A-L454" class="line"><a href="#A-L454"> 454</a> </span>
+<span id="A-L455" class="line"><a href="#A-L455"> 455</a>         The checked connector must be followed before any normal route point.</span>
+<span id="A-L456" class="line"><a href="#A-L456"> 456</a>         No robot pose is snapped or moved. Empty results mean no certified exit.</span>
+<span id="A-L457" class="line"><a href="#A-L457"> 457</a>         &quot;&quot;&quot;</span>
+<span id="A-L458" class="line"><a href="#A-L458"> 458</a>         start, goal = np.asarray(start, dtype=np.float64), np.asarray(goal, dtype=np.float64)</span>
+<span id="A-L459" class="line"><a href="#A-L459"> 459</a>         if not np.isfinite(start).all() or np.any(np.abs(start) &gt;= self.terrain_size / 2):</span>
+<span id="A-L460" class="line"><a href="#A-L460"> 460</a>             return []</span>
+<span id="A-L461" class="line"><a href="#A-L461"> 461</a>         initial = [not layer.segment_is_free(start, start) for layer in self.layer_planners]</span>
+<span id="A-L462" class="line"><a href="#A-L462"> 462</a>         if not any(initial):</span>
+<span id="A-L463" class="line"><a href="#A-L463"> 463</a>             return []</span>
+<span id="A-L464" class="line"><a href="#A-L464"> 464</a>         blocked = np.zeros_like(self.grid)</span>
+<span id="A-L465" class="line"><a href="#A-L465"> 465</a>         for is_initial, (_, mask) in zip(initial, self.layers):</span>
+<span id="A-L466" class="line"><a href="#A-L466"> 466</a>             if not is_initial:</span>
+<span id="A-L467" class="line"><a href="#A-L467"> 467</a>                 blocked |= mask</span>
+<span id="A-L468" class="line"><a href="#A-L468"> 468</a>         connector_planner = AStarPlanner(blocked, self.resolution, tuple(self.origin_xy))</span>
+<span id="A-L469" class="line"><a href="#A-L469"> 469</a>         # One reverse flood avoids running an unsuccessful A* for hundreds of</span>
+<span id="A-L470" class="line"><a href="#A-L470"> 470</a>         # exits when a wall disconnects the goal. Map connectivity stays strict.</span>
+<span id="A-L471" class="line"><a href="#A-L471"> 471</a>         component = self._goal_component(goal)</span>
+<span id="A-L472" class="line"><a href="#A-L472"> 472</a>         cells = np.argwhere(component)</span>
+<span id="A-L473" class="line"><a href="#A-L473"> 473</a>         centers = self.origin_xy + (cells[:, ::-1] + 0.5) * self.resolution</span>
+<span id="A-L474" class="line"><a href="#A-L474"> 474</a>         distances = np.linalg.norm(centers - start, axis=1)</span>
+<span id="A-L475" class="line"><a href="#A-L475"> 475</a>         # Include both the normal lookahead ring and nearer free cells. The</span>
+<span id="A-L476" class="line"><a href="#A-L476"> 476</a>         # route-cost ordering below decides whether the full distance is safe</span>
+<span id="A-L477" class="line"><a href="#A-L477"> 477</a>         # and useful or a shorter clearance bend is required.</span>
+<span id="A-L478" class="line"><a href="#A-L478"> 478</a>         nearby = (distances &gt; 1e-8) &amp; (distances &lt;= max_distance + self.resolution)</span>
+<span id="A-L479" class="line"><a href="#A-L479"> 479</a>         ring = start + (centers[nearby] - start) * (max_distance / distances[nearby, None])</span>
+<span id="A-L480" class="line"><a href="#A-L480"> 480</a>         ring = [</span>
+<span id="A-L481" class="line"><a href="#A-L481"> 481</a>             point for point in ring if self.valid(self.world_to_grid(point)) and component[self.world_to_grid(point)]</span>
+<span id="A-L482" class="line"><a href="#A-L482"> 482</a>         ]</span>
+<span id="A-L483" class="line"><a href="#A-L483"> 483</a>         # Avoid placing the escape target inside the usual 0.2 m switching ball.</span>
+<span id="A-L484" class="line"><a href="#A-L484"> 484</a>         keep = (distances &gt;= 0.35) &amp; (distances &lt;= max_distance)</span>
+<span id="A-L485" class="line"><a href="#A-L485"> 485</a>         candidates = np.concatenate((np.asarray(ring).reshape(-1, 2), centers[keep]))</span>
+<span id="A-L486" class="line"><a href="#A-L486"> 486</a>         short_goal = 1e-8 &lt; np.linalg.norm(goal - start) &lt;= max_distance</span>
+<span id="A-L487" class="line"><a href="#A-L487"> 487</a>         if short_goal:</span>
+<span id="A-L488" class="line"><a href="#A-L488"> 488</a>             candidates = np.concatenate((goal[None], candidates))</span>
+<span id="A-L489" class="line"><a href="#A-L489"> 489</a>         if len(candidates) == 0:</span>
+<span id="A-L490" class="line"><a href="#A-L490"> 490</a>             return []</span>
+<span id="A-L491" class="line"><a href="#A-L491"> 491</a>         distances = np.linalg.norm(candidates - start, axis=1)</span>
+<span id="A-L492" class="line"><a href="#A-L492"> 492</a>         preferred = None</span>
+<span id="A-L493" class="line"><a href="#A-L493"> 493</a>         if preferred_direction is not None:</span>
+<span id="A-L494" class="line"><a href="#A-L494"> 494</a>             preferred = np.asarray(preferred_direction, dtype=np.float64)</span>
+<span id="A-L495" class="line"><a href="#A-L495"> 495</a>             norm = float(np.linalg.norm(preferred))</span>
+<span id="A-L496" class="line"><a href="#A-L496"> 496</a>             preferred = preferred / norm if norm &gt; 1.0e-8 else None</span>
+<span id="A-L497" class="line"><a href="#A-L497"> 497</a>         alignment_cost = np.zeros(len(candidates), dtype=np.float64)</span>
+<span id="A-L498" class="line"><a href="#A-L498"> 498</a>         if preferred is not None:</span>
+<span id="A-L499" class="line"><a href="#A-L499"> 499</a>             directions = (candidates - start) / np.maximum(distances[:, None], 1.0e-8)</span>
+<span id="A-L500" class="line"><a href="#A-L500"> 500</a>             alignment_cost = 1.0 - directions @ preferred</span>
+<span id="A-L501" class="line"><a href="#A-L501"> 501</a>         # Recovery is a necessary clearance bend, not a normal lookahead that</span>
+<span id="A-L502" class="line"><a href="#A-L502"> 502</a>         # must be stretched to 1 m. Preferring the outer ring can carry the</span>
+<span id="A-L503" class="line"><a href="#A-L503"> 503</a>         # target across a narrow doorway and place it beside the opposite wall;</span>
+<span id="A-L504" class="line"><a href="#A-L504"> 504</a>         # the next recovery then reverses direction. Rank exits by the complete</span>
+<span id="A-L505" class="line"><a href="#A-L505"> 505</a>         # safe route cost instead: checked connector plus weighted free-space</span>
+<span id="A-L506" class="line"><a href="#A-L506"> 506</a>         # cost to the unchanged final goal. Continuity only breaks close ties.</span>
+<span id="A-L507" class="line"><a href="#A-L507"> 507</a>         goal_cost = self._cost_to_goal(goal)</span>
+<span id="A-L508" class="line"><a href="#A-L508"> 508</a>         cells_rc = np.asarray([self.world_to_grid(point) for point in candidates])</span>
+<span id="A-L509" class="line"><a href="#A-L509"> 509</a>         costs_to_goal = goal_cost[cells_rc[:, 0], cells_rc[:, 1]] * self.resolution</span>
+<span id="A-L510" class="line"><a href="#A-L510"> 510</a>         route_cost = distances + costs_to_goal</span>
+<span id="A-L511" class="line"><a href="#A-L511"> 511</a>         order = np.lexsort(</span>
+<span id="A-L512" class="line"><a href="#A-L512"> 512</a>             (</span>
+<span id="A-L513" class="line"><a href="#A-L513"> 513</a>                 -distances,</span>
+<span id="A-L514" class="line"><a href="#A-L514"> 514</a>                 alignment_cost,</span>
+<span id="A-L515" class="line"><a href="#A-L515"> 515</a>                 np.round(route_cost, 6),</span>
+<span id="A-L516" class="line"><a href="#A-L516"> 516</a>             )</span>
+<span id="A-L517" class="line"><a href="#A-L517"> 517</a>         )</span>
+<span id="A-L518" class="line"><a href="#A-L518"> 518</a>         exits = []</span>
+<span id="A-L519" class="line"><a href="#A-L519"> 519</a>         for endpoint in candidates[order]:</span>
+<span id="A-L520" class="line"><a href="#A-L520"> 520</a>             if not self.start_is_free(endpoint):</span>
+<span id="A-L521" class="line"><a href="#A-L521"> 521</a>                 continue</span>
+<span id="A-L522" class="line"><a href="#A-L522"> 522</a>             if not connector_planner.segment_is_free(start, endpoint):</span>
+<span id="A-L523" class="line"><a href="#A-L523"> 523</a>                 continue</span>
+<span id="A-L524" class="line"><a href="#A-L524"> 524</a>             if not all(</span>
+<span id="A-L525" class="line"><a href="#A-L525"> 525</a>                 self._moves_outward(obstacle, start, endpoint)</span>
+<span id="A-L526" class="line"><a href="#A-L526"> 526</a>                 for is_initial, (obstacle, _) in zip(initial, self.layers)</span>
+<span id="A-L527" class="line"><a href="#A-L527"> 527</a>                 if is_initial</span>
+<span id="A-L528" class="line"><a href="#A-L528"> 528</a>             ):</span>
+<span id="A-L529" class="line"><a href="#A-L529"> 529</a>                 continue</span>
+<span id="A-L530" class="line"><a href="#A-L530"> 530</a>             exits.append(endpoint.astype(np.float32))</span>
+<span id="A-L531" class="line"><a href="#A-L531"> 531</a>         return exits</span>
+<span id="A-L532" class="line"><a href="#A-L532"> 532</a> </span>
+<span id="A-L533" class="line"><a href="#A-L533"> 533</a>     def _goal_component(self, goal):</span>
+<span id="A-L534" class="line"><a href="#A-L534"> 534</a>         reachable = np.zeros_like(self.grid, dtype=bool)</span>
+<span id="A-L535" class="line"><a href="#A-L535"> 535</a>         cell = self.world_to_grid(goal)</span>
+<span id="A-L536" class="line"><a href="#A-L536"> 536</a>         if not self.valid(cell):</span>
+<span id="A-L537" class="line"><a href="#A-L537"> 537</a>             return reachable</span>
+<span id="A-L538" class="line"><a href="#A-L538"> 538</a>         pending = deque([cell])</span>
+<span id="A-L539" class="line"><a href="#A-L539"> 539</a>         reachable[cell] = True</span>
+<span id="A-L540" class="line"><a href="#A-L540"> 540</a>         while pending:</span>
+<span id="A-L541" class="line"><a href="#A-L541"> 541</a>             row, col = pending.popleft()</span>
+<span id="A-L542" class="line"><a href="#A-L542"> 542</a>             for dr, dc, _ in self.neighbors:</span>
+<span id="A-L543" class="line"><a href="#A-L543"> 543</a>                 nxt = row + dr, col + dc</span>
+<span id="A-L544" class="line"><a href="#A-L544"> 544</a>                 if not self.valid(nxt) or reachable[nxt]:</span>
+<span id="A-L545" class="line"><a href="#A-L545"> 545</a>                     continue</span>
+<span id="A-L546" class="line"><a href="#A-L546"> 546</a>                 if dr and dc and (not self.valid((row + dr, col)) or not self.valid((row, col + dc))):</span>
+<span id="A-L547" class="line"><a href="#A-L547"> 547</a>                     continue</span>
+<span id="A-L548" class="line"><a href="#A-L548"> 548</a>                 reachable[nxt] = True</span>
+<span id="A-L549" class="line"><a href="#A-L549"> 549</a>                 pending.append(nxt)</span>
+<span id="A-L550" class="line"><a href="#A-L550"> 550</a>         return reachable</span></pre></html>

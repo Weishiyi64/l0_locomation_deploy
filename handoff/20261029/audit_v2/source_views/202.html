@@ -1,0 +1,93 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>records/deploy_new_workspace.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>records/deploy_new_workspace.py</h1><p>基线 WORKSPACE_NEW；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Copy a complete, reviewable source payload to the reserved new board workspace.&quot;&quot;&quot;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> import argparse</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import hashlib</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> import json</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> from pathlib import Path</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import shlex</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import subprocess</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import tarfile</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> </span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> RECORD_FILES = [&#x27;board_build.sh&#x27;, &#x27;board_offline_validation.py&#x27;,</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>                 &#x27;validate_standard_wbc_startup.py&#x27;,</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>                 &#x27;validate_generation_limits.py&#x27;, &#x27;motion_adapter_before_l0_limits.py&#x27;,</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>                 &#x27;check_python_inference.sh&#x27;,</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>                 &#x27;run_offline_board_validation.sh&#x27;, &#x27;host_left_arm.json&#x27;,</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>                 &#x27;HOST_REFERENCE_EXPECTED.json&#x27;, &#x27;HOST_REFERENCE_SNAPSHOT.json&#x27;,</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>                 &#x27;DELIVERY_STATUS.json&#x27;, &#x27;BOARD_OFFLINE_REPORT.json&#x27;,</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>                 &#x27;PYTHON_INFERENCE_STATUS.json&#x27;,</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>                 &#x27;GENERATION_LIMITS_STATUS.json&#x27;,</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>                 &#x27;IMPLEMENTATION_FILES.json&#x27;, &#x27;HOST_BASE_CONTRACT.json&#x27;,</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>                 &#x27;HOST_REFERENCE_ABI_EQUIVALENCE.json&#x27;]</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> def main():</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     parser = argparse.ArgumentParser()</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     parser.add_argument(&#x27;--build&#x27;, action=&#x27;store_true&#x27;)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     parser.add_argument(&#x27;--validate&#x27;, action=&#x27;store_true&#x27;, help=&#x27;Offline parser/installation checks only; no HPM, ROS nodes or model inference&#x27;)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     parser.add_argument(&#x27;--pack-only&#x27;, action=&#x27;store_true&#x27;)</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     args = parser.parse_args()</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     ws = Path(__file__).resolve().parents[1]</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     configuration = json.loads((ws/&#x27;records/WORKSPACE.json&#x27;).read_text())</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     remote = configuration[&#x27;remote_workspace&#x27;]</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     candidates = []</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     for path in sorted((ws/&#x27;src&#x27;).rglob(&#x27;*&#x27;)):</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>         parts = path.relative_to(ws).parts</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>         if &#x27;.git&#x27; in parts or &#x27;__pycache__&#x27; in parts or path.suffix == &#x27;.pyc&#x27;:</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>             continue</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         if (&#x27;legged_deploy&#x27; in parts and &#x27;policy&#x27; in parts) or &#x27;meshes&#x27; in parts or &#x27;legged_env_mujoco&#x27; in parts:</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>             continue</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         if path.is_file():</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>             candidates.append(path)</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     candidates += [ws/&#x27;records&#x27;/name for name in RECORD_FILES]</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     candidates.append(ws/&#x27;README.md&#x27;)</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     remote_hashes = {}</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     if not args.pack_only:</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         socket = Path(&#x27;/tmp/l0-motion-board-192.168.5.2.sock&#x27;)</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>         if not socket.exists():</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>             raise SystemExit(&#x27;SSH control connection is unavailable; restore it before uploading/building&#x27;)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>         ssh = [&#x27;ssh&#x27;, &#x27;-o&#x27;, &#x27;ControlPath=&#x27;+str(socket), &#x27;-o&#x27;, &#x27;BatchMode=yes&#x27;, &#x27;forlinx@192.168.5.2&#x27;]</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>         existing = subprocess.run(ssh+[&#x27;test -f &#x27;+shlex.quote(remote+&#x27;/records/WORKSPACE.json&#x27;)], check=False)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         if existing.returncode == 1:</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>             initialization = (ws/&#x27;records/initialize_remote.py&#x27;).read_bytes()</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>             subprocess.run(ssh+[&#x27;/usr/bin/python3 -B -&#x27;], input=initialization, check=True)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>         elif existing.returncode:</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>             raise SystemExit(&#x27;Cannot inspect the new board workspace; no upload performed&#x27;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>         inspect = (&#x27;import hashlib,json,sys; from pathlib import Path; root=Path(sys.argv[1]); &#x27;</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>                    &#x27;names=json.load(sys.stdin); &#x27;</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>                    &#x27;assert all((root/n).resolve().is_relative_to(root) for n in names); &#x27;</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>                    &#x27;print(json.dumps({n:hashlib.sha256((root/n).read_bytes()).hexdigest() &#x27;</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>                    &#x27;for n in names if (root/n).is_file()}))&#x27;)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         inspected = subprocess.run(ssh+[&#x27;/usr/bin/python3 -B -c &#x27;+shlex.quote(inspect)+&#x27; &#x27;+shlex.quote(remote)],</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>                                    input=json.dumps([str(p.relative_to(ws)) for p in candidates]),</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>                                    text=True, capture_output=True, check=True)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>         remote_hashes = json.loads(inspected.stdout)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     payload = ws/&#x27;records/source_payload.tgz&#x27;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     changed = []</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     with tarfile.open(payload, &#x27;w:gz&#x27;) as archive:</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         for path in candidates:</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>             relative = path.relative_to(ws)</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             if remote_hashes.get(str(relative)) == hashlib.sha256(path.read_bytes()).hexdigest():</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>                 continue</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>             archive.add(path, arcname=str(relative), recursive=False)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>             changed.append(str(relative))</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     digest = hashlib.sha256(payload.read_bytes()).hexdigest()</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     (ws/&#x27;records/source_payload.sha256&#x27;).write_text(digest+&#x27;  source_payload.tgz\n&#x27;)</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     if args.pack_only:</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>         print(json.dumps({&#x27;payload&#x27;:str(payload),&#x27;sha256&#x27;:digest,&#x27;size_bytes&#x27;:payload.stat().st_size}))</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         return</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     with payload.open(&#x27;rb&#x27;) as stream:</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>         subprocess.run(ssh+[&#x27;tar -xzf - -C &#x27;+shlex.quote(remote)], stdin=stream, check=True)</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     record = {&#x27;remote_workspace&#x27;:remote, &#x27;source_payload_sha256&#x27;:digest,</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>               &#x27;changed_files&#x27;:changed, &#x27;unchanged_files_skipped&#x27;:len(candidates)-len(changed),</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>               &#x27;production_workspace_modified&#x27;:False}</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     (ws/&#x27;records/LAST_INCREMENTAL_UPDATE.json&#x27;).write_text(json.dumps(record,indent=2)+&#x27;\n&#x27;)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     print(json.dumps(record), flush=True)</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     if args.build:</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>         subprocess.run(ssh+[&#x27;bash &#x27;+shlex.quote(remote+&#x27;/records/board_build.sh&#x27;)+&#x27; &#x27;+shlex.quote(remote)], check=True)</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     if args.validate:</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         subprocess.run(ssh+[&#x27;bash &#x27;+shlex.quote(remote+&#x27;/records/run_offline_board_validation.sh&#x27;)+&#x27; &#x27;+shlex.quote(remote)], check=True)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a> </span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> </span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> if __name__ == &#x27;__main__&#x27;:</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     main()</span></pre><h2 id="A">原版本 WORKSPACE</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,161 @@
+{
+  "L1": {
+    "referenced_files": 5,
+    "function_counts": {
+      "added": 24
+    },
+    "function_added_lines": 684,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 1302,
+    "referenced_file_deleted_lines": 2
+  },
+  "L2": {
+    "referenced_files": 9,
+    "function_counts": {
+      "modified": 11,
+      "added": 33,
+      "deleted": 1
+    },
+    "function_added_lines": 785,
+    "function_deleted_lines": 104,
+    "referenced_file_added_lines": 1348,
+    "referenced_file_deleted_lines": 209
+  },
+  "L3": {
+    "referenced_files": 14,
+    "function_counts": {
+      "modified": 11,
+      "added": 43
+    },
+    "function_added_lines": 1155,
+    "function_deleted_lines": 56,
+    "referenced_file_added_lines": 1843,
+    "referenced_file_deleted_lines": 95
+  },
+  "L4": {
+    "referenced_files": 4,
+    "function_counts": {
+      "modified": 8,
+      "added": 4
+    },
+    "function_added_lines": 209,
+    "function_deleted_lines": 68,
+    "referenced_file_added_lines": 984,
+    "referenced_file_deleted_lines": 188
+  },
+  "L5": {
+    "referenced_files": 9,
+    "function_counts": {
+      "modified": 1,
+      "added": 23
+    },
+    "function_added_lines": 615,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 1555,
+    "referenced_file_deleted_lines": 165
+  },
+  "L6": {
+    "referenced_files": 6,
+    "function_counts": {
+      "added": 16
+    },
+    "function_added_lines": 317,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 539,
+    "referenced_file_deleted_lines": 0
+  },
+  "T1": {
+    "referenced_files": 5,
+    "function_counts": {
+      "added": 3
+    },
+    "function_added_lines": 41,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 87,
+    "referenced_file_deleted_lines": 11
+  },
+  "T2": {
+    "referenced_files": 4,
+    "function_counts": {
+      "added": 9
+    },
+    "function_added_lines": 255,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 620,
+    "referenced_file_deleted_lines": 0
+  },
+  "T3": {
+    "referenced_files": 2,
+    "function_counts": {
+      "added": 12
+    },
+    "function_added_lines": 137,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 395,
+    "referenced_file_deleted_lines": 11
+  },
+  "T4": {
+    "referenced_files": 15,
+    "function_counts": {
+      "modified": 1,
+      "added": 19
+    },
+    "function_added_lines": 298,
+    "function_deleted_lines": 9,
+    "referenced_file_added_lines": 1433,
+    "referenced_file_deleted_lines": 303
+  },
+  "T5": {
+    "referenced_files": 7,
+    "function_counts": {
+      "added": 7
+    },
+    "function_added_lines": 135,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 1397,
+    "referenced_file_deleted_lines": 188
+  },
+  "T6": {
+    "referenced_files": 23,
+    "function_counts": {
+      "deleted": 35,
+      "modified": 15
+    },
+    "function_added_lines": 8,
+    "function_deleted_lines": 667,
+    "referenced_file_added_lines": 29,
+    "referenced_file_deleted_lines": 879
+  },
+  "O1": {
+    "referenced_files": 10,
+    "function_counts": {
+      "modified": 5,
+      "added": 8
+    },
+    "function_added_lines": 130,
+    "function_deleted_lines": 12,
+    "referenced_file_added_lines": 179,
+    "referenced_file_deleted_lines": 16
+  },
+  "O2": {
+    "referenced_files": 20,
+    "function_counts": {
+      "deleted": 81,
+      "modified": 8
+    },
+    "function_added_lines": 9,
+    "function_deleted_lines": 1827,
+    "referenced_file_added_lines": 34,
+    "referenced_file_deleted_lines": 2287
+  },
+  "D1": {
+    "referenced_files": 8,
+    "function_counts": {
+      "added": 11
+    },
+    "function_added_lines": 454,
+    "function_deleted_lines": 0,
+    "referenced_file_added_lines": 680,
+    "referenced_file_deleted_lines": 0
+  }
+}

@@ -1,0 +1,221 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/wbc_lora_assets.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/wbc_lora_assets.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> &quot;&quot;&quot;Versioned WBC LoRA graph and adapter assets shared by export/conversion tools.&quot;&quot;&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> import hashlib</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> import json</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import re</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> from pathlib import Path</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> </span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import numpy as np</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> GRAPH_FORMAT = &quot;wbc_lora_graph_v1&quot;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> ADAPTER_FORMAT = &quot;wbc_lora_adapter_v1&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> ID_PATTERN = re.compile(r&quot;[A-Za-z0-9_-]{1,32}&quot;)</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> </span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> def sha256(path):</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     digest = hashlib.sha256()</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>     with Path(path).open(&quot;rb&quot;) as stream:</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>         for block in iter(lambda: stream.read(1024 * 1024), b&quot;&quot;):</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>             digest.update(block)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     return digest.hexdigest()</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> def fingerprint(value):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(&quot;,&quot;, &quot;:&quot;)).encode()).hexdigest()</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> </span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> def read_json(path):</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     path = Path(path)</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     if path.stat().st_size &gt; 4 * 1024 * 1024:</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>         raise ValueError(f&quot;Manifest too large: {path}&quot;)</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     value = json.loads(path.read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     if not isinstance(value, dict):</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         raise ValueError(f&quot;Expected a manifest object: {path}&quot;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     return value</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> </span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> </span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> def asset_path(root, relative):</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     root = Path(root).resolve()</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>         raise ValueError(f&quot;Expected a relative asset path: {relative}&quot;)</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     path = (root / relative).resolve()</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     if not path.is_relative_to(root):</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         raise ValueError(f&quot;Asset escapes deployment root: {relative}&quot;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     return path</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> </span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> </span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> def tensor_shape(value):</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>     if not isinstance(value, list) or not value or any(type(x) is not int or x &lt;= 0 for x in value):</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>         raise ValueError(f&quot;Invalid static tensor shape: {value}&quot;)</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     return tuple(value)</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a> </span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a> </span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> def load_graph_manifest(path):</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     manifest = read_json(path)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     if manifest.get(&quot;format&quot;) != GRAPH_FORMAT or manifest.get(&quot;kind&quot;) not in (&quot;policy&quot;, &quot;probe&quot;):</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         raise ValueError(&quot;Unsupported WBC LoRA graph manifest&quot;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     parameters = manifest.get(&quot;parameters&quot;)</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     if not isinstance(parameters, list) or len(parameters) != 31:</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>         raise ValueError(&quot;Expected the complete 31-tensor WBC adapter schema&quot;)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>     for key in (&quot;base_checkpoint_sha256&quot;, &quot;normalization_sha256&quot;, &quot;parameter_schema_sha256&quot;, &quot;source_onnx_sha256&quot;):</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         if not isinstance(manifest.get(key), str) or not re.fullmatch(r&quot;[0-9a-f]{64}&quot;, manifest[key]):</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>             raise ValueError(f&quot;Missing/invalid required graph fingerprint: {key}&quot;)</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     if manifest.get(&quot;target_precision&quot;) != &quot;float16&quot;:</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         raise ValueError(&quot;The target RKNN precision must be float16&quot;)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>     if fingerprint(parameters) != manifest.get(&quot;parameter_schema_sha256&quot;):</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>         raise ValueError(&quot;Adapter schema fingerprint mismatch&quot;)</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     names = [p[&quot;name&quot;] for p in parameters]</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     if len(set(names)) != len(names) or manifest.get(&quot;rank&quot;) != 16 or manifest.get(&quot;alpha&quot;) != 16:</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         raise ValueError(&quot;Invalid parameter names or unsupported rank/alpha&quot;)</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     dimensions = [(1024, 639), (1024, 1024), (1024, 1024), (1024, 1423), (1024, 1024), (1024, 1024), (21, 1024)]</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     expected = {}</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     for i, (out_width, in_width) in enumerate(dimensions):</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         expected.update({f&quot;lora_{i}_a&quot;: [16, in_width], f&quot;lora_{i}_b&quot;: [out_width, 16], f&quot;lora_{i}_bias&quot;: [out_width]})</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     for i in range(5):</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         expected.update({f&quot;norm_{i}_gamma&quot;: [1024], f&quot;norm_{i}_beta&quot;: [1024]})</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     if {p[&quot;name&quot;]: p[&quot;shape&quot;] for p in parameters} != expected:</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         raise ValueError(&quot;Adapter schema does not match the native L0 31-tensor ABI&quot;)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>     for param in parameters:</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>         tensor_shape(param[&quot;shape&quot;])</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         if not isinstance(param.get(&quot;actor_key&quot;), str) or not param[&quot;actor_key&quot;]:</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>             raise ValueError(&quot;Missing actor parameter mapping&quot;)</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     inputs = manifest.get(&quot;inputs&quot;, [])</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     if not inputs or len({x[&quot;name&quot;] for x in inputs}) != len(inputs):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         raise ValueError(&quot;Invalid graph inputs&quot;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     for item in inputs + manifest.get(&quot;outputs&quot;, []):</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>         tensor_shape(item[&quot;shape&quot;])</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         if item.get(&quot;dtype&quot;) != &quot;float32&quot;:</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>             raise ValueError(&quot;The application ABI must remain float32&quot;)</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     obs = {x[&quot;name&quot;]: x[&quot;shape&quot;] for x in inputs if x.get(&quot;role&quot;) == &quot;observation&quot;}</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     if manifest[&quot;kind&quot;] == &quot;policy&quot;:</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         if obs != {&quot;policy&quot;: [399], &quot;command_short&quot;: [240]} or len(inputs) != 33:</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>             raise ValueError(&quot;Policy graph requires 399/240 observations and 31 dynamic parameters&quot;)</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         if manifest[&quot;outputs&quot;] != [{&quot;name&quot;: &quot;action&quot;, &quot;shape&quot;: [21], &quot;dtype&quot;: &quot;float32&quot;}]:</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>             raise ValueError(&quot;Invalid WBC policy output&quot;)</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     declared = {p[&quot;name&quot;]: p for p in parameters}</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>     for item in inputs:</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         if item[&quot;role&quot;] == &quot;adapter&quot;:</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>             if item[&quot;name&quot;] not in declared or item[&quot;shape&quot;] != declared[item[&quot;name&quot;]][&quot;shape&quot;]:</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>                 raise ValueError(f&quot;Graph parameter does not match schema: {item[&#x27;name&#x27;]}&quot;)</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         elif item[&quot;role&quot;] != &quot;observation&quot;:</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>             raise ValueError(&quot;Unknown graph input role&quot;)</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     return manifest</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a> </span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a> </span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a> def load_adapter(path, graph, expected_action_id=None):</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     path = Path(path).resolve()</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     manifest = read_json(path)</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     if manifest.get(&quot;format&quot;) != ADAPTER_FORMAT or not ID_PATTERN.fullmatch(manifest.get(&quot;action_id&quot;, &quot;&quot;)):</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>         raise ValueError(&quot;Invalid adapter format or action ID&quot;)</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     if expected_action_id is not None and manifest[&quot;action_id&quot;] != expected_action_id:</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         raise ValueError(&quot;Adapter action ID does not match its catalog entry&quot;)</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>     for key in (&quot;base_checkpoint_sha256&quot;, &quot;parameter_schema_sha256&quot;, &quot;normalization_sha256&quot;, &quot;rank&quot;, &quot;alpha&quot;):</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         if manifest.get(key) != graph.get(key):</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>             raise ValueError(f&quot;Adapter/graph mismatch: {key}&quot;)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     weights = asset_path(path.parent, manifest[&quot;weights&quot;][&quot;path&quot;])</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     info = manifest[&quot;weights&quot;]</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     if info.get(&quot;dtype&quot;) != &quot;float16-le&quot; or weights.stat().st_size != info.get(&quot;size_bytes&quot;):</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         raise ValueError(&quot;Adapter dtype/size mismatch&quot;)</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     if sha256(weights) != info.get(&quot;sha256&quot;):</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         raise ValueError(&quot;Adapter payload checksum mismatch&quot;)</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     records = manifest.get(&quot;tensors&quot;, [])</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     if len(records) != len(graph[&quot;parameters&quot;]):</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         raise ValueError(&quot;Incomplete adapter tensor set&quot;)</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     payload = weights.read_bytes()</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     result, previous_end = {}, 0</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>     for spec, record in zip(graph[&quot;parameters&quot;], records):</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         shape = tensor_shape(spec[&quot;shape&quot;])</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>         size = int(np.prod(shape)) * 2</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         offset = record.get(&quot;offset_bytes&quot;)</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>         if any(record.get(k) != spec[k] for k in (&quot;name&quot;, &quot;actor_key&quot;, &quot;shape&quot;)):</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>             raise ValueError(f&quot;Adapter tensor mismatch: {spec[&#x27;name&#x27;]}&quot;)</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>         if type(offset) is not int or offset &lt; previous_end or offset % 64 or record.get(&quot;size_bytes&quot;) != size:</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>             raise ValueError(&quot;Invalid/overlapping adapter tensor range&quot;)</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         if offset + size &gt; len(payload):</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>             raise ValueError(&quot;Truncated adapter tensor&quot;)</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         value = np.frombuffer(payload, dtype=&quot;&lt;f2&quot;, count=size // 2, offset=offset).astype(np.float32).reshape(shape)</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>         if not np.isfinite(value).all():</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>             raise ValueError(&quot;Non-finite adapter data&quot;)</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         result[spec[&quot;name&quot;]] = value</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         previous_end = offset + size</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>     if previous_end != len(payload):</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         raise ValueError(&quot;Unexpected trailing adapter data&quot;)</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>     return result</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a> </span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a> </span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a> def graph_feeds(graph, observations, parameters):</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>     return {item[&quot;name&quot;]: np.ascontiguousarray(</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>         observations[item[&quot;name&quot;]] if item[&quot;role&quot;] == &quot;observation&quot; else parameters[item[&quot;name&quot;]],</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>         dtype=np.float32).reshape(item[&quot;shape&quot;]) for item in graph[&quot;inputs&quot;]}</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a> </span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a> </span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> def check_graph(path, manifest_path):</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     import onnx</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a> </span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     path, manifest_path = Path(path).resolve(), Path(manifest_path).resolve()</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     graph = load_graph_manifest(manifest_path)</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     if path != asset_path(manifest_path.parent, graph[&quot;model&quot;][&quot;onnx&quot;]) or sha256(path) != graph[&quot;model&quot;][&quot;sha256&quot;]:</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>         raise ValueError(&quot;ONNX path/checksum does not match graph manifest&quot;)</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     model = onnx.load(str(path), load_external_data=False)</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     if any(t.data_location == onnx.TensorProto.EXTERNAL for t in model.graph.initializer):</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>         raise ValueError(&quot;External ONNX tensor data is not supported&quot;)</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     onnx.checker.check_model(model)</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     initializer_names = {t.name for t in model.graph.initializer}</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     def specs(items):</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>         values = []</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>         for item in items:</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>             tensor = item.type.tensor_type</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>             shape = [d.dim_value for d in tensor.shape.dim]</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>             if tensor.elem_type != onnx.TensorProto.FLOAT:</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>                 raise ValueError(&quot;WBC application inputs/outputs must be float32&quot;)</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>             tensor_shape(shape)</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>             values.append({&quot;name&quot;: item.name, &quot;shape&quot;: shape, &quot;dtype&quot;: &quot;float32&quot;})</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>         return values</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     expected_inputs = [{k: x[k] for k in (&quot;name&quot;, &quot;shape&quot;, &quot;dtype&quot;)} for x in graph[&quot;inputs&quot;]]</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     if specs(model.graph.input) != expected_inputs or specs(model.graph.output) != graph[&quot;outputs&quot;]:</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>         raise ValueError(&quot;ONNX I/O does not match the manifest ABI&quot;)</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>     if initializer_names.intersection(x[&quot;name&quot;] for x in graph[&quot;inputs&quot;]):</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>         raise ValueError(&quot;Dynamic adapter inputs must not be ONNX initializers&quot;)</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     return graph</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a> </span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a> </span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a> def runtime_options(args):</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     if getattr(args, &quot;build_only&quot;, False) and (args.target or getattr(args, &quot;device_id&quot;, None)):</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>         raise ValueError(&quot;--build-only cannot be combined with --target/--device-id&quot;)</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     options = {&quot;target&quot;: args.target} if args.target else {}</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>     if getattr(args, &quot;device_id&quot;, None):</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>         if not args.target:</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>             raise ValueError(&quot;--device-id requires --target rk3588&quot;)</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>         options[&quot;device_id&quot;] = args.device_id</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>     return options</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> </span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a> </span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a> def rknn_build_config():</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>     # Toolkit2 2.3.2 exNorm Add fusion reads dynamic FP16 beta as FP32.</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>     # Keep the affine Add separate; shared policy and reference converters use</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>     # this same default, and conversion provenance records the exact setting.</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>     return {&quot;target_platform&quot;: &quot;rk3588&quot;, &quot;float_dtype&quot;: &quot;float16&quot;,</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>             &quot;disable_rules&quot;: [&quot;fuse_exnorm_add&quot;]}</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a> </span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a> </span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a> def conversion_record(onnx_path, output_path, args, verification):</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>     import importlib.metadata</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>     import sys</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     try:</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>         toolkit = importlib.metadata.version(&quot;rknn-toolkit2&quot;)</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     except importlib.metadata.PackageNotFoundError:</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>         toolkit = &quot;unknown&quot;</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>     build_only = getattr(args, &quot;build_only&quot;, False)</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a>     record = {&quot;format&quot;: &quot;wbc_rknn_conversion_v1&quot;, &quot;source_sha256&quot;: sha256(onnx_path),</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>               &quot;rknn_sha256&quot;: sha256(output_path), &quot;precision&quot;: &quot;float16&quot;,</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>               &quot;do_quantization&quot;: False, &quot;toolkit_version&quot;: toolkit,</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>               &quot;rknn_config&quot;: rknn_build_config(),</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>               &quot;target_platform&quot;: &quot;rk3588&quot;, &quot;converter_sha256&quot;: sha256(Path(sys.argv[0]).resolve()),</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>               &quot;asset_helper_sha256&quot;: sha256(Path(__file__).resolve()),</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>               &quot;verification_backend&quot;: &quot;not_run&quot; if build_only else (&quot;target&quot; if args.target else &quot;toolkit_simulator&quot;),</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>               &quot;validation_status&quot;: &quot;converted_pending_runtime&quot; if build_only else &quot;python_verified&quot;,</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>               &quot;target&quot;: args.target, &quot;device_id&quot;: getattr(args, &quot;device_id&quot;, None),</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>               &quot;verification&quot;: verification, &quot;max_abs_error&quot;: args.max_abs_error}</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>     if getattr(args, &quot;manifest&quot;, None):</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>         record[&quot;graph_manifest_sha256&quot;] = sha256(args.manifest)</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>     Path(str(output_path) + &quot;.json&quot;).write_text(json.dumps(record, indent=2, allow_nan=False) + &quot;\n&quot;)</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>     return record</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

@@ -1,0 +1,87 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/include/legged_controllers/JointCommandComposer.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/include/legged_controllers/JointCommandComposer.h</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;legged_controllers/ArmSwingController.h&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;legged_controllers/ControllerTypes.h&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;legged_controllers/HeadScript.h&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;legged_controllers/IHardwareLayer.h&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;legged_controllers/JointCSV.h&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;legged_controllers/JointCommandTransition.h&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;vector&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> namespace legged {</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> class JointCommandComposer {</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>  public:</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   struct Context {</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     IHardwareLayer* robot_hw{nullptr};</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     HeadScriptController* head_ctrl{nullptr};</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     JointCsvController* joint_csv{nullptr};</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     const ArmSwingController* arm_swing_ctrl{nullptr};</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>     JointCommandTransition* release_handoff{nullptr};</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> </span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     PolicyInputs policy_inputs;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     JointGainProfile rl_gains;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     std::vector&lt;JointMotorState&gt; motor_states;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     const std::vector&lt;bool&gt;* is_leg_joint{nullptr};</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     bool blend_policy_gains{false};</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     bool walking{false};</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     bool allow_auxiliary_overlays{false};</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     bool emergency{false};</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>     bool is_sim{false};</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     bool action_sequence_full_csv{false};</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     bool action_sequence_active{false};</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>     double kp_standby{0.0};</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     double emergency_damping_kd{5.0};</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     double wall_sec{0.0};</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   };</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> </span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   void composeAll(const Context&amp; ctx) const;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> };</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> </span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a> }  // namespace legged</span></pre><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #pragma once</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> #include &lt;legged_controllers/ArmSwingController.h&gt;</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &lt;legged_controllers/ControllerTypes.h&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> #include &lt;legged_controllers/HeadScript.h&gt;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;legged_controllers/IHardwareLayer.h&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;legged_controllers/JointCSV.h&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;legged_controllers/JointCommandTransition.h&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> #include &lt;legged_controllers/TextMotionController.h&gt;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> </span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> #include &lt;vector&gt;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> </span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> namespace legged {</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> </span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> class JointCommandComposer {</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>  public:</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   struct Context {</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     IHardwareLayer* robot_hw{nullptr};</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     HeadScriptController* head_ctrl{nullptr};</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     JointCsvController* joint_csv{nullptr};</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     const ArmSwingController* arm_swing_ctrl{nullptr};</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     JointCommandTransition* release_handoff{nullptr};</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     const TextMotionController* text_motion{nullptr};</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> </span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     PolicyInputs policy_inputs;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>     JointGainProfile rl_gains;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     std::vector&lt;JointMotorState&gt; motor_states;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>     const std::vector&lt;bool&gt;* is_leg_joint{nullptr};</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> </span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>     bool blend_policy_gains{false};</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     bool walking{false};</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     bool allow_auxiliary_overlays{false};</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>     bool emergency{false};</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     bool is_sim{false};</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>     bool action_sequence_full_csv{false};</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>     bool action_sequence_active{false};</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>     double kp_standby{0.0};</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>     double emergency_damping_kd{5.0};</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     double wall_sec{0.0};</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   };</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>   void composeAll(const Context&amp; ctx) const;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> };</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> </span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> }  // namespace legged</span></pre></html>

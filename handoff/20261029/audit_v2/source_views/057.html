@@ -1,0 +1,188 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/process_wbc_lora_delivery.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/process_wbc_lora_delivery.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Process one training delivery locally into a verified, checkpoint-free board bundle.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Run with the export Python environment (torch/numpy/PyYAML/onnx/onnxruntime).</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> The source is read-only. No network, RKNN build, ROS or hardware is invoked.</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> &quot;&quot;&quot;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> </span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import argparse</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import datetime</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> import json</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> import os</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> import re</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> import subprocess</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> import sys</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> from pathlib import Path</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> sys.dont_write_bytecode = True</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> SCRIPT_DIR = Path(__file__).resolve().parent</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> WORKSPACE = SCRIPT_DIR.parents[2]</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> def write_json(path, value):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> </span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> def training_files(source, actions):</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     &quot;&quot;&quot;Freeze the selected inputs, including any supplied full checkpoints.&quot;&quot;&quot;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>     from wbc_lora_assets import ID_PATTERN, asset_path, sha256</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> </span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     index = json.loads((source / &quot;emotion_index.json&quot;).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     if not isinstance(index, list) or not index:</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         raise ValueError(&quot;emotion_index.json must be a nonempty array&quot;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     ids = [entry[&quot;motion&quot;] for entry in index]</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>     if len(ids) != len(set(ids)) or any(not ID_PATTERN.fullmatch(x) for x in ids):</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>         raise ValueError(&quot;Invalid/duplicate action IDs in emotion_index.json&quot;)</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>     actions = ids if actions is None else actions</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     if not actions or len(actions) != len(set(actions)) or not set(actions) &lt;= set(ids):</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         raise ValueError(&quot;--actions must select unique IDs from emotion_index.json&quot;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     paths = {name: None for name in (</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>         &quot;emotion_index.json&quot;, &quot;base/base_ckpt.pt&quot;, &quot;base/policy.onnx&quot;, &quot;base/policy.yaml&quot;)}</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     for entry in index:</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>         if entry[&quot;motion&quot;] not in actions:</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>             continue</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>         paths[entry[&quot;adapter&quot;]] = entry[&quot;adapter_sha256&quot;]</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>         paths[entry[&quot;motion_onnx&quot;]] = entry.get(&quot;motion_onnx_sha256&quot;)</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>         if entry.get(&quot;checkpoint&quot;) is not None:</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>             checkpoint = asset_path(source, entry[&quot;checkpoint&quot;])</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>             if checkpoint.exists():</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>                 if not entry.get(&quot;checkpoint_sha256&quot;):</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>                     raise ValueError(f&quot;Existing checkpoint requires a checksum: {checkpoint}&quot;)</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>                 paths[entry[&quot;checkpoint&quot;]] = entry[&quot;checkpoint_sha256&quot;]</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     hashes = {}</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     for name, expected in paths.items():</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>         digest = sha256(asset_path(source, name))</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         if expected is not None and digest != expected:</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>             raise ValueError(f&quot;Training checksum mismatch: {name}&quot;)</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         hashes[name] = digest</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     return actions, hashes</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a> </span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> </span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> def verify_assets(root, expected=None):</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     &quot;&quot;&quot;Check the exact file set and every SHA256; never ship links or checkpoints.&quot;&quot;&quot;</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     from wbc_lora_assets import asset_path, sha256</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> </span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     paths = list(root.rglob(&quot;*&quot;))</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     if any(p.is_symlink() for p in paths):</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>         raise ValueError(f&quot;Symlinks are forbidden in generated bundles: {root}&quot;)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     actual = {p.relative_to(root).as_posix() for p in paths if p.is_file()}</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>     if any(Path(name).suffix.lower() in (&quot;.pt&quot;, &quot;.pth&quot;, &quot;.ckpt&quot;) for name in actual):</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>         raise ValueError(f&quot;Training checkpoints are forbidden in generated bundles: {root}&quot;)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     if expected is not None and actual != expected:</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         raise ValueError(f&quot;Unexpected board bundle files: extra={sorted(actual - expected)}, &quot;</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>                          f&quot;missing={sorted(expected - actual)}&quot;)</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     hashes = {}</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     for line in (root / &quot;ASSETS.sha256&quot;).read_text(encoding=&quot;utf-8&quot;).splitlines():</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>         digest, name = line.split(&quot;  &quot;, 1)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>         if not re.fullmatch(r&quot;[0-9a-f]{64}&quot;, digest) or name in hashes:</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>             raise ValueError(&quot;Invalid/duplicate ASSETS.sha256 entry&quot;)</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         if sha256(asset_path(root, name)) != digest:</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>             raise ValueError(f&quot;Generated asset checksum mismatch: {name}&quot;)</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         hashes[name] = digest</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     if set(hashes) != actual - {&quot;ASSETS.sha256&quot;}:</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         raise ValueError(&quot;ASSETS.sha256 must cover every generated file exactly once&quot;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     return {&quot;file_count&quot;: len(actual), &quot;size_bytes&quot;: sum((root / n).stat().st_size for n in actual),</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>             &quot;checkpoint_count&quot;: 0, &quot;sha256&quot;: &quot;passed&quot;}</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a> </span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a> </span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> def board_files(actions):</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     # Exported paths are fixed by export_wbc_lora, not selected by a glob.</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     files = {&quot;base_manifest.json&quot;, &quot;base_lora.onnx&quot;, &quot;PREPROCESSING.json&quot;, &quot;ASSETS.sha256&quot;}</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>     for action in actions:</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         files.update({f&quot;adapters/{action}/manifest.json&quot;, f&quot;adapters/{action}/weights.bin&quot;,</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>                       f&quot;actions/{action}/rl_config.yaml&quot;, f&quot;actions/{action}/reference_motion.onnx&quot;})</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     return files</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a> </span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a> </span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a> def process(args):</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     from wbc_lora_assets import asset_path, sha256</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a> </span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     source, workspace = args.source.resolve(), args.workspace.resolve()</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     name = args.name or datetime.datetime.now().strftime(&quot;wbc_lora_%Y%m%d_%H%M%S_%f&quot;)</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     if not re.fullmatch(r&quot;[A-Za-z0-9_-]{1,96}&quot;, name):</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         raise ValueError(&quot;--name must contain 1-96 letters, digits, underscores or hyphens&quot;)</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     if args.samples &lt; 20:</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>         raise ValueError(&quot;At least 20 verification samples are required&quot;)</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     archive = workspace / &quot;model_inbox&quot; / name</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     board = workspace / &quot;model_sources&quot; / name</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     logs = workspace / &quot;smoke_logs&quot; / name</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     for path in (archive, board, logs):</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>         if path.exists() or path.is_symlink():</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>             raise ValueError(f&quot;Output already exists; choose a new --name: {path}&quot;)</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         resolved = path.resolve()</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         if resolved.is_relative_to(source) or source.is_relative_to(resolved):</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>             raise ValueError(&quot;Training input and output directories must not overlap&quot;)</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     actions, input_hashes = training_files(source, args.actions)</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     env = dict(os.environ, PYTHONDONTWRITEBYTECODE=&quot;1&quot;, OMP_NUM_THREADS=&quot;1&quot;,</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>                MKL_NUM_THREADS=&quot;1&quot;, OPENBLAS_NUM_THREADS=&quot;1&quot;)</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     # Check the actual subprocess environment before creating any output.</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     subprocess.run([sys.executable, &quot;-B&quot;, &quot;-c&quot;, &quot;import torch, numpy, yaml, onnx, onnxruntime&quot;],</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>                    check=True, env=env)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     logs.mkdir(parents=True, exist_ok=False)</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     report_path = logs / &quot;PROCESSING.json&quot;</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     report = {&quot;format&quot;: &quot;wbc_lora_processing_v1&quot;, &quot;status&quot;: &quot;running&quot;, &quot;source&quot;: str(source),</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>               &quot;local_archive&quot;: str(archive), &quot;board_bundle&quot;: str(board), &quot;actions&quot;: actions,</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>               &quot;samples_per_action&quot;: args.samples, &quot;source_files&quot;: input_hashes, &quot;steps&quot;: [],</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>               &quot;python&quot;: sys.executable, &quot;board_operations&quot;: &quot;not_run&quot;, &quot;rknn_compilation&quot;: &quot;not_run&quot;}</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     write_json(report_path, report)</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a> </span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     def run_step(label, script, *arguments):</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         command = [sys.executable, &quot;-B&quot;, str(SCRIPT_DIR / script), *map(str, arguments)]</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>         log = logs / (label + &quot;.log&quot;)</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         print(f&quot;[{label}] {log}&quot;, flush=True)</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         with log.open(&quot;x&quot;, encoding=&quot;utf-8&quot;) as stream:</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>             result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, env=env, check=False)</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         report[&quot;steps&quot;].append({&quot;step&quot;: label, &quot;command&quot;: command, &quot;log&quot;: str(log), &quot;exit_code&quot;: result.returncode})</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>         write_json(report_path, report)</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         if result.returncode:</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>             tail = &quot;\n&quot;.join(log.read_text(encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;).splitlines()[-20:])</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>             raise RuntimeError(f&quot;{label} failed (exit {result.returncode}):\n{tail}&quot;)</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a> </span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>     try:</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>         run_step(&quot;01_export_fp16&quot;, &quot;prepare_wbc_deploy.py&quot;, source, archive,</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>                  &quot;--mode&quot;, &quot;lora&quot;, &quot;--fp16&quot;, &quot;--samples&quot;, args.samples, &quot;--actions&quot;, *actions)</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         report[&quot;archive_audit&quot;] = verify_assets(archive)</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>         run_step(&quot;02_preprocess&quot;, &quot;preprocess_wbc_lora_fp16.py&quot;, archive, board)</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         report[&quot;board_audit&quot;] = verify_assets(board, board_files(actions))</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>         # Exercise relocated converter discovery and manifest planning without RKNN.</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>         run_step(&quot;03_conversion_plan&quot;, &quot;batch_convert_onnx_to_rknn_rk3588.py&quot;, board,</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>                  &quot;--build-only&quot;, &quot;--dry-run&quot;)</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>         for relative, digest in input_hashes.items():</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>             if sha256(asset_path(source, relative)) != digest:</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>                 raise ValueError(f&quot;Training input changed during processing: {relative}&quot;)</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>         validation = json.loads((archive / &quot;validation_report.json&quot;).read_text(encoding=&quot;utf-8&quot;))</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>         report.update(status=&quot;passed&quot;, source_unchanged=True,</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>                       validation_report=str(archive / &quot;validation_report.json&quot;),</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>                       validation_report_sha256=sha256(archive / &quot;validation_report.json&quot;),</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>                       full_checkpoint_verification={a[&quot;action_id&quot;]: a[&quot;full_checkpoint_verification&quot;]</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>                                                     for a in validation[&quot;actions&quot;]})</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     except BaseException as error:</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>         report.update(status=&quot;failed&quot;, error=str(error))</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>         write_json(report_path, report)</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>         raise</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     write_json(report_path, report)</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     audit = report[&quot;board_audit&quot;]</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     print(f&quot;Completed {len(actions)} LoRA actions; {audit[&#x27;file_count&#x27;]} board files, &quot;</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>           f&quot;{audit[&#x27;size_bytes&#x27;] / 1024**2:.2f} MiB, 0 checkpoints&quot;, flush=True)</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     print(f&quot;Board bundle (transfer only this directory): {board}&quot;)</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     print(f&quot;Local archive: {archive}\nProcessing report: {report_path}&quot;)</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     print(&quot;RKNN compilation and robot runtime validation remain on the board; no board operations performed.&quot;)</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a> </span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a> </span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a> def main():</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     parser.add_argument(&quot;source&quot;, type=Path, help=&quot;training root containing emotion_index.json, base/ and lora/&quot;)</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     parser.add_argument(&quot;--workspace&quot;, type=Path, default=WORKSPACE,</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>                         help=&quot;output workspace (default: workspace containing this repository)&quot;)</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     parser.add_argument(&quot;--name&quot;, help=&quot;new bundle name (default: timestamp); existing outputs are never replaced&quot;)</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     parser.add_argument(&quot;--actions&quot;, nargs=&quot;+&quot;, help=&quot;selected actions (default: every action in emotion_index.json)&quot;)</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>     parser.add_argument(&quot;--samples&quot;, type=int, default=33, help=&quot;CPU policy verification samples, minimum 20&quot;)</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>     process(parser.parse_args())</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a> </span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a> </span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     try:</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>         main()</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     except Exception as error:</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

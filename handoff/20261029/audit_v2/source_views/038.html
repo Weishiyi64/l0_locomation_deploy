@@ -1,0 +1,185 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/src/wbc_io_probe.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/src/wbc_io_probe.cpp</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #include &quot;wbc_io_probe.h&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &quot;rknn_model.h&quot;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &quot;wbc_lora_assets.h&quot;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;yaml-cpp/yaml.h&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> </span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;algorithm&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;array&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;chrono&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;cmath&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;cstdint&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> #include &lt;filesystem&gt;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> #include &lt;fstream&gt;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> #include &lt;iomanip&gt;</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> #include &lt;iostream&gt;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> #include &lt;limits&gt;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> #include &lt;stdexcept&gt;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> #include &lt;string&gt;</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> #include &lt;vector&gt;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> namespace {</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> namespace fs = std::filesystem;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> double elapsedMs(const std::chrono::steady_clock::time_point&amp; start) {</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   return std::chrono::duration&lt;double, std::milli&gt;(std::chrono::steady_clock::now() - start).count();</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> }</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> void writeYaml(const fs::path&amp; path, const YAML::Node&amp; value) {</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   YAML::Emitter emitter;</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   emitter &lt;&lt; value;</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   std::ofstream stream(path);</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   stream &lt;&lt; emitter.c_str() &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   stream.close();</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   if (!emitter.good() || !stream) throw std::runtime_error(&quot;Cannot save &quot; + path.string());</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> }</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> </span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> std::vector&lt;float&gt; readFloats(const fs::path&amp; path, std::size_t count) {</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   if (!fs::is_regular_file(path) || fs::file_size(path) != count * sizeof(float))</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     throw std::runtime_error(&quot;Wrong input byte count: &quot; + path.string());</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   std::vector&lt;float&gt; values(count);</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>   std::ifstream stream(path, std::ios::binary);</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   if (!stream.read(reinterpret_cast&lt;char*&gt;(values.data()), count * sizeof(float)) ||</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>       !std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); }))</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     throw std::runtime_error(&quot;Invalid/non-finite input: &quot; + path.string());</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>   return values;</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> }</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> </span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> void saveRuntimeMaps(const fs::path&amp; output) {</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>   std::ifstream maps(&quot;/proc/self/maps&quot;);</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>   std::ofstream stream(output / &quot;runtime_maps.txt&quot;);</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>   std::string line;</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>   while (std::getline(maps, line)) {</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     if (line.find(&quot;rknn&quot;) != std::string::npos) stream &lt;&lt; line &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>   }</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> }</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a> }  // namespace</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> </span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> int runWbcIoProbe(int argc, char** argv, const volatile sig_atomic_t&amp; stop_requested) {</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   if (argc != 5) {</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>     std::cerr &lt;&lt; &quot;Usage: rl_controller --wbc-io-probe MANIFEST CASE_DIRECTORY NEW_OUTPUT_DIRECTORY\n&quot;;</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     return 2;</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   }</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   const fs::path output(argv[4]);</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>   YAML::Node report;</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   report[&quot;format&quot;] = &quot;wbc_resident_io_probe_v1&quot;;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   report[&quot;status&quot;] = &quot;initializing&quot;;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   report[&quot;completed_samples&quot;] = 0;</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>   bool owns_output = false;</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>   try {</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     // Do not overwrite a previous run, including failed or interrupted evidence.</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     if (!fs::create_directory(output)) throw std::runtime_error(&quot;Output directory already exists&quot;);</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     owns_output = true;</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     writeYaml(output / &quot;runtime.yaml&quot;, report);</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     static_assert(sizeof(float) == 4 &amp;&amp; std::numeric_limits&lt;float&gt;::is_iec559, &quot;IEEE float32 required&quot;);</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     const std::uint16_t endian = 1;</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     if (*reinterpret_cast&lt;const unsigned char*&gt;(&amp;endian) != 1)</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>       throw std::runtime_error(&quot;Probe binary format requires little-endian host&quot;);</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     const fs::path cases_root(argv[3]);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     const auto request = YAML::LoadFile((cases_root / &quot;cases.json&quot;).string());</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     const auto cases = request[&quot;cases&quot;];</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     if (request[&quot;format&quot;].as&lt;std::string&gt;() != &quot;wbc_policy_io_cases_v1&quot; ||</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>         !cases.IsSequence() || cases.size() == 0 || cases.size() &gt; 8192)</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>       throw std::runtime_error(&quot;Invalid probe case format/count&quot;);</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     const auto policy = readFloats(cases_root / &quot;policy.f32&quot;, cases.size() * 399);</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     const auto command = readFloats(cases_root / &quot;command_short.f32&quot;, cases.size() * 240);</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     std::vector&lt;std::string&gt; selected;</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     for (const auto&amp; item : cases) {</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>       const auto id = item[&quot;action_id&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>       if (std::find(selected.begin(), selected.end(), id) == selected.end()) selected.push_back(id);</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     }</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a> </span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>     // These are the SAME loader, native tensor buffers and SDK calls used by RLWbc.</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     const auto initialized = std::chrono::steady_clock::now();</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>     WbcLoraAssets assets(argv[2], selected);</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>     RknnModel model(assets.modelPath(), RknnModel::InputMode::ResidentWbc);</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>     assets.bindModel(model);</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>     std::array&lt;WbcLoraAssets::Buffer, 2&gt; buffers;</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>     for (auto&amp; buffer : buffers) assets.allocate(buffer);</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>     report[&quot;initialization_ms&quot;] = elapsedMs(initialized);</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     report[&quot;model_path&quot;] = assets.modelPath();</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     report[&quot;base_checkpoint_sha256&quot;] = assets.baseHash();</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     report[&quot;sdk_version&quot;] = model.runtimeVersion();</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>     report[&quot;execution_path&quot;] = &quot;WbcLoraAssets + RknnModel::ResidentWbc (same as RLWbc)&quot;;</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     report[&quot;scope&quot;] = &quot;policy inference only; fixed policy/command_short; no reference queries, ROS or motor output&quot;;</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     report[&quot;requested_samples&quot;] = cases.size();</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>     report[&quot;status&quot;] = &quot;running&quot;;</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>     writeYaml(output / &quot;runtime.yaml&quot;, report);</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     saveRuntimeMaps(output);</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     std::ofstream layout(output / &quot;resident_layout.txt&quot;);</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     layout &lt;&lt; model.residentLayout() &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>     layout.close();</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>     if (!layout) throw std::runtime_error(&quot;Cannot save resident layout&quot;);</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     std::cout &lt;&lt; &quot;WBC IO probe: &quot; &lt;&lt; model.runtimeVersion() &lt;&lt; &quot;; samples=&quot; &lt;&lt; cases.size() &lt;&lt; std::endl;</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     std::ofstream values(output / &quot;actions.f32&quot;, std::ios::binary);</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     std::ofstream frames(output / &quot;frames.csv&quot;);</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     frames &lt;&lt; &quot;case_index,action_id,slot,generation,inference_ms,runs,parameter_prepares,parameter_binds,parameter_syncs,observation_syncs,output_syncs,observation_ms_total,execution_ms_total,output_ms_total\n&quot;;</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>     frames &lt;&lt; std::setprecision(17);</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>     int active_slot = 0;</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     std::uint64_t generation = 0;</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     std::string active_action;</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     for (std::size_t i = 0; i &lt; cases.size(); ++i) {</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>       if (stop_requested) throw std::runtime_error(&quot;Probe interrupted; completed outputs retained&quot;);</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>       const auto id = cases[i][&quot;action_id&quot;].as&lt;std::string&gt;();</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>       if (id != active_action) {</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>         const auto load_started = std::chrono::steady_clock::now();</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a>         const int slot = 1 - active_slot;</span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>         assets.loadAdapter(assets.action(id), buffers[slot]);</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a>         model.stageResidentParameters(slot, assets.parameterInputs(buffers[slot]));</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>         if (!model.commitResidentParameters(slot)) throw std::runtime_error(model.lastError());</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>         active_slot = slot;</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>         active_action = id;</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>         ++generation;</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>         YAML::Node change;</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>         change[&quot;case_index&quot;] = i;</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         change[&quot;action_id&quot;] = id;</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>         change[&quot;generation&quot;] = generation;</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>         change[&quot;slot&quot;] = slot;</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         change[&quot;load_pack_commit_ms&quot;] = elapsedMs(load_started);</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         change[&quot;adapter_manifest_sha256&quot;] = assets.action(id).adapter_hash;</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>         report[&quot;switches&quot;].push_back(change);</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         std::cout &lt;&lt; &quot;prepare action=&quot; &lt;&lt; id &lt;&lt; &quot; generation=&quot; &lt;&lt; generation &lt;&lt; &quot; slot=&quot; &lt;&lt; slot &lt;&lt; std::endl;</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>       }</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>       const auto started = std::chrono::steady_clock::now();</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>       if (!model.runResident(policy.data() + i * 399, 399, command.data() + i * 240, 240))</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>         throw std::runtime_error(&quot;case &quot; + std::to_string(i) + &quot;: &quot; + model.lastError());</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>       const double inference_ms = elapsedMs(started);</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a>       const auto&amp; action = model.output(0);</span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>       if (action.size() != 21 || !std::all_of(action.begin(), action.end(), [](float x) { return std::isfinite(x); }))</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>         throw std::runtime_error(&quot;Invalid action output&quot;);</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>       // Save raw network output BEFORE clipping/action scaling, exactly as returned.</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>       values.write(reinterpret_cast&lt;const char*&gt;(action.data()), 21 * sizeof(float));</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>       values.flush();</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>       const auto stats = model.residentStats();</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>       frames &lt;&lt; i &lt;&lt; &#x27;,&#x27; &lt;&lt; id &lt;&lt; &#x27;,&#x27; &lt;&lt; active_slot &lt;&lt; &#x27;,&#x27; &lt;&lt; generation &lt;&lt; &#x27;,&#x27; &lt;&lt; inference_ms &lt;&lt; &#x27;,&#x27;</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>              &lt;&lt; stats.runs &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.parameter_prepares &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.parameter_bind_calls &lt;&lt; &#x27;,&#x27;</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>              &lt;&lt; stats.parameter_sync_calls &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.observation_sync_calls &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.output_sync_calls &lt;&lt; &#x27;,&#x27;</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>              &lt;&lt; stats.observation_ms &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.execution_ms &lt;&lt; &#x27;,&#x27; &lt;&lt; stats.output_ms &lt;&lt; &#x27;\n&#x27;;</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>       frames.flush();</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>       if (!values || !frames) throw std::runtime_error(&quot;Cannot save output; disk/write failure&quot;);</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>       report[&quot;completed_samples&quot;] = i + 1;</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     }</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     const auto stats = model.residentStats();</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     report[&quot;context_initializations&quot;] = stats.context_initializations;</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>     report[&quot;parameter_prepares&quot;] = stats.parameter_prepares;</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     report[&quot;commits&quot;] = stats.commits;</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>     report[&quot;rollbacks&quot;] = stats.rollbacks;</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>     report[&quot;runs&quot;] = stats.runs;</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>     report[&quot;allocated_bytes&quot;] = stats.allocated_bytes;</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>     report[&quot;status&quot;] = &quot;completed&quot;;</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>     writeYaml(output / &quot;runtime.yaml&quot;, report);</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>     std::cout &lt;&lt; &quot;Completed &quot; &lt;&lt; cases.size() &lt;&lt; &quot; samples using one resident context&quot; &lt;&lt; std::endl;</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>     return 0;</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>   } catch (const std::exception&amp; error) {</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>     report[&quot;status&quot;] = &quot;failed&quot;;</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>     report[&quot;error&quot;] = error.what();</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>     if (owns_output) {</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>       try {</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>         saveRuntimeMaps(output);</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>         writeYaml(output / &quot;runtime.yaml&quot;, report);</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>       } catch (...) {}  // Preserve the original runtime failure in stderr.</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>     }</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>     std::cerr &lt;&lt; &quot;WBC IO probe failed: &quot; &lt;&lt; error.what() &lt;&lt; std::endl;</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>     return 1;</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>   }</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a> }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

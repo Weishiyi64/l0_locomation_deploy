@@ -1,0 +1,124 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_env_real/legged_real/scripts/isolated_hpm.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_env_real/legged_real/scripts/isolated_hpm.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Stationary HPM-protocol endpoint for the unchanged real deployment control loop.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Only /wbc_isolated endpoints are created. No motor transport is imported or opened.</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> Motor readiness, watchdogs and command composition remain in LeggedReal.</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> &quot;&quot;&quot;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import math</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import rclpy</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> from rclpy.node import Node</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, qos_profile_sensor_data</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> from robot_interfaces.msg import MotorCommand, MotorEnableCommand, MotorState, MotorStateArray</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> from robot_interfaces.srv import MotorSetZero</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> from sensor_msgs.msg import Imu</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> import yaml</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> </span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> class IsolatedHpm(Node):</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     def __init__(self):</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>         super().__init__(&#x27;isolated_hpm&#x27;)</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>         self.declare_parameter(&#x27;mapping_file&#x27;, &#x27;&#x27;)</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>         self.declare_parameter(&#x27;robot_cfg_path&#x27;, &#x27;&#x27;)</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>         self.declare_parameter(&#x27;feedback_enabled&#x27;, True)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>         self.declare_parameter(&#x27;imu_feedback_enabled&#x27;, True)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>         with open(self.get_parameter(&#x27;mapping_file&#x27;).value, encoding=&#x27;utf-8&#x27;) as stream:</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>             mapping = yaml.safe_load(stream)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>         with open(self.get_parameter(&#x27;robot_cfg_path&#x27;).value, encoding=&#x27;utf-8&#x27;) as stream:</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>             cfg = yaml.safe_load(stream)[&#x27;RobotCfg&#x27;]</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>         joints, positions = cfg[&#x27;joint_order_mj&#x27;], cfg[&#x27;default_joint_angles&#x27;]</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>         if len(joints) != 21 or len(positions) != 21 or len(mapping[&#x27;motors&#x27;]) != 21:</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>             raise ValueError(&#x27;Isolated HPM requires the same 21-joint hardware configuration&#x27;)</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         self.state = MotorStateArray()</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>         self.enabled = [False] * 21</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>         for index, (name, position, entry) in enumerate(zip(joints, positions, mapping[&#x27;motors&#x27;])):</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>             model = mapping[&#x27;models&#x27;][entry[&#x27;model&#x27;]]</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>             direction = float(entry[&#x27;motor_direction&#x27;]) * float(model[&#x27;rotation_direction&#x27;])</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>             reduction = float(entry[&#x27;reduction&#x27;])</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>             if name != entry[&#x27;joint_name&#x27;] or not math.isfinite(position) or abs(direction) != 1 or reduction &lt;= 0:</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>                 raise ValueError(&#x27;Joint/mapping mismatch in isolated HPM configuration&#x27;)</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>             motor_q = (position - float(entry[&#x27;zero_offset&#x27;])) * direction * reduction</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>             if not math.isfinite(motor_q) or not model[&#x27;p_min&#x27;] &lt;= motor_q &lt;= model[&#x27;p_max&#x27;] or \</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>                     not entry[&#x27;joint_lower&#x27;] &lt;= position &lt;= entry[&#x27;joint_upper&#x27;]:</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>                 raise ValueError(f&#x27;Isolated default pose is outside mapping limits: {name}&#x27;)</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>             state = MotorState()</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>             state.route.motor_type = index</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>             state.q = motor_q</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>             state.valid = True</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>             state.operating_mode = MotorState.OPERATING_MODE_UNKNOWN</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>             self.state.states.append(state)</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>             self.state.feedback_mask |= 1 &lt;&lt; index</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         reliable = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>                               durability=DurabilityPolicy.VOLATILE)</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>         self.state_pub = self.create_publisher(MotorStateArray, &#x27;/wbc_isolated/actuator/motor/state&#x27;, qos_profile_sensor_data)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>         self.imu_pub = self.create_publisher(Imu, &#x27;/wbc_isolated/imu/data&#x27;, qos_profile_sensor_data)</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         self.enable_sub = self.create_subscription(MotorEnableCommand, &#x27;/wbc_isolated/actuator/motor/enable&#x27;,</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>                                                    self.enable, reliable)</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         self.command_sub = self.create_subscription(MotorCommand, &#x27;/wbc_isolated/actuator/motor/command&#x27;,</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>                                                     self.command, reliable)</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>         self.zero_service = self.create_service(MotorSetZero, &#x27;/wbc_isolated/actuator/motor/set_zero&#x27;, self.reject_zero)</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>         self.command_count = 0</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>         self.last_summary_ns = 0</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>         self.timer = self.create_timer(0.002, self.publish_feedback)</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>         self.get_logger().warning(&#x27;HPM ISOLATED: stationary feedback; commands are consumed without motor transport&#x27;)</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> </span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>     def enable(self, msg):</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>         if len(msg.motor_types) != len(msg.enabled) or any(i &gt;= 21 for i in msg.motor_types):</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>             self.get_logger().error(&#x27;Invalid isolated enable request&#x27;)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>             return</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>         for index, enabled in zip(msg.motor_types, msg.enabled):</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>             self.enabled[index] = enabled</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>         self.get_logger().info(f&#x27;Isolated enable sequence={msg.sequence_id}; enabled joints={sum(self.enabled)}&#x27;)</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a> </span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     def command(self, msg):</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>         for target in msg.commands:</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>             if target.route.motor_type &gt;= 21 or not all(math.isfinite(x) for x in</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>                                                        (target.q, target.dq, target.tau, target.kp, target.kd)):</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>                 self.get_logger().error(&#x27;Invalid isolated motor command&#x27;)</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>                 return</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>         self.command_count += 1</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>         now = self.get_clock().now().nanoseconds</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>         if now - self.last_summary_ns &gt;= 5_000_000_000:</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>             self.last_summary_ns = now</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>             self.get_logger().info(f&#x27;Isolated sink received={self.command_count}, sequence={msg.sequence_id}, &#x27;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>                                    f&#x27;joints={len(msg.commands)}; stationary feedback&#x27;)</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> </span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>     @staticmethod</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     def reject_zero(request, response):</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>         response.motor_types = request.motor_types</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         response.results = [MotorSetZero.Response.REJECTED] * len(request.motor_types)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         response.messages = [&#x27;Calibration is unavailable in isolated mode&#x27;] * len(request.motor_types)</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>         return response</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a> </span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>     def publish_feedback(self):</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         stamp = self.get_clock().now().to_msg()</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         if self.get_parameter(&#x27;feedback_enabled&#x27;).value:</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>             self.state.stamp = stamp</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>             self.state.sequence_id = (self.state.sequence_id + 1) &amp; 0xFFFFFFFF</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>             self.state_pub.publish(self.state)</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>         if self.get_parameter(&#x27;imu_feedback_enabled&#x27;).value:</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>             imu = Imu()</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>             imu.header.stamp = stamp</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>             imu.header.frame_id = &#x27;imu_link&#x27;</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>             imu.orientation.w = 1.0</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>             imu.linear_acceleration.z = 9.81</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>             self.imu_pub.publish(imu)</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a> </span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a> </span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a> def main():</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     rclpy.init()</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     node = None</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>     try:</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         node = IsolatedHpm()</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>         rclpy.spin(node)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>     except KeyboardInterrupt:</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>         pass</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>     finally:</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         if node is not None:</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>             node.destroy_node()</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>         if rclpy.ok():</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>             rclpy.shutdown()</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a> </span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a> </span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a> if __name__ == &#x27;__main__&#x27;:</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     main()</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

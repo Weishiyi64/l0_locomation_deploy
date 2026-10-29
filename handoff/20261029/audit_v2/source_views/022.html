@@ -1,0 +1,35 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/scripts/timedelay_launch.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/scripts/timedelay_launch.sh</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/bin/bash</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> function showHelp(){</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a>     echo</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a>     echo &quot;This script can delay the launch of a roslaunch file&quot;</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a>     echo &quot;Place it in the &#x27;scripts&#x27; folder of your catkin package&quot;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a>     echo &quot;and make sure that the file is executable (chmod +x timed_roslaunch.sh)&quot;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a>     echo</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a>     echo &quot;Run it from command line:&quot;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>     echo</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>     echo &quot;Use: ./timed_roslaunch.sh [number of seconds to delay] [rospkg] [roslaunch file] [arguments (optional)]&quot;</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>     echo &quot;Or: rosrun [yourpackage] time_roslaunch.sh [number of seconds to delay] [rospkg] [roslaunch file] [arguments (optional)]&quot;</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     echo &quot;Example: ./timed_roslaunch.sh 2 turtlebot_navigation amcl_demo.launch initial_pose_x:=17.0 initial_pose_y:=17.0&quot;</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>     echo</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>     echo &quot;Or run it from another roslaunch file:&quot;</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>     echo</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>     echo &#x27;&lt;launch&gt;&#x27;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>     echo &#x27;  &lt;arg name=&quot;initial_pose_y&quot; default=&quot;17.0&quot; /&gt;&#x27;</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     echo &#x27;  &lt;node pkg=&quot;semantic_turtle_test&quot; type=&quot;timed_roslaunch.sh&quot;&#x27;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     echo &#x27;    args=&quot;2 turtlebot_navigation amcl_demo.launch initial_pose_x:=17.0 initial_pose_y:=$(arg initial_pose_y)&quot;&#x27;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     echo &#x27;    name=&quot;timed_roslaunch&quot; output=&quot;screen&quot;&gt;&#x27;</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     echo &#x27;  &lt;/node&gt;&#x27;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     echo &#x27;&lt;/launch&gt;&#x27;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> }</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> </span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> if [ &quot;$1&quot; = &quot;-h&quot; ]; then</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     showHelp</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> else</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     echo &quot;start wait for $1 seconds&quot;</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>     sleep $1</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     echo &quot;end wait for $1 seconds&quot;</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     shift</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>         echo &quot;now running &#x27;roslaunch $@&#x27;&quot;</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     roslaunch $@</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a> fi</span></pre></html>

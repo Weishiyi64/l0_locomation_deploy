@@ -1,0 +1,42 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/record_wbc_rosbag.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/record_wbc_rosbag.sh</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> # One optional rosbag group per terminal, independent of deployment/actions.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> set -eo pipefail</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> if [[ ${1:-} == --help || ${1:-} == -h || $# == 0 ]]; then</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>   echo &#x27;用法：bash scripts/record_wbc_rosbag.sh A|B|C|D [--workspace 工作空间] [--dry-run]&#x27;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   echo &#x27;A 策略输入输出；B 电机与 IMU；C 动作与安全事件；D ROS 日志。&#x27;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>   echo &#x27;每组独立终端；Ctrl+C 停止并写盘。不启动 sim2real/HPM，不发送动作。&#x27;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a>   exit 0</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> fi</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> group=$1</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> shift</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> source &quot;$(dirname -- &quot;${BASH_SOURCE[0]}&quot;)/wbc_runtime_common.bash&quot;</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> wbc_options &quot;$@&quot;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> case &quot;$group&quot; in</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>   A|a) label=policy; topics=(/control/policy/observation /control/policy/command/rl /control/policy/command/wbc) ;;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   B|b) label=actuator; topics=(/actuator/motor/state /actuator/motor/command /imu/data) ;;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   C|c) label=events; topics=(/algorithm/brain/wbc_action_cmd /system/state_machine/wbc_action_fdb</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     /control/policy/wbc/active /control/policy/wbc/done /hardware_status/motors_ready</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     /system/safety/emergency_stop /system/safety/hardware_fault /actuator/motor/enable /joy) ;;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   D|d) label=diagnostics; topics=(/rosout) ;;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   *) wbc_die &#x27;录包组必须是 A、B、C 或 D&#x27; ;;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> esac</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> wbc_current_run</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> qos=&quot;$wbc_workspace/deploy_config/wbc-record-qos.yaml&quot;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> [[ -f &quot;$qos&quot; ]] || qos=&quot;$wbc_script_dir/wbc-record-qos.yaml&quot;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> stamp=$(date +%Y%m%d_%H%M%S_%N)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> bag_path=&quot;$wbc_run_dir/bags/${label}_$stamp&quot;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> cmd=(ros2 bag record --storage sqlite3 --node-name &quot;record_wbc_$label&quot;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   --output &quot;$bag_path&quot; --max-cache-size 16777216 --max-bag-size 268435456</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   --max-bag-duration 300 --qos-profile-overrides-path &quot;$qos&quot; &quot;${topics[@]}&quot;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a> wbc_print_command &quot;${cmd[@]}&quot;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a> $wbc_dry_run &amp;&amp; exit 0</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a> exec 9&gt;&quot;$wbc_run_dir/.record_$label.lock&quot;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> flock -n 9 || wbc_die &quot;本次运行的 $label 组已在录制&quot;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> mkdir -p -- &quot;$wbc_run_dir/bags&quot;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> cp -- &quot;$qos&quot; &quot;$wbc_run_dir/record_${label}_$stamp.qos.yaml&quot;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> printf &#x27;录包目录：%s\n按 Ctrl+C 停止并等待 metadata 写入。\n&#x27; &quot;$bag_path&quot;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> if wbc_logged_command &quot;$wbc_run_dir/record_${label}_$stamp.log&quot; &quot;${cmd[@]}&quot;; then result=0; else result=$?; fi</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> printf &#x27;%s\n&#x27; &quot;$result&quot; &gt; &quot;$wbc_run_dir/record_${label}_$stamp.exitcode&quot;</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a> [[ -f &quot;$bag_path/metadata.yaml&quot; ]] || wbc_die &quot;录包未正常封存，请检查日志：$bag_path&quot;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> printf &#x27;录包已停止：%s\n&#x27; &quot;$bag_path&quot;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a> exit &quot;$result&quot;</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

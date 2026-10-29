@@ -1,0 +1,105 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/wbc_runtime_common.bash</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/wbc_runtime_common.bash</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> # Shared environment/path checks only; sourcing this file starts no ROS nodes.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> wbc_die() { printf &#x27;错误：%s\n&#x27; &quot;$*&quot; &gt;&amp;2; exit 1; }</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> </span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> wbc_options() {</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>   wbc_script_dir=$(cd -- &quot;$(dirname -- &quot;${BASH_SOURCE[0]}&quot;)&quot; &amp;&amp; pwd -P)</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a>   wbc_workspace=$(cd -- &quot;$wbc_script_dir/../../..&quot; &amp;&amp; pwd -P)</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a>   wbc_dry_run=false</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>   while (($#)); do</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>     case &quot;$1&quot; in</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>       --workspace)</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>         (($# &gt;= 2)) || wbc_die &#x27;--workspace 缺少路径&#x27;</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>         wbc_workspace=$(cd -- &quot;$2&quot; &amp;&amp; pwd -P) || exit 1</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>         shift 2 ;;</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>       --dry-run) wbc_dry_run=true; shift ;;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>       *) wbc_die &quot;未知参数：$1；使用 --help 查看用法&quot; ;;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>     esac</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   done</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>   wbc_repo=&quot;$wbc_workspace/src/l0_ros2_deploy_v2&quot;</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   wbc_run_root=&quot;$wbc_workspace/runs/wbc_production&quot;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   export PYTHONDONTWRITEBYTECODE=1</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> }</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a> wbc_environment() {</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   local config=$1</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   [[ -f /opt/ros/humble/setup.bash ]] || wbc_die &#x27;缺少 ROS Humble 环境&#x27;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   [[ -f &quot;$wbc_workspace/install/setup.bash&quot; ]] || wbc_die &#x27;工作空间尚未构建&#x27;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   [[ -f &quot;$config&quot; ]] || wbc_die &quot;缺少模型配置：$config&quot;</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   # ROS setup files are not nounset-safe. Preserve the caller&#x27;s DDS environment.</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   source /opt/ros/humble/setup.bash</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   source &quot;$wbc_workspace/install/setup.bash&quot;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   unset robot_type amp_policy wbc_bundle wbc_actions</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   source &quot;$config&quot;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   [[ ${robot_type:-} =~ ^[A-Za-z0-9_-]+$ ]] || wbc_die &#x27;robot_type 无效&#x27;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   [[ ${amp_policy:-} =~ ^[A-Za-z0-9_-]+$ ]] || wbc_die &#x27;amp_policy 无效&#x27;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   [[ ${wbc_bundle:-} =~ ^[A-Za-z0-9_-]+$ ]] || wbc_die &#x27;wbc_bundle 无效&#x27;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>   [[ -n ${wbc_actions:-} ]] || wbc_die &#x27;wbc_actions 为空&#x27;</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   wbc_prefix=$(ros2 pkg prefix legged_deploy)</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   [[ &quot;$wbc_prefix&quot; == &quot;$wbc_workspace/install&quot; || &quot;$wbc_prefix&quot; == &quot;$wbc_workspace/install/&quot;* ]] ||</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>     wbc_die &#x27;legged_deploy 来自其他工作空间&#x27;</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   wbc_installed=&quot;$wbc_prefix/share/legged_deploy/policy/$robot_type/$wbc_bundle&quot;</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>   wbc_actions=$(/usr/bin/python3 -B - &quot;$wbc_installed&quot; &quot;$wbc_actions&quot; &lt;&lt;&#x27;PY&#x27;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a> import json, re, sys</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> from pathlib import Path</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> import yaml</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> root = Path(sys.argv[1])</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> selected = yaml.safe_load(sys.argv[2])</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> if (not isinstance(selected, list) or not selected or</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>         any(not isinstance(a, str) or not re.fullmatch(r&#x27;[A-Za-z0-9_-]{1,32}&#x27;, a) for a in selected) or</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         len(selected) != len(set(selected))):</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     raise SystemExit(&#x27;wbc_actions 必须是非空、无重复的动作 ID 列表&#x27;)</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a> manifest = json.loads((root / &#x27;base_manifest.json&#x27;).read_text())</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a> available = {a[&#x27;action_id&#x27;] for a in manifest[&#x27;actions&#x27;]}</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a> if not set(selected) &lt;= available:</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     raise SystemExit(&#x27;配置包含未安装动作：&#x27; + repr(set(selected) - available))</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a> for name in (&#x27;INSTALLATION.json&#x27;, &#x27;base_lora.rknn&#x27;):</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     if not (root / name).is_file():</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>         raise SystemExit(&#x27;缺少运行资产：&#x27; + str(root / name))</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> print(json.dumps(selected))</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a> PY</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   ) || wbc_die &#x27;模型配置检查失败&#x27;</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a> }</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a> </span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> wbc_current_run() {</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   wbc_run_dir=$(/usr/bin/python3 -B - &quot;$wbc_run_root&quot; &lt;&lt;&#x27;PY&#x27;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a> from pathlib import Path</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> import sys</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> root = Path(sys.argv[1]).resolve()</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a> run = Path((root / &#x27;current_run_dir&#x27;).read_text().strip()).resolve(strict=True)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a> if run.parent != root or not (run / &#x27;environment.env&#x27;).is_file():</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     raise SystemExit(&#x27;无效的 current_run_dir；先运行 start_sim2real.sh&#x27;)</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> if (run / &#x27;LOGS.sha256&#x27;).exists():</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     raise SystemExit(&#x27;本次记录已封存；请重新启动生成新的运行目录&#x27;)</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a> print(run)</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a> PY</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   ) || wbc_die &#x27;找不到可写的当前运行记录&#x27;</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   wbc_environment &quot;$wbc_run_dir/environment.env&quot;</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   cmp -s &quot;$wbc_run_dir/base_manifest.json&quot; &quot;$wbc_installed/base_manifest.json&quot; ||</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     wbc_die &#x27;安装 manifest 与运行快照不一致，请重新启动部署&#x27;</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   cmp -s &quot;$wbc_run_dir/INSTALLATION.json&quot; &quot;$wbc_installed/INSTALLATION.json&quot; ||</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     wbc_die &#x27;安装清单与运行快照不一致，请重新启动部署&#x27;</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   export ROS_LOG_DIR=&quot;$wbc_run_dir/ros&quot;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a> }</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a> </span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a> wbc_print_command() { printf &#x27;%q &#x27; &quot;$@&quot;; printf &#x27;\n&#x27;; }</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a> </span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a> wbc_logged_command() {</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   local log=$1 child logger log_fd result</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   shift</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   exec {log_fd}&gt; &gt;(trap &#x27;&#x27; INT TERM; exec tee &quot;$log&quot;)</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   logger=$!</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   setsid &quot;$@&quot; &gt;&amp;$log_fd 2&gt;&amp;1 &amp;</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   child=$!</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   exec {log_fd}&gt;&amp;-</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   # Let ROS and its existing sequential launcher shut down their own children.</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>   trap &#x27;kill -INT -- &quot;-$child&quot; 2&gt;/dev/null || true&#x27; INT TERM</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>   while true; do</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>     if wait &quot;$child&quot;; then result=0; else result=$?; fi</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     kill -0 &quot;$child&quot; 2&gt;/dev/null || break</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>   done</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>   wait &quot;$logger&quot; || true</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>   trap - INT TERM</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>   return &quot;$result&quot;</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a> }</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

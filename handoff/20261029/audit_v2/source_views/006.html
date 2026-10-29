@@ -1,0 +1,1034 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/launch/action_sequence_policy.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/launch/action_sequence_policy.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> # Copyright 2026</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Inspect action sequence YAML for dynamic imitation launch decisions.</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> Used by legged_controllers launch files. Mirrors path resolution used when loading</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> sequence YAML in ActionSequenceController (relative to `legged_controllers` share).</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> &quot;&quot;&quot;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> from __future__ import annotations</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> import os</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> try:</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>     import yaml</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> except ImportError as _e:  # pragma: no cover</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     yaml = None  # type: ignore</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a> </span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a> </span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> def resolve_action_sequence_yaml_path(raw_path: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>     &quot;&quot;&quot;Resolve sequence file path the same way the first ActionSequence load does: absolute or relative to share.&quot;&quot;&quot;</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>     if not raw_path:</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>         return raw_path</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>     if os.path.isabs(raw_path):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>         return os.path.normpath(raw_path)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     candidate = os.path.join(package_share_legged_controllers, raw_path)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     return os.path.normpath(candidate)</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a> </span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a> </span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a> def _resolve_package_path(raw_path: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     if not raw_path:</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>         return raw_path</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     if os.path.isabs(raw_path):</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>         return os.path.normpath(raw_path)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     return os.path.normpath(os.path.join(package_share_legged_controllers, raw_path))</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> </span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> </span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> VALID_PHASE_MODES = {&#x27;rl_with_csv&#x27;, &#x27;rl_imitation&#x27;}</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> </span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> </span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a> class ActionSequenceManifest(NamedTuple):</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     &quot;&quot;&quot;Validated action sequence manifest for launch-time dynamic worker setup.&quot;&quot;&quot;</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>     sequence_paths: List[str]</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     imitation_policies: List[str]</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     preload_imitation_policies: List[str]</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     rl_imitation_sequences: List[str]</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>     skipped_imitation_policies: List[str]</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> </span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a> </span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> def _load_yaml_file(path: str, description: str) -&gt; Dict[str, Any]:</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     if yaml is None:</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>         raise RuntimeError(f&#x27;PyYAML is required to parse {description}; install python3-yaml.&#x27;)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a> </span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     with open(path, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;) as f:</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>         root = yaml.safe_load(f) or {}</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     if not isinstance(root, dict):</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>         raise ValueError(f&#x27;{description} {path} must contain a YAML map.&#x27;)</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>     return root</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a> </span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a> </span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a> def _resolve_csv_path(raw_path: str, sequence_dir: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     if not raw_path:</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>         return raw_path</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>     if os.path.isabs(raw_path):</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>         return os.path.normpath(raw_path)</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a> </span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     relative_to_sequence = os.path.normpath(os.path.join(sequence_dir, raw_path))</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     if os.path.isfile(relative_to_sequence):</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>         return relative_to_sequence</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a> </span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>     relative_to_share = os.path.normpath(os.path.join(package_share_legged_controllers, raw_path))</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     if os.path.isfile(relative_to_share):</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>         return relative_to_share</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> </span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>     return relative_to_sequence</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a> </span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a> </span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> def _parse_sequence_yaml(path: str, package_share_legged_controllers: str) -&gt; Tuple[bool, str]:</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     &quot;&quot;&quot;Validate sequence YAML and return (has_rl_imitation_phase, imitation_policy).&quot;&quot;&quot;</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     root = _load_yaml_file(path, &#x27;action sequence&#x27;)</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a> </span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     sequence = root.get(&#x27;sequence&#x27;) or {}</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     if not isinstance(sequence, dict):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         raise ValueError(f&#x27;Action sequence {path} must contain sequence map.&#x27;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     phases = sequence.get(&#x27;phases&#x27;) or []</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     if not isinstance(phases, list) or not phases:</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         raise ValueError(f&#x27;Action sequence {path} must contain non-empty sequence.phases list.&#x27;)</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a> </span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     has_rl_imitation = False</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>     sequence_dir = os.path.dirname(path)</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>     for index, phase in enumerate(phases):</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>         if not isinstance(phase, dict):</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>             raise ValueError(f&#x27;Action sequence {path} phase[{index}] must be a map.&#x27;)</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>         mode = str(phase.get(&#x27;mode&#x27;, &#x27;&#x27;)).strip()</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>         phase_name = str(phase.get(&#x27;name&#x27;) or f&#x27;phase_{index}&#x27;)</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         if mode not in VALID_PHASE_MODES:</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>             raise ValueError(</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>                 f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; has invalid mode {mode!r}; &quot;</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a>                 f&#x27;expected one of {sorted(VALID_PHASE_MODES)}.&#x27;</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>             )</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a> </span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>         if mode == &#x27;rl_imitation&#x27;:</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>             has_rl_imitation = True</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>             if phase.get(&#x27;csv&#x27;):</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>                 raise ValueError(f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode rl_imitation must not set csv.&quot;)</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>             if phase.get(&#x27;velocity_timeline&#x27;):</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>                 raise ValueError(</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>                     f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode rl_imitation does not support velocity_timeline.&quot;</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>                 )</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>             continue</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a> </span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>         raw_csv = str(phase.get(&#x27;csv&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>         if not raw_csv:</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>             raise ValueError(f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode {mode} requires csv.&quot;)</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>         resolved_csv = _resolve_csv_path(raw_csv, sequence_dir, package_share_legged_controllers)</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>         if not os.path.isfile(resolved_csv):</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>             raise ValueError(</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>                 f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; csv is missing: &quot;</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>                 f&#x27;{raw_csv!r} (resolved: {resolved_csv!r})&#x27;</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>             )</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     raw_imitation = sequence.get(&#x27;imitation_policy&#x27;)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     if raw_imitation is None:</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>         raw_imitation = sequence.get(&#x27;imitation_policy_name&#x27;)</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     imitation_policy = &#x27;&#x27;</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     if raw_imitation is not None:</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a>         imitation_policy = str(raw_imitation).strip()</span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a> </span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a>     return has_rl_imitation, imitation_policy</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a> </span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a> </span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a> def _model_asset_exists(policy_dir: str, model_name: str) -&gt; bool:</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a>     return any(os.path.isfile(os.path.join(policy_dir, model_name + ext)) for ext in (&#x27;.onnx&#x27;, &#x27;.trt&#x27;))</span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a> </span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a> </span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a> def _validate_imitation_policy_assets(policy_name: str, robot_type: str, policy_root_path: str) -&gt; None:</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>     policy_dir = os.path.normpath(os.path.join(policy_root_path, robot_type, policy_name))</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     robot_cfg_path = os.path.join(policy_dir, &#x27;rl_config.yaml&#x27;)</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     if not os.path.isfile(robot_cfg_path):</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         raise ValueError(</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; is missing rl_config.yaml for robot_type &#x27;{robot_type}&#x27;: &quot;</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>             f&#x27;{robot_cfg_path}&#x27;</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>         )</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a> </span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>     root = _load_yaml_file(robot_cfg_path, &#x27;imitation policy rl_config&#x27;)</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>     rc = root.get(&#x27;RobotCfg&#x27;) or {}</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>     if not isinstance(rc, dict):</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; rl_config.yaml must contain RobotCfg map.&quot;)</span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a> </span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a>     policy_type = str(rc.get(&#x27;policy_type&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>     if policy_type and policy_type != &#x27;rl_imitation&#x27;:</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>         raise ValueError(</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.policy_type must be &#x27;rl_imitation&#x27;, got {policy_type!r}.&quot;</span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>         )</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a> </span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     policy_model = str(rc.get(&#x27;policy_name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>     motion_model = str(rc.get(&#x27;motion_name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     if not policy_model:</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.policy_name is missing.&quot;)</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     if not motion_model:</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.motion_name is missing.&quot;)</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     if not _model_asset_exists(policy_dir, policy_model):</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>         raise ValueError(</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; policy model asset is missing: &quot;</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>             f&#x27;{os.path.join(policy_dir, policy_model)}.(onnx|trt)&#x27;</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>         )</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>     if not _model_asset_exists(policy_dir, motion_model):</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>         raise ValueError(</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; motion model asset is missing: &quot;</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>             f&#x27;{os.path.join(policy_dir, motion_model)}.(onnx|trt)&#x27;</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>         )</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a> </span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a> </span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a> def _normalize_combo_name(value: str) -&gt; str:</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>     return &#x27;&#x27;.join(ch for ch in str(value).strip().lower() if ch not in {&#x27;_&#x27;, &#x27;-&#x27;, &#x27; &#x27;})</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a> </span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a> </span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a> def _button_index(raw_name: str) -&gt; int:</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>     name = _normalize_combo_name(raw_name)</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>     mapping = {</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>         &#x27;a&#x27;: 0,</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>         &#x27;b&#x27;: 1,</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>         &#x27;x&#x27;: 3,</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>         &#x27;y&#x27;: 4,</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>         &#x27;lb&#x27;: 6,</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>         &#x27;l1&#x27;: 6,</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>         &#x27;rb&#x27;: 7,</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>         &#x27;r1&#x27;: 7,</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>         &#x27;lt&#x27;: 8,</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>         &#x27;ltbutton&#x27;: 8,</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a>         &#x27;l2&#x27;: 8,</span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a>         &#x27;l2button&#x27;: 8,</span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a>         &#x27;rt&#x27;: 9,</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>         &#x27;rtbutton&#x27;: 9,</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>         &#x27;r2&#x27;: 9,</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>         &#x27;r2button&#x27;: 9,</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>         &#x27;back&#x27;: 10,</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>         &#x27;select&#x27;: 10,</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>         &#x27;start&#x27;: 11,</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>         &#x27;ls&#x27;: 13,</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>         &#x27;lsbutton&#x27;: 13,</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>         &#x27;l3&#x27;: 13,</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>         &#x27;rs&#x27;: 14,</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>         &#x27;rsbutton&#x27;: 14,</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>         &#x27;r3&#x27;: 14,</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     }</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a>     return mapping.get(name, -1)</span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a> </span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a> </span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a> def _dpad_axis(raw_name: str) -&gt; int:</span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>     name = _normalize_combo_name(raw_name)</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>     if name in {&#x27;dpadlr&#x27;, &#x27;dpadx&#x27;, &#x27;dirlr&#x27;, &#x27;hatx&#x27;}:</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>         return 6</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>     if name in {&#x27;dpadud&#x27;, &#x27;dpady&#x27;, &#x27;dirud&#x27;, &#x27;haty&#x27;}:</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>         return 7</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>     return -1</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a> </span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a> </span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a> def _axis_sign(raw_direction: str, axis_index: int) -&gt; int:</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>     direction = _normalize_combo_name(raw_direction)</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>     if direction in {&#x27;positive&#x27;, &#x27;pos&#x27;, &#x27;+&#x27;}:</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>         return 1</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>     if direction in {&#x27;negative&#x27;, &#x27;neg&#x27;, &#x27;-&#x27;}:</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>         return -1</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>     if direction == &#x27;up&#x27; and axis_index == 7:</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>         return 1</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>     if direction == &#x27;down&#x27; and axis_index == 7:</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>         return -1</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>     if direction == &#x27;left&#x27; and axis_index == 6:</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>         return 1</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>     if direction == &#x27;right&#x27; and axis_index == 6:</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>         return -1</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>     return 0</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a> </span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a> </span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a> def _dpad_axis_for_direction(raw_direction: str) -&gt; str:</span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a>     direction = _normalize_combo_name(raw_direction)</span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a>     if direction in {&#x27;up&#x27;, &#x27;down&#x27;}:</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>         return &#x27;DPad_ud&#x27;</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>     if direction in {&#x27;left&#x27;, &#x27;right&#x27;}:</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>         return &#x27;DPad_lr&#x27;</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>     return &#x27;&#x27;</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a> </span>
+<span id="C-L242" class="line"><a href="#C-L242"> 242</a> </span>
+<span id="C-L243" class="line"><a href="#C-L243"> 243</a> def _as_string_list(value: Any) -&gt; List[str]:</span>
+<span id="C-L244" class="line"><a href="#C-L244"> 244</a>     if value is None:</span>
+<span id="C-L245" class="line"><a href="#C-L245"> 245</a>         return []</span>
+<span id="C-L246" class="line"><a href="#C-L246"> 246</a>     if isinstance(value, str):</span>
+<span id="C-L247" class="line"><a href="#C-L247"> 247</a>         return [value.strip()]</span>
+<span id="C-L248" class="line"><a href="#C-L248"> 248</a>     if isinstance(value, list):</span>
+<span id="C-L249" class="line"><a href="#C-L249"> 249</a>         out: List[str] = []</span>
+<span id="C-L250" class="line"><a href="#C-L250"> 250</a>         for item in value:</span>
+<span id="C-L251" class="line"><a href="#C-L251"> 251</a>             if not isinstance(item, str):</span>
+<span id="C-L252" class="line"><a href="#C-L252"> 252</a>                 raise ValueError(&#x27;combo button entries must be strings&#x27;)</span>
+<span id="C-L253" class="line"><a href="#C-L253"> 253</a>             out.append(item.strip())</span>
+<span id="C-L254" class="line"><a href="#C-L254"> 254</a>         return out</span>
+<span id="C-L255" class="line"><a href="#C-L255"> 255</a>     raise ValueError(&#x27;combo buttons must be a string or list&#x27;)</span>
+<span id="C-L256" class="line"><a href="#C-L256"> 256</a> </span>
+<span id="C-L257" class="line"><a href="#C-L257"> 257</a> </span>
+<span id="C-L258" class="line"><a href="#C-L258"> 258</a> def _canonical_joystick_combo(combo: Any, action_name: str, kind: str = &#x27;Joystick imitation action&#x27;) -&gt; str:</span>
+<span id="C-L259" class="line"><a href="#C-L259"> 259</a>     if not isinstance(combo, dict):</span>
+<span id="C-L260" class="line"><a href="#C-L260"> 260</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; needs combo map.&quot;)</span>
+<span id="C-L261" class="line"><a href="#C-L261"> 261</a> </span>
+<span id="C-L262" class="line"><a href="#C-L262"> 262</a>     buttons: List[int] = []</span>
+<span id="C-L263" class="line"><a href="#C-L263"> 263</a>     axes: List[Tuple[int, int]] = []</span>
+<span id="C-L264" class="line"><a href="#C-L264"> 264</a> </span>
+<span id="C-L265" class="line"><a href="#C-L265"> 265</a>     for button_name in _as_string_list(combo.get(&#x27;buttons&#x27;)):</span>
+<span id="C-L266" class="line"><a href="#C-L266"> 266</a>         index = _button_index(button_name)</span>
+<span id="C-L267" class="line"><a href="#C-L267"> 267</a>         if index &lt; 0:</span>
+<span id="C-L268" class="line"><a href="#C-L268"> 268</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has unknown button {button_name!r}.&quot;)</span>
+<span id="C-L269" class="line"><a href="#C-L269"> 269</a>         buttons.append(index)</span>
+<span id="C-L270" class="line"><a href="#C-L270"> 270</a> </span>
+<span id="C-L271" class="line"><a href="#C-L271"> 271</a>     if combo.get(&#x27;dpad&#x27;) is not None:</span>
+<span id="C-L272" class="line"><a href="#C-L272"> 272</a>         direction = str(combo.get(&#x27;dpad&#x27;)).strip()</span>
+<span id="C-L273" class="line"><a href="#C-L273"> 273</a>         axis_name = _dpad_axis_for_direction(direction)</span>
+<span id="C-L274" class="line"><a href="#C-L274"> 274</a>         axis_index = _dpad_axis(axis_name)</span>
+<span id="C-L275" class="line"><a href="#C-L275"> 275</a>         sign = _axis_sign(direction, axis_index)</span>
+<span id="C-L276" class="line"><a href="#C-L276"> 276</a>         if axis_index &lt; 0 or sign == 0:</span>
+<span id="C-L277" class="line"><a href="#C-L277"> 277</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has invalid dpad direction {direction!r}.&quot;)</span>
+<span id="C-L278" class="line"><a href="#C-L278"> 278</a>         axes.append((axis_index, sign))</span>
+<span id="C-L279" class="line"><a href="#C-L279"> 279</a> </span>
+<span id="C-L280" class="line"><a href="#C-L280"> 280</a>     raw_axes = combo.get(&#x27;axes&#x27;) or []</span>
+<span id="C-L281" class="line"><a href="#C-L281"> 281</a>     if not isinstance(raw_axes, list):</span>
+<span id="C-L282" class="line"><a href="#C-L282"> 282</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo.axes must be a list.&quot;)</span>
+<span id="C-L283" class="line"><a href="#C-L283"> 283</a>     for axis in raw_axes:</span>
+<span id="C-L284" class="line"><a href="#C-L284"> 284</a>         if not isinstance(axis, dict):</span>
+<span id="C-L285" class="line"><a href="#C-L285"> 285</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo.axes entries must be maps.&quot;)</span>
+<span id="C-L286" class="line"><a href="#C-L286"> 286</a>         axis_name = str(axis.get(&#x27;name&#x27;) or axis.get(&#x27;axis&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L287" class="line"><a href="#C-L287"> 287</a>         axis_index = _dpad_axis(axis_name)</span>
+<span id="C-L288" class="line"><a href="#C-L288"> 288</a>         if axis_index &lt; 0:</span>
+<span id="C-L289" class="line"><a href="#C-L289"> 289</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has unknown D-pad axis {axis_name!r}.&quot;)</span>
+<span id="C-L290" class="line"><a href="#C-L290"> 290</a>         direction = str(axis.get(&#x27;direction&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L291" class="line"><a href="#C-L291"> 291</a>         sign = _axis_sign(direction, axis_index)</span>
+<span id="C-L292" class="line"><a href="#C-L292"> 292</a>         if sign == 0:</span>
+<span id="C-L293" class="line"><a href="#C-L293"> 293</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; axis {axis_name!r} has invalid direction {direction!r}.&quot;)</span>
+<span id="C-L294" class="line"><a href="#C-L294"> 294</a>         axes.append((axis_index, sign))</span>
+<span id="C-L295" class="line"><a href="#C-L295"> 295</a> </span>
+<span id="C-L296" class="line"><a href="#C-L296"> 296</a>     if not buttons and not axes:</span>
+<span id="C-L297" class="line"><a href="#C-L297"> 297</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo has no requirements.&quot;)</span>
+<span id="C-L298" class="line"><a href="#C-L298"> 298</a> </span>
+<span id="C-L299" class="line"><a href="#C-L299"> 299</a>     parts = [f&#x27;b{index}&#x27; for index in sorted(buttons)]</span>
+<span id="C-L300" class="line"><a href="#C-L300"> 300</a>     parts.extend(f&#x27;a{index}{&quot;+&quot; if sign &gt; 0 else &quot;-&quot;}&#x27; for index, sign in sorted(axes))</span>
+<span id="C-L301" class="line"><a href="#C-L301"> 301</a>     return &#x27;|&#x27;.join(parts)</span>
+<span id="C-L302" class="line"><a href="#C-L302"> 302</a> </span>
+<span id="C-L303" class="line"><a href="#C-L303"> 303</a> </span>
+<span id="C-L304" class="line"><a href="#C-L304"> 304</a> def _iter_joystick_imitation_policy_entries(config_path: str) -&gt; Iterable[str]:</span>
+<span id="C-L305" class="line"><a href="#C-L305"> 305</a>     root = _load_yaml_file(config_path, &#x27;joystick imitation action map&#x27;)</span>
+<span id="C-L306" class="line"><a href="#C-L306"> 306</a>     cfg = root.get(&#x27;joystick_imitation_actions&#x27;) or root</span>
+<span id="C-L307" class="line"><a href="#C-L307"> 307</a>     if not isinstance(cfg, dict):</span>
+<span id="C-L308" class="line"><a href="#C-L308"> 308</a>         raise ValueError(f&#x27;Joystick imitation map {config_path} must contain a YAML map.&#x27;)</span>
+<span id="C-L309" class="line"><a href="#C-L309"> 309</a>     actions = cfg.get(&#x27;actions&#x27;) or []</span>
+<span id="C-L310" class="line"><a href="#C-L310"> 310</a>     if not isinstance(actions, list):</span>
+<span id="C-L311" class="line"><a href="#C-L311"> 311</a>         raise ValueError(f&#x27;Joystick imitation map {config_path} must contain joystick_imitation_actions.actions list.&#x27;)</span>
+<span id="C-L312" class="line"><a href="#C-L312"> 312</a> </span>
+<span id="C-L313" class="line"><a href="#C-L313"> 313</a>     seen_names: Set[str] = set()</span>
+<span id="C-L314" class="line"><a href="#C-L314"> 314</a>     seen_combos: Set[str] = set()</span>
+<span id="C-L315" class="line"><a href="#C-L315"> 315</a>     for index, action in enumerate(actions):</span>
+<span id="C-L316" class="line"><a href="#C-L316"> 316</a>         if not isinstance(action, dict):</span>
+<span id="C-L317" class="line"><a href="#C-L317"> 317</a>             raise ValueError(f&#x27;Joystick imitation map {config_path} action[{index}] must be a map.&#x27;)</span>
+<span id="C-L318" class="line"><a href="#C-L318"> 318</a>         name = str(action.get(&#x27;name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L319" class="line"><a href="#C-L319"> 319</a>         if not name:</span>
+<span id="C-L320" class="line"><a href="#C-L320"> 320</a>             raise ValueError(f&#x27;Joystick imitation map {config_path} action[{index}] needs non-empty name.&#x27;)</span>
+<span id="C-L321" class="line"><a href="#C-L321"> 321</a>         if name in seen_names:</span>
+<span id="C-L322" class="line"><a href="#C-L322"> 322</a>             raise ValueError(f&quot;Joystick imitation map {config_path} has duplicate action name &#x27;{name}&#x27;.&quot;)</span>
+<span id="C-L323" class="line"><a href="#C-L323"> 323</a>         seen_names.add(name)</span>
+<span id="C-L324" class="line"><a href="#C-L324"> 324</a> </span>
+<span id="C-L325" class="line"><a href="#C-L325"> 325</a>         canonical_combo = _canonical_joystick_combo(action.get(&#x27;combo&#x27;), name)</span>
+<span id="C-L326" class="line"><a href="#C-L326"> 326</a>         if canonical_combo in seen_combos:</span>
+<span id="C-L327" class="line"><a href="#C-L327"> 327</a>             raise ValueError(f&quot;Joystick imitation map {config_path} has duplicate combo for action &#x27;{name}&#x27;.&quot;)</span>
+<span id="C-L328" class="line"><a href="#C-L328"> 328</a>         seen_combos.add(canonical_combo)</span>
+<span id="C-L329" class="line"><a href="#C-L329"> 329</a> </span>
+<span id="C-L330" class="line"><a href="#C-L330"> 330</a>         if not bool(action.get(&#x27;enabled&#x27;, False)):</span>
+<span id="C-L331" class="line"><a href="#C-L331"> 331</a>             continue</span>
+<span id="C-L332" class="line"><a href="#C-L332"> 332</a>         policy = str(action.get(&#x27;policy&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L333" class="line"><a href="#C-L333"> 333</a>         if not policy:</span>
+<span id="C-L334" class="line"><a href="#C-L334"> 334</a>             raise ValueError(f&quot;Joystick imitation action &#x27;{name}&#x27; is enabled but policy is empty.&quot;)</span>
+<span id="C-L335" class="line"><a href="#C-L335"> 335</a>         yield policy</span>
+<span id="C-L336" class="line"><a href="#C-L336"> 336</a> </span>
+<span id="C-L337" class="line"><a href="#C-L337"> 337</a> </span>
+<span id="C-L338" class="line"><a href="#C-L338"> 338</a> def _validate_joystick_sequence_yaml(</span>
+<span id="C-L339" class="line"><a href="#C-L339"> 339</a>     raw_path: str,</span>
+<span id="C-L340" class="line"><a href="#C-L340"> 340</a>     package_share_legged_controllers: str,</span>
+<span id="C-L341" class="line"><a href="#C-L341"> 341</a>     action_name: str,</span>
+<span id="C-L342" class="line"><a href="#C-L342"> 342</a> ) -&gt; None:</span>
+<span id="C-L343" class="line"><a href="#C-L343"> 343</a>     resolved_sequence = resolve_action_sequence_yaml_path(raw_path, package_share_legged_controllers)</span>
+<span id="C-L344" class="line"><a href="#C-L344"> 344</a>     if not resolved_sequence or not os.path.isfile(resolved_sequence):</span>
+<span id="C-L345" class="line"><a href="#C-L345"> 345</a>         raise ValueError(</span>
+<span id="C-L346" class="line"><a href="#C-L346"> 346</a>             f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence is missing: &quot;</span>
+<span id="C-L347" class="line"><a href="#C-L347"> 347</a>             f&#x27;{raw_path!r} (resolved: {resolved_sequence!r})&#x27;</span>
+<span id="C-L348" class="line"><a href="#C-L348"> 348</a>         )</span>
+<span id="C-L349" class="line"><a href="#C-L349"> 349</a> </span>
+<span id="C-L350" class="line"><a href="#C-L350"> 350</a>     root = _load_yaml_file(resolved_sequence, &#x27;joystick sequence action sequence&#x27;)</span>
+<span id="C-L351" class="line"><a href="#C-L351"> 351</a>     sequence = root.get(&#x27;sequence&#x27;) or {}</span>
+<span id="C-L352" class="line"><a href="#C-L352"> 352</a>     if not isinstance(sequence, dict):</span>
+<span id="C-L353" class="line"><a href="#C-L353"> 353</a>         raise ValueError(f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence {resolved_sequence} must contain map.&quot;)</span>
+<span id="C-L354" class="line"><a href="#C-L354"> 354</a>     phases = sequence.get(&#x27;phases&#x27;) or []</span>
+<span id="C-L355" class="line"><a href="#C-L355"> 355</a>     if not isinstance(phases, list) or not phases:</span>
+<span id="C-L356" class="line"><a href="#C-L356"> 356</a>         raise ValueError(</span>
+<span id="C-L357" class="line"><a href="#C-L357"> 357</a>             f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence {resolved_sequence} must contain &quot;</span>
+<span id="C-L358" class="line"><a href="#C-L358"> 358</a>             &#x27;non-empty sequence.phases list.&#x27;</span>
+<span id="C-L359" class="line"><a href="#C-L359"> 359</a>         )</span>
+<span id="C-L360" class="line"><a href="#C-L360"> 360</a> </span>
+<span id="C-L361" class="line"><a href="#C-L361"> 361</a>     sequence_dir = os.path.dirname(resolved_sequence)</span>
+<span id="C-L362" class="line"><a href="#C-L362"> 362</a>     for index, phase in enumerate(phases):</span>
+<span id="C-L363" class="line"><a href="#C-L363"> 363</a>         if not isinstance(phase, dict):</span>
+<span id="C-L364" class="line"><a href="#C-L364"> 364</a>             raise ValueError(f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase[{index}] must be a map.&quot;)</span>
+<span id="C-L365" class="line"><a href="#C-L365"> 365</a>         phase_name = str(phase.get(&#x27;name&#x27;) or f&#x27;phase_{index}&#x27;)</span>
+<span id="C-L366" class="line"><a href="#C-L366"> 366</a>         mode = str(phase.get(&#x27;mode&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L367" class="line"><a href="#C-L367"> 367</a>         if mode != &#x27;rl_with_csv&#x27;:</span>
+<span id="C-L368" class="line"><a href="#C-L368"> 368</a>             raise ValueError(</span>
+<span id="C-L369" class="line"><a href="#C-L369"> 369</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; must use mode &#x27;rl_with_csv&#x27;, &quot;</span>
+<span id="C-L370" class="line"><a href="#C-L370"> 370</a>                 f&#x27;got {mode!r}.&#x27;</span>
+<span id="C-L371" class="line"><a href="#C-L371"> 371</a>             )</span>
+<span id="C-L372" class="line"><a href="#C-L372"> 372</a>         raw_csv = str(phase.get(&#x27;csv&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L373" class="line"><a href="#C-L373"> 373</a>         if not raw_csv:</span>
+<span id="C-L374" class="line"><a href="#C-L374"> 374</a>             raise ValueError(</span>
+<span id="C-L375" class="line"><a href="#C-L375"> 375</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; mode rl_with_csv requires csv.&quot;</span>
+<span id="C-L376" class="line"><a href="#C-L376"> 376</a>             )</span>
+<span id="C-L377" class="line"><a href="#C-L377"> 377</a>         resolved_csv = _resolve_csv_path(raw_csv, sequence_dir, package_share_legged_controllers)</span>
+<span id="C-L378" class="line"><a href="#C-L378"> 378</a>         if not os.path.isfile(resolved_csv):</span>
+<span id="C-L379" class="line"><a href="#C-L379"> 379</a>             raise ValueError(</span>
+<span id="C-L380" class="line"><a href="#C-L380"> 380</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; csv is missing: &quot;</span>
+<span id="C-L381" class="line"><a href="#C-L381"> 381</a>                 f&#x27;{raw_csv!r} (resolved: {resolved_csv!r})&#x27;</span>
+<span id="C-L382" class="line"><a href="#C-L382"> 382</a>             )</span>
+<span id="C-L383" class="line"><a href="#C-L383"> 383</a> </span>
+<span id="C-L384" class="line"><a href="#C-L384"> 384</a> </span>
+<span id="C-L385" class="line"><a href="#C-L385"> 385</a> def _iter_joystick_sequence_paths(config_path: str, package_share_legged_controllers: str) -&gt; Iterable[str]:</span>
+<span id="C-L386" class="line"><a href="#C-L386"> 386</a>     root = _load_yaml_file(config_path, &#x27;joystick sequence action map&#x27;)</span>
+<span id="C-L387" class="line"><a href="#C-L387"> 387</a>     cfg = root.get(&#x27;joystick_sequence_actions&#x27;) or root</span>
+<span id="C-L388" class="line"><a href="#C-L388"> 388</a>     if not isinstance(cfg, dict):</span>
+<span id="C-L389" class="line"><a href="#C-L389"> 389</a>         raise ValueError(f&#x27;Joystick sequence map {config_path} must contain a YAML map.&#x27;)</span>
+<span id="C-L390" class="line"><a href="#C-L390"> 390</a>     actions = cfg.get(&#x27;actions&#x27;) or []</span>
+<span id="C-L391" class="line"><a href="#C-L391"> 391</a>     if not isinstance(actions, list):</span>
+<span id="C-L392" class="line"><a href="#C-L392"> 392</a>         raise ValueError(f&#x27;Joystick sequence map {config_path} must contain joystick_sequence_actions.actions list.&#x27;)</span>
+<span id="C-L393" class="line"><a href="#C-L393"> 393</a> </span>
+<span id="C-L394" class="line"><a href="#C-L394"> 394</a>     seen_names: Set[str] = set()</span>
+<span id="C-L395" class="line"><a href="#C-L395"> 395</a>     seen_combos: Set[str] = set()</span>
+<span id="C-L396" class="line"><a href="#C-L396"> 396</a>     for index, action in enumerate(actions):</span>
+<span id="C-L397" class="line"><a href="#C-L397"> 397</a>         if not isinstance(action, dict):</span>
+<span id="C-L398" class="line"><a href="#C-L398"> 398</a>             raise ValueError(f&#x27;Joystick sequence map {config_path} action[{index}] must be a map.&#x27;)</span>
+<span id="C-L399" class="line"><a href="#C-L399"> 399</a>         name = str(action.get(&#x27;name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L400" class="line"><a href="#C-L400"> 400</a>         if not name:</span>
+<span id="C-L401" class="line"><a href="#C-L401"> 401</a>             raise ValueError(f&#x27;Joystick sequence map {config_path} action[{index}] needs non-empty name.&#x27;)</span>
+<span id="C-L402" class="line"><a href="#C-L402"> 402</a>         if name in seen_names:</span>
+<span id="C-L403" class="line"><a href="#C-L403"> 403</a>             raise ValueError(f&quot;Joystick sequence map {config_path} has duplicate action name &#x27;{name}&#x27;.&quot;)</span>
+<span id="C-L404" class="line"><a href="#C-L404"> 404</a>         seen_names.add(name)</span>
+<span id="C-L405" class="line"><a href="#C-L405"> 405</a> </span>
+<span id="C-L406" class="line"><a href="#C-L406"> 406</a>         canonical_combo = _canonical_joystick_combo(action.get(&#x27;combo&#x27;), name, &#x27;Joystick sequence action&#x27;)</span>
+<span id="C-L407" class="line"><a href="#C-L407"> 407</a>         if canonical_combo in seen_combos:</span>
+<span id="C-L408" class="line"><a href="#C-L408"> 408</a>             raise ValueError(f&quot;Joystick sequence map {config_path} has duplicate combo for action &#x27;{name}&#x27;.&quot;)</span>
+<span id="C-L409" class="line"><a href="#C-L409"> 409</a>         seen_combos.add(canonical_combo)</span>
+<span id="C-L410" class="line"><a href="#C-L410"> 410</a> </span>
+<span id="C-L411" class="line"><a href="#C-L411"> 411</a>         if not bool(action.get(&#x27;enabled&#x27;, False)):</span>
+<span id="C-L412" class="line"><a href="#C-L412"> 412</a>             continue</span>
+<span id="C-L413" class="line"><a href="#C-L413"> 413</a>         raw = str(action.get(&#x27;sequence&#x27;) or action.get(&#x27;sequence_path&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="C-L414" class="line"><a href="#C-L414"> 414</a>         if not raw:</span>
+<span id="C-L415" class="line"><a href="#C-L415"> 415</a>             raise ValueError(f&quot;Joystick sequence action &#x27;{name}&#x27; is enabled but sequence is empty.&quot;)</span>
+<span id="C-L416" class="line"><a href="#C-L416"> 416</a>         _validate_joystick_sequence_yaml(raw, package_share_legged_controllers, name)</span>
+<span id="C-L417" class="line"><a href="#C-L417"> 417</a>         yield raw</span>
+<span id="C-L418" class="line"><a href="#C-L418"> 418</a> </span>
+<span id="C-L419" class="line"><a href="#C-L419"> 419</a> </span>
+<span id="C-L420" class="line"><a href="#C-L420"> 420</a> def collect_dynamic_imitation_policies(</span>
+<span id="C-L421" class="line"><a href="#C-L421"> 421</a>     *,</span>
+<span id="C-L422" class="line"><a href="#C-L422"> 422</a>     package_share_legged_controllers: str,</span>
+<span id="C-L423" class="line"><a href="#C-L423"> 423</a>     joystick_imitation_enabled: bool = False,</span>
+<span id="C-L424" class="line"><a href="#C-L424"> 424</a>     joystick_imitation_config_path: str = &#x27;&#x27;,</span>
+<span id="C-L425" class="line"><a href="#C-L425"> 425</a>     joystick_sequence_enabled: bool = False,</span>
+<span id="C-L426" class="line"><a href="#C-L426"> 426</a>     joystick_sequence_config_path: str = &#x27;&#x27;,</span>
+<span id="C-L427" class="line"><a href="#C-L427"> 427</a> ) -&gt; List[str]:</span>
+<span id="C-L428" class="line"><a href="#C-L428"> 428</a>     &quot;&quot;&quot;Return sorted unique imitation policies referenced by enabled joystick sequence maps.&quot;&quot;&quot;</span>
+<span id="C-L429" class="line"><a href="#C-L429"> 429</a>     return collect_action_sequence_manifest(</span>
+<span id="C-L430" class="line"><a href="#C-L430"> 430</a>         joystick_imitation_enabled=joystick_imitation_enabled,</span>
+<span id="C-L431" class="line"><a href="#C-L431"> 431</a>         joystick_imitation_config_path=joystick_imitation_config_path,</span>
+<span id="C-L432" class="line"><a href="#C-L432"> 432</a>         joystick_sequence_enabled=joystick_sequence_enabled,</span>
+<span id="C-L433" class="line"><a href="#C-L433"> 433</a>         joystick_sequence_config_path=joystick_sequence_config_path,</span>
+<span id="C-L434" class="line"><a href="#C-L434"> 434</a>         package_share_legged_controllers=package_share_legged_controllers,</span>
+<span id="C-L435" class="line"><a href="#C-L435"> 435</a>     ).imitation_policies</span>
+<span id="C-L436" class="line"><a href="#C-L436"> 436</a> </span>
+<span id="C-L437" class="line"><a href="#C-L437"> 437</a> </span>
+<span id="C-L438" class="line"><a href="#C-L438"> 438</a> def collect_action_sequence_manifest(</span>
+<span id="C-L439" class="line"><a href="#C-L439"> 439</a>     *,</span>
+<span id="C-L440" class="line"><a href="#C-L440"> 440</a>     package_share_legged_controllers: str,</span>
+<span id="C-L441" class="line"><a href="#C-L441"> 441</a>     joystick_imitation_enabled: bool = False,</span>
+<span id="C-L442" class="line"><a href="#C-L442"> 442</a>     joystick_imitation_config_path: str = &#x27;&#x27;,</span>
+<span id="C-L443" class="line"><a href="#C-L443"> 443</a>     joystick_sequence_enabled: bool = False,</span>
+<span id="C-L444" class="line"><a href="#C-L444"> 444</a>     joystick_sequence_config_path: str = &#x27;&#x27;,</span>
+<span id="C-L445" class="line"><a href="#C-L445"> 445</a>     robot_type: str = &#x27;&#x27;,</span>
+<span id="C-L446" class="line"><a href="#C-L446"> 446</a>     policy_root_path: str = &#x27;&#x27;,</span>
+<span id="C-L447" class="line"><a href="#C-L447"> 447</a> ) -&gt; ActionSequenceManifest:</span>
+<span id="C-L448" class="line"><a href="#C-L448"> 448</a>     &quot;&quot;&quot;Validate enabled action maps and collect policies that should be preloaded for dynamic imitation.&quot;&quot;&quot;</span>
+<span id="C-L449" class="line"><a href="#C-L449"> 449</a>     policies: Set[str] = set()</span>
+<span id="C-L450" class="line"><a href="#C-L450"> 450</a>     sequence_paths: List[str] = []</span>
+<span id="C-L451" class="line"><a href="#C-L451"> 451</a>     rl_imitation_sequences: List[str] = []</span>
+<span id="C-L452" class="line"><a href="#C-L452"> 452</a> </span>
+<span id="C-L453" class="line"><a href="#C-L453"> 453</a>     if joystick_imitation_enabled:</span>
+<span id="C-L454" class="line"><a href="#C-L454"> 454</a>         resolved_map = _resolve_package_path(joystick_imitation_config_path, package_share_legged_controllers)</span>
+<span id="C-L455" class="line"><a href="#C-L455"> 455</a>         if not resolved_map or not os.path.isfile(resolved_map):</span>
+<span id="C-L456" class="line"><a href="#C-L456"> 456</a>             raise ValueError(f&#x27;joystick_imitation_enabled but map is missing: {joystick_imitation_config_path!r}&#x27;)</span>
+<span id="C-L457" class="line"><a href="#C-L457"> 457</a>         for policy in _iter_joystick_imitation_policy_entries(resolved_map):</span>
+<span id="C-L458" class="line"><a href="#C-L458"> 458</a>             policies.add(policy)</span>
+<span id="C-L459" class="line"><a href="#C-L459"> 459</a> </span>
+<span id="C-L460" class="line"><a href="#C-L460"> 460</a>     if joystick_sequence_enabled:</span>
+<span id="C-L461" class="line"><a href="#C-L461"> 461</a>         resolved_map = _resolve_package_path(joystick_sequence_config_path, package_share_legged_controllers)</span>
+<span id="C-L462" class="line"><a href="#C-L462"> 462</a>         if not resolved_map or not os.path.isfile(resolved_map):</span>
+<span id="C-L463" class="line"><a href="#C-L463"> 463</a>             raise ValueError(f&#x27;joystick_sequence_enabled but map is missing: {joystick_sequence_config_path!r}&#x27;)</span>
+<span id="C-L464" class="line"><a href="#C-L464"> 464</a>         sequence_paths.extend(_iter_joystick_sequence_paths(resolved_map, package_share_legged_controllers))</span>
+<span id="C-L465" class="line"><a href="#C-L465"> 465</a> </span>
+<span id="C-L466" class="line"><a href="#C-L466"> 466</a>     for raw_sequence_path in sequence_paths:</span>
+<span id="C-L467" class="line"><a href="#C-L467"> 467</a>         resolved_sequence = resolve_action_sequence_yaml_path(raw_sequence_path, package_share_legged_controllers)</span>
+<span id="C-L468" class="line"><a href="#C-L468"> 468</a>         if not resolved_sequence or not os.path.isfile(resolved_sequence):</span>
+<span id="C-L469" class="line"><a href="#C-L469"> 469</a>             raise ValueError(</span>
+<span id="C-L470" class="line"><a href="#C-L470"> 470</a>                 f&#x27;action sequence referenced by joystick map is missing: &#x27;</span>
+<span id="C-L471" class="line"><a href="#C-L471"> 471</a>                 f&#x27;{raw_sequence_path!r} (resolved: {resolved_sequence!r})&#x27;</span>
+<span id="C-L472" class="line"><a href="#C-L472"> 472</a>             )</span>
+<span id="C-L473" class="line"><a href="#C-L473"> 473</a>         has_imitation, policy = _parse_sequence_yaml(resolved_sequence, package_share_legged_controllers)</span>
+<span id="C-L474" class="line"><a href="#C-L474"> 474</a>         if has_imitation:</span>
+<span id="C-L475" class="line"><a href="#C-L475"> 475</a>             if not policy:</span>
+<span id="C-L476" class="line"><a href="#C-L476"> 476</a>                 raise ValueError(</span>
+<span id="C-L477" class="line"><a href="#C-L477"> 477</a>                     f&#x27;Action sequence {resolved_sequence} has rl_imitation phase(s) but &#x27;</span>
+<span id="C-L478" class="line"><a href="#C-L478"> 478</a>                     &#x27;sequence.imitation_policy is missing.&#x27;</span>
+<span id="C-L479" class="line"><a href="#C-L479"> 479</a>                 )</span>
+<span id="C-L480" class="line"><a href="#C-L480"> 480</a>             policies.add(policy)</span>
+<span id="C-L481" class="line"><a href="#C-L481"> 481</a>             rl_imitation_sequences.append(resolved_sequence)</span>
+<span id="C-L482" class="line"><a href="#C-L482"> 482</a> </span>
+<span id="C-L483" class="line"><a href="#C-L483"> 483</a>     sorted_policies = sorted(policies)</span>
+<span id="C-L484" class="line"><a href="#C-L484"> 484</a>     skipped_policies: List[str] = []</span>
+<span id="C-L485" class="line"><a href="#C-L485"> 485</a>     if sorted_policies and robot_type and policy_root_path:</span>
+<span id="C-L486" class="line"><a href="#C-L486"> 486</a>         available_policies: List[str] = []</span>
+<span id="C-L487" class="line"><a href="#C-L487"> 487</a>         for policy in sorted_policies:</span>
+<span id="C-L488" class="line"><a href="#C-L488"> 488</a>             try:</span>
+<span id="C-L489" class="line"><a href="#C-L489"> 489</a>                 _validate_imitation_policy_assets(policy, robot_type, policy_root_path)</span>
+<span id="C-L490" class="line"><a href="#C-L490"> 490</a>             except (RuntimeError, ValueError, OSError) as exc:</span>
+<span id="C-L491" class="line"><a href="#C-L491"> 491</a>                 skipped_policies.append(f&quot;{policy}: {exc}&quot;)</span>
+<span id="C-L492" class="line"><a href="#C-L492"> 492</a>                 continue</span>
+<span id="C-L493" class="line"><a href="#C-L493"> 493</a>             available_policies.append(policy)</span>
+<span id="C-L494" class="line"><a href="#C-L494"> 494</a>         sorted_policies = available_policies</span>
+<span id="C-L495" class="line"><a href="#C-L495"> 495</a> </span>
+<span id="C-L496" class="line"><a href="#C-L496"> 496</a>     return ActionSequenceManifest(</span>
+<span id="C-L497" class="line"><a href="#C-L497"> 497</a>         sequence_paths=sorted(set(sequence_paths)),</span>
+<span id="C-L498" class="line"><a href="#C-L498"> 498</a>         imitation_policies=sorted_policies,</span>
+<span id="C-L499" class="line"><a href="#C-L499"> 499</a>         preload_imitation_policies=sorted_policies,</span>
+<span id="C-L500" class="line"><a href="#C-L500"> 500</a>         rl_imitation_sequences=sorted(set(rl_imitation_sequences)),</span>
+<span id="C-L501" class="line"><a href="#C-L501"> 501</a>         skipped_imitation_policies=skipped_policies,</span>
+<span id="C-L502" class="line"><a href="#C-L502"> 502</a>     )</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> # Copyright 2026</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &quot;&quot;&quot;Inspect action sequence YAML for dynamic imitation launch decisions.</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> Used by legged_controllers launch files. Mirrors path resolution used when loading</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> sequence YAML in ActionSequenceController (relative to `legged_controllers` share).</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> &quot;&quot;&quot;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> from __future__ import annotations</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> </span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> import os</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> try:</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     import yaml</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> except ImportError as _e:  # pragma: no cover</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>     yaml = None  # type: ignore</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> </span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> def resolve_action_sequence_yaml_path(raw_path: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a>     &quot;&quot;&quot;Resolve sequence file path the same way the first ActionSequence load does: absolute or relative to share.&quot;&quot;&quot;</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>     if not raw_path:</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>         return raw_path</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     if os.path.isabs(raw_path):</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>         return os.path.normpath(raw_path)</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     candidate = os.path.join(package_share_legged_controllers, raw_path)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     return os.path.normpath(candidate)</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> </span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a> </span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a> def _resolve_package_path(raw_path: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     if not raw_path:</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>         return raw_path</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>     if os.path.isabs(raw_path):</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>         return os.path.normpath(raw_path)</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>     return os.path.normpath(os.path.join(package_share_legged_controllers, raw_path))</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> </span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a> </span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a> VALID_PHASE_MODES = {&#x27;rl_with_csv&#x27;, &#x27;rl_imitation&#x27;}</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a> </span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> </span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a> class ActionSequenceManifest(NamedTuple):</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>     &quot;&quot;&quot;Validated action sequence manifest for launch-time dynamic worker setup.&quot;&quot;&quot;</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>     sequence_paths: List[str]</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     imitation_policies: List[str]</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a>     preload_imitation_policies: List[str]</span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>     rl_imitation_sequences: List[str]</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>     skipped_imitation_policies: List[str]</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a> </span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a> </span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a> def _load_yaml_file(path: str, description: str) -&gt; Dict[str, Any]:</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>     if yaml is None:</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>         raise RuntimeError(f&#x27;PyYAML is required to parse {description}; install python3-yaml.&#x27;)</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a> </span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>     with open(path, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;) as f:</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>         root = yaml.safe_load(f) or {}</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>     if not isinstance(root, dict):</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>         raise ValueError(f&#x27;{description} {path} must contain a YAML map.&#x27;)</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>     return root</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a> </span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a> </span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a> def _resolve_csv_path(raw_path: str, sequence_dir: str, package_share_legged_controllers: str) -&gt; str:</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>     if not raw_path:</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>         return raw_path</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>     if os.path.isabs(raw_path):</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>         return os.path.normpath(raw_path)</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a> </span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>     relative_to_sequence = os.path.normpath(os.path.join(sequence_dir, raw_path))</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a>     if os.path.isfile(relative_to_sequence):</span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a>         return relative_to_sequence</span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a> </span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     relative_to_share = os.path.normpath(os.path.join(package_share_legged_controllers, raw_path))</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     if os.path.isfile(relative_to_share):</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a>         return relative_to_share</span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a> </span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     return relative_to_sequence</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a> </span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a> </span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a> def _parse_sequence_yaml(path: str, package_share_legged_controllers: str) -&gt; Tuple[bool, str]:</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>     &quot;&quot;&quot;Validate sequence YAML and return (has_rl_imitation_phase, imitation_policy).&quot;&quot;&quot;</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>     root = _load_yaml_file(path, &#x27;action sequence&#x27;)</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a> </span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>     sequence = root.get(&#x27;sequence&#x27;) or {}</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>     if not isinstance(sequence, dict):</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>         raise ValueError(f&#x27;Action sequence {path} must contain sequence map.&#x27;)</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>     phases = sequence.get(&#x27;phases&#x27;) or []</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>     if not isinstance(phases, list) or not phases:</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>         raise ValueError(f&#x27;Action sequence {path} must contain non-empty sequence.phases list.&#x27;)</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a> </span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>     has_rl_imitation = False</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>     sequence_dir = os.path.dirname(path)</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>     for index, phase in enumerate(phases):</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>         if not isinstance(phase, dict):</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>             raise ValueError(f&#x27;Action sequence {path} phase[{index}] must be a map.&#x27;)</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a>         mode = str(phase.get(&#x27;mode&#x27;, &#x27;&#x27;)).strip()</span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>         phase_name = str(phase.get(&#x27;name&#x27;) or f&#x27;phase_{index}&#x27;)</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>         if mode not in VALID_PHASE_MODES:</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>             raise ValueError(</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>                 f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; has invalid mode {mode!r}; &quot;</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>                 f&#x27;expected one of {sorted(VALID_PHASE_MODES)}.&#x27;</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>             )</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a> </span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         if mode == &#x27;rl_imitation&#x27;:</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>             has_rl_imitation = True</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>             if phase.get(&#x27;csv&#x27;):</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>                 raise ValueError(f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode rl_imitation must not set csv.&quot;)</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>             if phase.get(&#x27;velocity_timeline&#x27;):</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>                 raise ValueError(</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>                     f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode rl_imitation does not support velocity_timeline.&quot;</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>                 )</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>             continue</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a> </span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         raw_csv = str(phase.get(&#x27;csv&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>         if not raw_csv:</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>             raise ValueError(f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; mode {mode} requires csv.&quot;)</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>         resolved_csv = _resolve_csv_path(raw_csv, sequence_dir, package_share_legged_controllers)</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>         if not os.path.isfile(resolved_csv):</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>             raise ValueError(</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>                 f&quot;Action sequence {path} phase &#x27;{phase_name}&#x27; csv is missing: &quot;</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>                 f&#x27;{raw_csv!r} (resolved: {resolved_csv!r})&#x27;</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>             )</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a>     raw_imitation = sequence.get(&#x27;imitation_policy&#x27;)</span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a>     if raw_imitation is None:</span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a>         raw_imitation = sequence.get(&#x27;imitation_policy_name&#x27;)</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a>     imitation_policy = &#x27;&#x27;</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>     if raw_imitation is not None:</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>         imitation_policy = str(raw_imitation).strip()</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a> </span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>     return has_rl_imitation, imitation_policy</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a> </span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a> </span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a> def _model_asset_exists(policy_dir: str, model_name: str) -&gt; bool:</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>     return any(os.path.isfile(os.path.join(policy_dir, model_name + ext)) for ext in (&#x27;.onnx&#x27;, &#x27;.trt&#x27;))</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a> </span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a> </span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a> def _validate_imitation_policy_assets(policy_name: str, robot_type: str, policy_root_path: str) -&gt; None:</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>     policy_dir = os.path.normpath(os.path.join(policy_root_path, robot_type, policy_name))</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     robot_cfg_path = os.path.join(policy_dir, &#x27;rl_config.yaml&#x27;)</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>     if not os.path.isfile(robot_cfg_path):</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>         raise ValueError(</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; is missing rl_config.yaml for robot_type &#x27;{robot_type}&#x27;: &quot;</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>             f&#x27;{robot_cfg_path}&#x27;</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a>         )</span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a> </span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a>     root = _load_yaml_file(robot_cfg_path, &#x27;imitation policy rl_config&#x27;)</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>     rc = root.get(&#x27;RobotCfg&#x27;) or {}</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     if not isinstance(rc, dict):</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; rl_config.yaml must contain RobotCfg map.&quot;)</span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a> </span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>     policy_type = str(rc.get(&#x27;policy_type&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>     if policy_type and policy_type != &#x27;rl_imitation&#x27;:</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>         raise ValueError(</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.policy_type must be &#x27;rl_imitation&#x27;, got {policy_type!r}.&quot;</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>         )</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a> </span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>     policy_model = str(rc.get(&#x27;policy_name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>     motion_model = str(rc.get(&#x27;motion_name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>     if not policy_model:</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.policy_name is missing.&quot;)</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>     if not motion_model:</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>         raise ValueError(f&quot;Imitation policy &#x27;{policy_name}&#x27; RobotCfg.motion_name is missing.&quot;)</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>     if not _model_asset_exists(policy_dir, policy_model):</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>         raise ValueError(</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; policy model asset is missing: &quot;</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>             f&#x27;{os.path.join(policy_dir, policy_model)}.(onnx|trt)&#x27;</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>         )</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>     if not _model_asset_exists(policy_dir, motion_model):</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>         raise ValueError(</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>             f&quot;Imitation policy &#x27;{policy_name}&#x27; motion model asset is missing: &quot;</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>             f&#x27;{os.path.join(policy_dir, motion_model)}.(onnx|trt)&#x27;</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>         )</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a> </span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a> </span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a> def _iter_keyboard_sequence_paths(config_path: str) -&gt; Iterable[str]:</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>     if yaml is None:</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>         raise RuntimeError(&#x27;PyYAML is required to parse keyboard action maps; install python3-yaml.&#x27;)</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>     with open(config_path, &#x27;r&#x27;, encoding=&#x27;utf-8&#x27;) as f:</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>         root: Dict[str, Any] = yaml.safe_load(f) or {}</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a> </span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>     cfg = root.get(&#x27;keyboard_actions&#x27;) or root</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     actions = cfg.get(&#x27;actions&#x27;) or []</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>     if not isinstance(actions, list):</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>         raise ValueError(f&#x27;Keyboard action map {config_path} must contain keyboard_actions.actions list.&#x27;)</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a>     for action in actions:</span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a>         if not isinstance(action, dict):</span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a>             continue</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>         raw = action.get(&#x27;sequence&#x27;) or action.get(&#x27;sequence_path&#x27;) or &#x27;&#x27;</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>         raw = str(raw).strip()</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>         if raw:</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>             yield raw</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a> </span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a> </span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a> def _normalize_combo_name(value: str) -&gt; str:</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>     return &#x27;&#x27;.join(ch for ch in str(value).strip().lower() if ch not in {&#x27;_&#x27;, &#x27;-&#x27;, &#x27; &#x27;})</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a> </span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a> </span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a> def _button_index(raw_name: str) -&gt; int:</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>     name = _normalize_combo_name(raw_name)</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a>     mapping = {</span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>         &#x27;a&#x27;: 0,</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>         &#x27;b&#x27;: 1,</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a>         &#x27;x&#x27;: 3,</span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>         &#x27;y&#x27;: 4,</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>         &#x27;lb&#x27;: 6,</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>         &#x27;l1&#x27;: 6,</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>         &#x27;rb&#x27;: 7,</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>         &#x27;r1&#x27;: 7,</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>         &#x27;lt&#x27;: 8,</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>         &#x27;ltbutton&#x27;: 8,</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>         &#x27;l2&#x27;: 8,</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>         &#x27;l2button&#x27;: 8,</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>         &#x27;rt&#x27;: 9,</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>         &#x27;rtbutton&#x27;: 9,</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>         &#x27;r2&#x27;: 9,</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>         &#x27;r2button&#x27;: 9,</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>         &#x27;back&#x27;: 10,</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>         &#x27;select&#x27;: 10,</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>         &#x27;start&#x27;: 11,</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>         &#x27;ls&#x27;: 13,</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>         &#x27;lsbutton&#x27;: 13,</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>         &#x27;l3&#x27;: 13,</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>         &#x27;rs&#x27;: 14,</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>         &#x27;rsbutton&#x27;: 14,</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>         &#x27;r3&#x27;: 14,</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>     }</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a>     return mapping.get(name, -1)</span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a> </span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a> </span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a> def _dpad_axis(raw_name: str) -&gt; int:</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>     name = _normalize_combo_name(raw_name)</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>     if name in {&#x27;dpadlr&#x27;, &#x27;dpadx&#x27;, &#x27;dirlr&#x27;, &#x27;hatx&#x27;}:</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>         return 6</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>     if name in {&#x27;dpadud&#x27;, &#x27;dpady&#x27;, &#x27;dirud&#x27;, &#x27;haty&#x27;}:</span>
+<span id="A-L232" class="line"><a href="#A-L232"> 232</a>         return 7</span>
+<span id="A-L233" class="line"><a href="#A-L233"> 233</a>     return -1</span>
+<span id="A-L234" class="line"><a href="#A-L234"> 234</a> </span>
+<span id="A-L235" class="line"><a href="#A-L235"> 235</a> </span>
+<span id="A-L236" class="line"><a href="#A-L236"> 236</a> def _axis_sign(raw_direction: str, axis_index: int) -&gt; int:</span>
+<span id="A-L237" class="line"><a href="#A-L237"> 237</a>     direction = _normalize_combo_name(raw_direction)</span>
+<span id="A-L238" class="line"><a href="#A-L238"> 238</a>     if direction in {&#x27;positive&#x27;, &#x27;pos&#x27;, &#x27;+&#x27;}:</span>
+<span id="A-L239" class="line"><a href="#A-L239"> 239</a>         return 1</span>
+<span id="A-L240" class="line"><a href="#A-L240"> 240</a>     if direction in {&#x27;negative&#x27;, &#x27;neg&#x27;, &#x27;-&#x27;}:</span>
+<span id="A-L241" class="line"><a href="#A-L241"> 241</a>         return -1</span>
+<span id="A-L242" class="line"><a href="#A-L242"> 242</a>     if direction == &#x27;up&#x27; and axis_index == 7:</span>
+<span id="A-L243" class="line"><a href="#A-L243"> 243</a>         return 1</span>
+<span id="A-L244" class="line"><a href="#A-L244"> 244</a>     if direction == &#x27;down&#x27; and axis_index == 7:</span>
+<span id="A-L245" class="line"><a href="#A-L245"> 245</a>         return -1</span>
+<span id="A-L246" class="line"><a href="#A-L246"> 246</a>     if direction == &#x27;left&#x27; and axis_index == 6:</span>
+<span id="A-L247" class="line"><a href="#A-L247"> 247</a>         return 1</span>
+<span id="A-L248" class="line"><a href="#A-L248"> 248</a>     if direction == &#x27;right&#x27; and axis_index == 6:</span>
+<span id="A-L249" class="line"><a href="#A-L249"> 249</a>         return -1</span>
+<span id="A-L250" class="line"><a href="#A-L250"> 250</a>     return 0</span>
+<span id="A-L251" class="line"><a href="#A-L251"> 251</a> </span>
+<span id="A-L252" class="line"><a href="#A-L252"> 252</a> </span>
+<span id="A-L253" class="line"><a href="#A-L253"> 253</a> def _dpad_axis_for_direction(raw_direction: str) -&gt; str:</span>
+<span id="A-L254" class="line"><a href="#A-L254"> 254</a>     direction = _normalize_combo_name(raw_direction)</span>
+<span id="A-L255" class="line"><a href="#A-L255"> 255</a>     if direction in {&#x27;up&#x27;, &#x27;down&#x27;}:</span>
+<span id="A-L256" class="line"><a href="#A-L256"> 256</a>         return &#x27;DPad_ud&#x27;</span>
+<span id="A-L257" class="line"><a href="#A-L257"> 257</a>     if direction in {&#x27;left&#x27;, &#x27;right&#x27;}:</span>
+<span id="A-L258" class="line"><a href="#A-L258"> 258</a>         return &#x27;DPad_lr&#x27;</span>
+<span id="A-L259" class="line"><a href="#A-L259"> 259</a>     return &#x27;&#x27;</span>
+<span id="A-L260" class="line"><a href="#A-L260"> 260</a> </span>
+<span id="A-L261" class="line"><a href="#A-L261"> 261</a> </span>
+<span id="A-L262" class="line"><a href="#A-L262"> 262</a> def _as_string_list(value: Any) -&gt; List[str]:</span>
+<span id="A-L263" class="line"><a href="#A-L263"> 263</a>     if value is None:</span>
+<span id="A-L264" class="line"><a href="#A-L264"> 264</a>         return []</span>
+<span id="A-L265" class="line"><a href="#A-L265"> 265</a>     if isinstance(value, str):</span>
+<span id="A-L266" class="line"><a href="#A-L266"> 266</a>         return [value.strip()]</span>
+<span id="A-L267" class="line"><a href="#A-L267"> 267</a>     if isinstance(value, list):</span>
+<span id="A-L268" class="line"><a href="#A-L268"> 268</a>         out: List[str] = []</span>
+<span id="A-L269" class="line"><a href="#A-L269"> 269</a>         for item in value:</span>
+<span id="A-L270" class="line"><a href="#A-L270"> 270</a>             if not isinstance(item, str):</span>
+<span id="A-L271" class="line"><a href="#A-L271"> 271</a>                 raise ValueError(&#x27;combo button entries must be strings&#x27;)</span>
+<span id="A-L272" class="line"><a href="#A-L272"> 272</a>             out.append(item.strip())</span>
+<span id="A-L273" class="line"><a href="#A-L273"> 273</a>         return out</span>
+<span id="A-L274" class="line"><a href="#A-L274"> 274</a>     raise ValueError(&#x27;combo buttons must be a string or list&#x27;)</span>
+<span id="A-L275" class="line"><a href="#A-L275"> 275</a> </span>
+<span id="A-L276" class="line"><a href="#A-L276"> 276</a> </span>
+<span id="A-L277" class="line"><a href="#A-L277"> 277</a> def _canonical_joystick_combo(combo: Any, action_name: str, kind: str = &#x27;Joystick imitation action&#x27;) -&gt; str:</span>
+<span id="A-L278" class="line"><a href="#A-L278"> 278</a>     if not isinstance(combo, dict):</span>
+<span id="A-L279" class="line"><a href="#A-L279"> 279</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; needs combo map.&quot;)</span>
+<span id="A-L280" class="line"><a href="#A-L280"> 280</a> </span>
+<span id="A-L281" class="line"><a href="#A-L281"> 281</a>     buttons: List[int] = []</span>
+<span id="A-L282" class="line"><a href="#A-L282"> 282</a>     axes: List[Tuple[int, int]] = []</span>
+<span id="A-L283" class="line"><a href="#A-L283"> 283</a> </span>
+<span id="A-L284" class="line"><a href="#A-L284"> 284</a>     for button_name in _as_string_list(combo.get(&#x27;buttons&#x27;)):</span>
+<span id="A-L285" class="line"><a href="#A-L285"> 285</a>         index = _button_index(button_name)</span>
+<span id="A-L286" class="line"><a href="#A-L286"> 286</a>         if index &lt; 0:</span>
+<span id="A-L287" class="line"><a href="#A-L287"> 287</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has unknown button {button_name!r}.&quot;)</span>
+<span id="A-L288" class="line"><a href="#A-L288"> 288</a>         buttons.append(index)</span>
+<span id="A-L289" class="line"><a href="#A-L289"> 289</a> </span>
+<span id="A-L290" class="line"><a href="#A-L290"> 290</a>     if combo.get(&#x27;dpad&#x27;) is not None:</span>
+<span id="A-L291" class="line"><a href="#A-L291"> 291</a>         direction = str(combo.get(&#x27;dpad&#x27;)).strip()</span>
+<span id="A-L292" class="line"><a href="#A-L292"> 292</a>         axis_name = _dpad_axis_for_direction(direction)</span>
+<span id="A-L293" class="line"><a href="#A-L293"> 293</a>         axis_index = _dpad_axis(axis_name)</span>
+<span id="A-L294" class="line"><a href="#A-L294"> 294</a>         sign = _axis_sign(direction, axis_index)</span>
+<span id="A-L295" class="line"><a href="#A-L295"> 295</a>         if axis_index &lt; 0 or sign == 0:</span>
+<span id="A-L296" class="line"><a href="#A-L296"> 296</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has invalid dpad direction {direction!r}.&quot;)</span>
+<span id="A-L297" class="line"><a href="#A-L297"> 297</a>         axes.append((axis_index, sign))</span>
+<span id="A-L298" class="line"><a href="#A-L298"> 298</a> </span>
+<span id="A-L299" class="line"><a href="#A-L299"> 299</a>     raw_axes = combo.get(&#x27;axes&#x27;) or []</span>
+<span id="A-L300" class="line"><a href="#A-L300"> 300</a>     if not isinstance(raw_axes, list):</span>
+<span id="A-L301" class="line"><a href="#A-L301"> 301</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo.axes must be a list.&quot;)</span>
+<span id="A-L302" class="line"><a href="#A-L302"> 302</a>     for axis in raw_axes:</span>
+<span id="A-L303" class="line"><a href="#A-L303"> 303</a>         if not isinstance(axis, dict):</span>
+<span id="A-L304" class="line"><a href="#A-L304"> 304</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo.axes entries must be maps.&quot;)</span>
+<span id="A-L305" class="line"><a href="#A-L305"> 305</a>         axis_name = str(axis.get(&#x27;name&#x27;) or axis.get(&#x27;axis&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L306" class="line"><a href="#A-L306"> 306</a>         axis_index = _dpad_axis(axis_name)</span>
+<span id="A-L307" class="line"><a href="#A-L307"> 307</a>         if axis_index &lt; 0:</span>
+<span id="A-L308" class="line"><a href="#A-L308"> 308</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; has unknown D-pad axis {axis_name!r}.&quot;)</span>
+<span id="A-L309" class="line"><a href="#A-L309"> 309</a>         direction = str(axis.get(&#x27;direction&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L310" class="line"><a href="#A-L310"> 310</a>         sign = _axis_sign(direction, axis_index)</span>
+<span id="A-L311" class="line"><a href="#A-L311"> 311</a>         if sign == 0:</span>
+<span id="A-L312" class="line"><a href="#A-L312"> 312</a>             raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; axis {axis_name!r} has invalid direction {direction!r}.&quot;)</span>
+<span id="A-L313" class="line"><a href="#A-L313"> 313</a>         axes.append((axis_index, sign))</span>
+<span id="A-L314" class="line"><a href="#A-L314"> 314</a> </span>
+<span id="A-L315" class="line"><a href="#A-L315"> 315</a>     if not buttons and not axes:</span>
+<span id="A-L316" class="line"><a href="#A-L316"> 316</a>         raise ValueError(f&quot;{kind} &#x27;{action_name}&#x27; combo has no requirements.&quot;)</span>
+<span id="A-L317" class="line"><a href="#A-L317"> 317</a> </span>
+<span id="A-L318" class="line"><a href="#A-L318"> 318</a>     parts = [f&#x27;b{index}&#x27; for index in sorted(buttons)]</span>
+<span id="A-L319" class="line"><a href="#A-L319"> 319</a>     parts.extend(f&#x27;a{index}{&quot;+&quot; if sign &gt; 0 else &quot;-&quot;}&#x27; for index, sign in sorted(axes))</span>
+<span id="A-L320" class="line"><a href="#A-L320"> 320</a>     return &#x27;|&#x27;.join(parts)</span>
+<span id="A-L321" class="line"><a href="#A-L321"> 321</a> </span>
+<span id="A-L322" class="line"><a href="#A-L322"> 322</a> </span>
+<span id="A-L323" class="line"><a href="#A-L323"> 323</a> def _iter_joystick_imitation_policy_entries(config_path: str) -&gt; Iterable[str]:</span>
+<span id="A-L324" class="line"><a href="#A-L324"> 324</a>     root = _load_yaml_file(config_path, &#x27;joystick imitation action map&#x27;)</span>
+<span id="A-L325" class="line"><a href="#A-L325"> 325</a>     cfg = root.get(&#x27;joystick_imitation_actions&#x27;) or root</span>
+<span id="A-L326" class="line"><a href="#A-L326"> 326</a>     if not isinstance(cfg, dict):</span>
+<span id="A-L327" class="line"><a href="#A-L327"> 327</a>         raise ValueError(f&#x27;Joystick imitation map {config_path} must contain a YAML map.&#x27;)</span>
+<span id="A-L328" class="line"><a href="#A-L328"> 328</a>     actions = cfg.get(&#x27;actions&#x27;) or []</span>
+<span id="A-L329" class="line"><a href="#A-L329"> 329</a>     if not isinstance(actions, list):</span>
+<span id="A-L330" class="line"><a href="#A-L330"> 330</a>         raise ValueError(f&#x27;Joystick imitation map {config_path} must contain joystick_imitation_actions.actions list.&#x27;)</span>
+<span id="A-L331" class="line"><a href="#A-L331"> 331</a> </span>
+<span id="A-L332" class="line"><a href="#A-L332"> 332</a>     seen_names: Set[str] = set()</span>
+<span id="A-L333" class="line"><a href="#A-L333"> 333</a>     seen_combos: Set[str] = set()</span>
+<span id="A-L334" class="line"><a href="#A-L334"> 334</a>     for index, action in enumerate(actions):</span>
+<span id="A-L335" class="line"><a href="#A-L335"> 335</a>         if not isinstance(action, dict):</span>
+<span id="A-L336" class="line"><a href="#A-L336"> 336</a>             raise ValueError(f&#x27;Joystick imitation map {config_path} action[{index}] must be a map.&#x27;)</span>
+<span id="A-L337" class="line"><a href="#A-L337"> 337</a>         name = str(action.get(&#x27;name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L338" class="line"><a href="#A-L338"> 338</a>         if not name:</span>
+<span id="A-L339" class="line"><a href="#A-L339"> 339</a>             raise ValueError(f&#x27;Joystick imitation map {config_path} action[{index}] needs non-empty name.&#x27;)</span>
+<span id="A-L340" class="line"><a href="#A-L340"> 340</a>         if name in seen_names:</span>
+<span id="A-L341" class="line"><a href="#A-L341"> 341</a>             raise ValueError(f&quot;Joystick imitation map {config_path} has duplicate action name &#x27;{name}&#x27;.&quot;)</span>
+<span id="A-L342" class="line"><a href="#A-L342"> 342</a>         seen_names.add(name)</span>
+<span id="A-L343" class="line"><a href="#A-L343"> 343</a> </span>
+<span id="A-L344" class="line"><a href="#A-L344"> 344</a>         canonical_combo = _canonical_joystick_combo(action.get(&#x27;combo&#x27;), name)</span>
+<span id="A-L345" class="line"><a href="#A-L345"> 345</a>         if canonical_combo in seen_combos:</span>
+<span id="A-L346" class="line"><a href="#A-L346"> 346</a>             raise ValueError(f&quot;Joystick imitation map {config_path} has duplicate combo for action &#x27;{name}&#x27;.&quot;)</span>
+<span id="A-L347" class="line"><a href="#A-L347"> 347</a>         seen_combos.add(canonical_combo)</span>
+<span id="A-L348" class="line"><a href="#A-L348"> 348</a> </span>
+<span id="A-L349" class="line"><a href="#A-L349"> 349</a>         if not bool(action.get(&#x27;enabled&#x27;, False)):</span>
+<span id="A-L350" class="line"><a href="#A-L350"> 350</a>             continue</span>
+<span id="A-L351" class="line"><a href="#A-L351"> 351</a>         policy = str(action.get(&#x27;policy&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L352" class="line"><a href="#A-L352"> 352</a>         if not policy:</span>
+<span id="A-L353" class="line"><a href="#A-L353"> 353</a>             raise ValueError(f&quot;Joystick imitation action &#x27;{name}&#x27; is enabled but policy is empty.&quot;)</span>
+<span id="A-L354" class="line"><a href="#A-L354"> 354</a>         yield policy</span>
+<span id="A-L355" class="line"><a href="#A-L355"> 355</a> </span>
+<span id="A-L356" class="line"><a href="#A-L356"> 356</a> </span>
+<span id="A-L357" class="line"><a href="#A-L357"> 357</a> def _validate_joystick_sequence_yaml(</span>
+<span id="A-L358" class="line"><a href="#A-L358"> 358</a>     raw_path: str,</span>
+<span id="A-L359" class="line"><a href="#A-L359"> 359</a>     package_share_legged_controllers: str,</span>
+<span id="A-L360" class="line"><a href="#A-L360"> 360</a>     action_name: str,</span>
+<span id="A-L361" class="line"><a href="#A-L361"> 361</a> ) -&gt; None:</span>
+<span id="A-L362" class="line"><a href="#A-L362"> 362</a>     resolved_sequence = resolve_action_sequence_yaml_path(raw_path, package_share_legged_controllers)</span>
+<span id="A-L363" class="line"><a href="#A-L363"> 363</a>     if not resolved_sequence or not os.path.isfile(resolved_sequence):</span>
+<span id="A-L364" class="line"><a href="#A-L364"> 364</a>         raise ValueError(</span>
+<span id="A-L365" class="line"><a href="#A-L365"> 365</a>             f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence is missing: &quot;</span>
+<span id="A-L366" class="line"><a href="#A-L366"> 366</a>             f&#x27;{raw_path!r} (resolved: {resolved_sequence!r})&#x27;</span>
+<span id="A-L367" class="line"><a href="#A-L367"> 367</a>         )</span>
+<span id="A-L368" class="line"><a href="#A-L368"> 368</a> </span>
+<span id="A-L369" class="line"><a href="#A-L369"> 369</a>     root = _load_yaml_file(resolved_sequence, &#x27;joystick sequence action sequence&#x27;)</span>
+<span id="A-L370" class="line"><a href="#A-L370"> 370</a>     sequence = root.get(&#x27;sequence&#x27;) or {}</span>
+<span id="A-L371" class="line"><a href="#A-L371"> 371</a>     if not isinstance(sequence, dict):</span>
+<span id="A-L372" class="line"><a href="#A-L372"> 372</a>         raise ValueError(f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence {resolved_sequence} must contain map.&quot;)</span>
+<span id="A-L373" class="line"><a href="#A-L373"> 373</a>     phases = sequence.get(&#x27;phases&#x27;) or []</span>
+<span id="A-L374" class="line"><a href="#A-L374"> 374</a>     if not isinstance(phases, list) or not phases:</span>
+<span id="A-L375" class="line"><a href="#A-L375"> 375</a>         raise ValueError(</span>
+<span id="A-L376" class="line"><a href="#A-L376"> 376</a>             f&quot;Joystick sequence action &#x27;{action_name}&#x27; sequence {resolved_sequence} must contain &quot;</span>
+<span id="A-L377" class="line"><a href="#A-L377"> 377</a>             &#x27;non-empty sequence.phases list.&#x27;</span>
+<span id="A-L378" class="line"><a href="#A-L378"> 378</a>         )</span>
+<span id="A-L379" class="line"><a href="#A-L379"> 379</a> </span>
+<span id="A-L380" class="line"><a href="#A-L380"> 380</a>     sequence_dir = os.path.dirname(resolved_sequence)</span>
+<span id="A-L381" class="line"><a href="#A-L381"> 381</a>     for index, phase in enumerate(phases):</span>
+<span id="A-L382" class="line"><a href="#A-L382"> 382</a>         if not isinstance(phase, dict):</span>
+<span id="A-L383" class="line"><a href="#A-L383"> 383</a>             raise ValueError(f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase[{index}] must be a map.&quot;)</span>
+<span id="A-L384" class="line"><a href="#A-L384"> 384</a>         phase_name = str(phase.get(&#x27;name&#x27;) or f&#x27;phase_{index}&#x27;)</span>
+<span id="A-L385" class="line"><a href="#A-L385"> 385</a>         mode = str(phase.get(&#x27;mode&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L386" class="line"><a href="#A-L386"> 386</a>         if mode != &#x27;rl_with_csv&#x27;:</span>
+<span id="A-L387" class="line"><a href="#A-L387"> 387</a>             raise ValueError(</span>
+<span id="A-L388" class="line"><a href="#A-L388"> 388</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; must use mode &#x27;rl_with_csv&#x27;, &quot;</span>
+<span id="A-L389" class="line"><a href="#A-L389"> 389</a>                 f&#x27;got {mode!r}.&#x27;</span>
+<span id="A-L390" class="line"><a href="#A-L390"> 390</a>             )</span>
+<span id="A-L391" class="line"><a href="#A-L391"> 391</a>         raw_csv = str(phase.get(&#x27;csv&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L392" class="line"><a href="#A-L392"> 392</a>         if not raw_csv:</span>
+<span id="A-L393" class="line"><a href="#A-L393"> 393</a>             raise ValueError(</span>
+<span id="A-L394" class="line"><a href="#A-L394"> 394</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; mode rl_with_csv requires csv.&quot;</span>
+<span id="A-L395" class="line"><a href="#A-L395"> 395</a>             )</span>
+<span id="A-L396" class="line"><a href="#A-L396"> 396</a>         resolved_csv = _resolve_csv_path(raw_csv, sequence_dir, package_share_legged_controllers)</span>
+<span id="A-L397" class="line"><a href="#A-L397"> 397</a>         if not os.path.isfile(resolved_csv):</span>
+<span id="A-L398" class="line"><a href="#A-L398"> 398</a>             raise ValueError(</span>
+<span id="A-L399" class="line"><a href="#A-L399"> 399</a>                 f&quot;Joystick sequence action &#x27;{action_name}&#x27; phase &#x27;{phase_name}&#x27; csv is missing: &quot;</span>
+<span id="A-L400" class="line"><a href="#A-L400"> 400</a>                 f&#x27;{raw_csv!r} (resolved: {resolved_csv!r})&#x27;</span>
+<span id="A-L401" class="line"><a href="#A-L401"> 401</a>             )</span>
+<span id="A-L402" class="line"><a href="#A-L402"> 402</a> </span>
+<span id="A-L403" class="line"><a href="#A-L403"> 403</a> </span>
+<span id="A-L404" class="line"><a href="#A-L404"> 404</a> def _iter_joystick_sequence_paths(config_path: str, package_share_legged_controllers: str) -&gt; Iterable[str]:</span>
+<span id="A-L405" class="line"><a href="#A-L405"> 405</a>     root = _load_yaml_file(config_path, &#x27;joystick sequence action map&#x27;)</span>
+<span id="A-L406" class="line"><a href="#A-L406"> 406</a>     cfg = root.get(&#x27;joystick_sequence_actions&#x27;) or root</span>
+<span id="A-L407" class="line"><a href="#A-L407"> 407</a>     if not isinstance(cfg, dict):</span>
+<span id="A-L408" class="line"><a href="#A-L408"> 408</a>         raise ValueError(f&#x27;Joystick sequence map {config_path} must contain a YAML map.&#x27;)</span>
+<span id="A-L409" class="line"><a href="#A-L409"> 409</a>     actions = cfg.get(&#x27;actions&#x27;) or []</span>
+<span id="A-L410" class="line"><a href="#A-L410"> 410</a>     if not isinstance(actions, list):</span>
+<span id="A-L411" class="line"><a href="#A-L411"> 411</a>         raise ValueError(f&#x27;Joystick sequence map {config_path} must contain joystick_sequence_actions.actions list.&#x27;)</span>
+<span id="A-L412" class="line"><a href="#A-L412"> 412</a> </span>
+<span id="A-L413" class="line"><a href="#A-L413"> 413</a>     seen_names: Set[str] = set()</span>
+<span id="A-L414" class="line"><a href="#A-L414"> 414</a>     seen_combos: Set[str] = set()</span>
+<span id="A-L415" class="line"><a href="#A-L415"> 415</a>     for index, action in enumerate(actions):</span>
+<span id="A-L416" class="line"><a href="#A-L416"> 416</a>         if not isinstance(action, dict):</span>
+<span id="A-L417" class="line"><a href="#A-L417"> 417</a>             raise ValueError(f&#x27;Joystick sequence map {config_path} action[{index}] must be a map.&#x27;)</span>
+<span id="A-L418" class="line"><a href="#A-L418"> 418</a>         name = str(action.get(&#x27;name&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L419" class="line"><a href="#A-L419"> 419</a>         if not name:</span>
+<span id="A-L420" class="line"><a href="#A-L420"> 420</a>             raise ValueError(f&#x27;Joystick sequence map {config_path} action[{index}] needs non-empty name.&#x27;)</span>
+<span id="A-L421" class="line"><a href="#A-L421"> 421</a>         if name in seen_names:</span>
+<span id="A-L422" class="line"><a href="#A-L422"> 422</a>             raise ValueError(f&quot;Joystick sequence map {config_path} has duplicate action name &#x27;{name}&#x27;.&quot;)</span>
+<span id="A-L423" class="line"><a href="#A-L423"> 423</a>         seen_names.add(name)</span>
+<span id="A-L424" class="line"><a href="#A-L424"> 424</a> </span>
+<span id="A-L425" class="line"><a href="#A-L425"> 425</a>         canonical_combo = _canonical_joystick_combo(action.get(&#x27;combo&#x27;), name, &#x27;Joystick sequence action&#x27;)</span>
+<span id="A-L426" class="line"><a href="#A-L426"> 426</a>         if canonical_combo in seen_combos:</span>
+<span id="A-L427" class="line"><a href="#A-L427"> 427</a>             raise ValueError(f&quot;Joystick sequence map {config_path} has duplicate combo for action &#x27;{name}&#x27;.&quot;)</span>
+<span id="A-L428" class="line"><a href="#A-L428"> 428</a>         seen_combos.add(canonical_combo)</span>
+<span id="A-L429" class="line"><a href="#A-L429"> 429</a> </span>
+<span id="A-L430" class="line"><a href="#A-L430"> 430</a>         if not bool(action.get(&#x27;enabled&#x27;, False)):</span>
+<span id="A-L431" class="line"><a href="#A-L431"> 431</a>             continue</span>
+<span id="A-L432" class="line"><a href="#A-L432"> 432</a>         raw = str(action.get(&#x27;sequence&#x27;) or action.get(&#x27;sequence_path&#x27;) or &#x27;&#x27;).strip()</span>
+<span id="A-L433" class="line"><a href="#A-L433"> 433</a>         if not raw:</span>
+<span id="A-L434" class="line"><a href="#A-L434"> 434</a>             raise ValueError(f&quot;Joystick sequence action &#x27;{name}&#x27; is enabled but sequence is empty.&quot;)</span>
+<span id="A-L435" class="line"><a href="#A-L435"> 435</a>         _validate_joystick_sequence_yaml(raw, package_share_legged_controllers, name)</span>
+<span id="A-L436" class="line"><a href="#A-L436"> 436</a>         yield raw</span>
+<span id="A-L437" class="line"><a href="#A-L437"> 437</a> </span>
+<span id="A-L438" class="line"><a href="#A-L438"> 438</a> </span>
+<span id="A-L439" class="line"><a href="#A-L439"> 439</a> def collect_dynamic_imitation_policies(</span>
+<span id="A-L440" class="line"><a href="#A-L440"> 440</a>     *,</span>
+<span id="A-L441" class="line"><a href="#A-L441"> 441</a>     keyboard_action_enabled: bool,</span>
+<span id="A-L442" class="line"><a href="#A-L442"> 442</a>     keyboard_action_config_path: str,</span>
+<span id="A-L443" class="line"><a href="#A-L443"> 443</a>     package_share_legged_controllers: str,</span>
+<span id="A-L444" class="line"><a href="#A-L444"> 444</a>     joystick_imitation_enabled: bool = False,</span>
+<span id="A-L445" class="line"><a href="#A-L445"> 445</a>     joystick_imitation_config_path: str = &#x27;&#x27;,</span>
+<span id="A-L446" class="line"><a href="#A-L446"> 446</a>     joystick_sequence_enabled: bool = False,</span>
+<span id="A-L447" class="line"><a href="#A-L447"> 447</a>     joystick_sequence_config_path: str = &#x27;&#x27;,</span>
+<span id="A-L448" class="line"><a href="#A-L448"> 448</a> ) -&gt; List[str]:</span>
+<span id="A-L449" class="line"><a href="#A-L449"> 449</a>     &quot;&quot;&quot;Return sorted unique imitation policies referenced by enabled keyboard/joystick sequence maps.&quot;&quot;&quot;</span>
+<span id="A-L450" class="line"><a href="#A-L450"> 450</a>     return collect_action_sequence_manifest(</span>
+<span id="A-L451" class="line"><a href="#A-L451"> 451</a>         keyboard_action_enabled=keyboard_action_enabled,</span>
+<span id="A-L452" class="line"><a href="#A-L452"> 452</a>         keyboard_action_config_path=keyboard_action_config_path,</span>
+<span id="A-L453" class="line"><a href="#A-L453"> 453</a>         joystick_imitation_enabled=joystick_imitation_enabled,</span>
+<span id="A-L454" class="line"><a href="#A-L454"> 454</a>         joystick_imitation_config_path=joystick_imitation_config_path,</span>
+<span id="A-L455" class="line"><a href="#A-L455"> 455</a>         joystick_sequence_enabled=joystick_sequence_enabled,</span>
+<span id="A-L456" class="line"><a href="#A-L456"> 456</a>         joystick_sequence_config_path=joystick_sequence_config_path,</span>
+<span id="A-L457" class="line"><a href="#A-L457"> 457</a>         package_share_legged_controllers=package_share_legged_controllers,</span>
+<span id="A-L458" class="line"><a href="#A-L458"> 458</a>     ).imitation_policies</span>
+<span id="A-L459" class="line"><a href="#A-L459"> 459</a> </span>
+<span id="A-L460" class="line"><a href="#A-L460"> 460</a> </span>
+<span id="A-L461" class="line"><a href="#A-L461"> 461</a> def collect_action_sequence_manifest(</span>
+<span id="A-L462" class="line"><a href="#A-L462"> 462</a>     *,</span>
+<span id="A-L463" class="line"><a href="#A-L463"> 463</a>     keyboard_action_enabled: bool,</span>
+<span id="A-L464" class="line"><a href="#A-L464"> 464</a>     keyboard_action_config_path: str,</span>
+<span id="A-L465" class="line"><a href="#A-L465"> 465</a>     package_share_legged_controllers: str,</span>
+<span id="A-L466" class="line"><a href="#A-L466"> 466</a>     joystick_imitation_enabled: bool = False,</span>
+<span id="A-L467" class="line"><a href="#A-L467"> 467</a>     joystick_imitation_config_path: str = &#x27;&#x27;,</span>
+<span id="A-L468" class="line"><a href="#A-L468"> 468</a>     joystick_sequence_enabled: bool = False,</span>
+<span id="A-L469" class="line"><a href="#A-L469"> 469</a>     joystick_sequence_config_path: str = &#x27;&#x27;,</span>
+<span id="A-L470" class="line"><a href="#A-L470"> 470</a>     robot_type: str = &#x27;&#x27;,</span>
+<span id="A-L471" class="line"><a href="#A-L471"> 471</a>     policy_root_path: str = &#x27;&#x27;,</span>
+<span id="A-L472" class="line"><a href="#A-L472"> 472</a> ) -&gt; ActionSequenceManifest:</span>
+<span id="A-L473" class="line"><a href="#A-L473"> 473</a>     &quot;&quot;&quot;Validate enabled action maps and collect policies that should be preloaded for dynamic imitation.&quot;&quot;&quot;</span>
+<span id="A-L474" class="line"><a href="#A-L474"> 474</a>     policies: Set[str] = set()</span>
+<span id="A-L475" class="line"><a href="#A-L475"> 475</a>     sequence_paths: List[str] = []</span>
+<span id="A-L476" class="line"><a href="#A-L476"> 476</a>     rl_imitation_sequences: List[str] = []</span>
+<span id="A-L477" class="line"><a href="#A-L477"> 477</a> </span>
+<span id="A-L478" class="line"><a href="#A-L478"> 478</a>     if keyboard_action_enabled:</span>
+<span id="A-L479" class="line"><a href="#A-L479"> 479</a>         resolved_map = _resolve_package_path(keyboard_action_config_path, package_share_legged_controllers)</span>
+<span id="A-L480" class="line"><a href="#A-L480"> 480</a>         if not resolved_map or not os.path.isfile(resolved_map):</span>
+<span id="A-L481" class="line"><a href="#A-L481"> 481</a>             raise ValueError(f&#x27;keyboard_action_enabled but map is missing: {keyboard_action_config_path!r}&#x27;)</span>
+<span id="A-L482" class="line"><a href="#A-L482"> 482</a>         sequence_paths.extend(_iter_keyboard_sequence_paths(resolved_map))</span>
+<span id="A-L483" class="line"><a href="#A-L483"> 483</a> </span>
+<span id="A-L484" class="line"><a href="#A-L484"> 484</a>     if joystick_imitation_enabled:</span>
+<span id="A-L485" class="line"><a href="#A-L485"> 485</a>         resolved_map = _resolve_package_path(joystick_imitation_config_path, package_share_legged_controllers)</span>
+<span id="A-L486" class="line"><a href="#A-L486"> 486</a>         if not resolved_map or not os.path.isfile(resolved_map):</span>
+<span id="A-L487" class="line"><a href="#A-L487"> 487</a>             raise ValueError(f&#x27;joystick_imitation_enabled but map is missing: {joystick_imitation_config_path!r}&#x27;)</span>
+<span id="A-L488" class="line"><a href="#A-L488"> 488</a>         for policy in _iter_joystick_imitation_policy_entries(resolved_map):</span>
+<span id="A-L489" class="line"><a href="#A-L489"> 489</a>             policies.add(policy)</span>
+<span id="A-L490" class="line"><a href="#A-L490"> 490</a> </span>
+<span id="A-L491" class="line"><a href="#A-L491"> 491</a>     if joystick_sequence_enabled:</span>
+<span id="A-L492" class="line"><a href="#A-L492"> 492</a>         resolved_map = _resolve_package_path(joystick_sequence_config_path, package_share_legged_controllers)</span>
+<span id="A-L493" class="line"><a href="#A-L493"> 493</a>         if not resolved_map or not os.path.isfile(resolved_map):</span>
+<span id="A-L494" class="line"><a href="#A-L494"> 494</a>             raise ValueError(f&#x27;joystick_sequence_enabled but map is missing: {joystick_sequence_config_path!r}&#x27;)</span>
+<span id="A-L495" class="line"><a href="#A-L495"> 495</a>         sequence_paths.extend(_iter_joystick_sequence_paths(resolved_map, package_share_legged_controllers))</span>
+<span id="A-L496" class="line"><a href="#A-L496"> 496</a> </span>
+<span id="A-L497" class="line"><a href="#A-L497"> 497</a>     for raw_sequence_path in sequence_paths:</span>
+<span id="A-L498" class="line"><a href="#A-L498"> 498</a>         resolved_sequence = resolve_action_sequence_yaml_path(raw_sequence_path, package_share_legged_controllers)</span>
+<span id="A-L499" class="line"><a href="#A-L499"> 499</a>         if not resolved_sequence or not os.path.isfile(resolved_sequence):</span>
+<span id="A-L500" class="line"><a href="#A-L500"> 500</a>             raise ValueError(</span>
+<span id="A-L501" class="line"><a href="#A-L501"> 501</a>                 f&#x27;action sequence referenced by keyboard/joystick map is missing: &#x27;</span>
+<span id="A-L502" class="line"><a href="#A-L502"> 502</a>                 f&#x27;{raw_sequence_path!r} (resolved: {resolved_sequence!r})&#x27;</span>
+<span id="A-L503" class="line"><a href="#A-L503"> 503</a>             )</span>
+<span id="A-L504" class="line"><a href="#A-L504"> 504</a>         has_imitation, policy = _parse_sequence_yaml(resolved_sequence, package_share_legged_controllers)</span>
+<span id="A-L505" class="line"><a href="#A-L505"> 505</a>         if has_imitation:</span>
+<span id="A-L506" class="line"><a href="#A-L506"> 506</a>             if not policy:</span>
+<span id="A-L507" class="line"><a href="#A-L507"> 507</a>                 raise ValueError(</span>
+<span id="A-L508" class="line"><a href="#A-L508"> 508</a>                     f&#x27;Action sequence {resolved_sequence} has rl_imitation phase(s) but &#x27;</span>
+<span id="A-L509" class="line"><a href="#A-L509"> 509</a>                     &#x27;sequence.imitation_policy is missing.&#x27;</span>
+<span id="A-L510" class="line"><a href="#A-L510"> 510</a>                 )</span>
+<span id="A-L511" class="line"><a href="#A-L511"> 511</a>             policies.add(policy)</span>
+<span id="A-L512" class="line"><a href="#A-L512"> 512</a>             rl_imitation_sequences.append(resolved_sequence)</span>
+<span id="A-L513" class="line"><a href="#A-L513"> 513</a> </span>
+<span id="A-L514" class="line"><a href="#A-L514"> 514</a>     sorted_policies = sorted(policies)</span>
+<span id="A-L515" class="line"><a href="#A-L515"> 515</a>     skipped_policies: List[str] = []</span>
+<span id="A-L516" class="line"><a href="#A-L516"> 516</a>     if sorted_policies and robot_type and policy_root_path:</span>
+<span id="A-L517" class="line"><a href="#A-L517"> 517</a>         available_policies: List[str] = []</span>
+<span id="A-L518" class="line"><a href="#A-L518"> 518</a>         for policy in sorted_policies:</span>
+<span id="A-L519" class="line"><a href="#A-L519"> 519</a>             try:</span>
+<span id="A-L520" class="line"><a href="#A-L520"> 520</a>                 _validate_imitation_policy_assets(policy, robot_type, policy_root_path)</span>
+<span id="A-L521" class="line"><a href="#A-L521"> 521</a>             except (RuntimeError, ValueError, OSError) as exc:</span>
+<span id="A-L522" class="line"><a href="#A-L522"> 522</a>                 skipped_policies.append(f&quot;{policy}: {exc}&quot;)</span>
+<span id="A-L523" class="line"><a href="#A-L523"> 523</a>                 continue</span>
+<span id="A-L524" class="line"><a href="#A-L524"> 524</a>             available_policies.append(policy)</span>
+<span id="A-L525" class="line"><a href="#A-L525"> 525</a>         sorted_policies = available_policies</span>
+<span id="A-L526" class="line"><a href="#A-L526"> 526</a> </span>
+<span id="A-L527" class="line"><a href="#A-L527"> 527</a>     return ActionSequenceManifest(</span>
+<span id="A-L528" class="line"><a href="#A-L528"> 528</a>         sequence_paths=sorted(set(sequence_paths)),</span>
+<span id="A-L529" class="line"><a href="#A-L529"> 529</a>         imitation_policies=sorted_policies,</span>
+<span id="A-L530" class="line"><a href="#A-L530"> 530</a>         preload_imitation_policies=sorted_policies,</span>
+<span id="A-L531" class="line"><a href="#A-L531"> 531</a>         rl_imitation_sequences=sorted(set(rl_imitation_sequences)),</span>
+<span id="A-L532" class="line"><a href="#A-L532"> 532</a>         skipped_imitation_policies=skipped_policies,</span>
+<span id="A-L533" class="line"><a href="#A-L533"> 533</a>     )</span></pre></html>

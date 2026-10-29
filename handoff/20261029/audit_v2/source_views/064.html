@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/wbc_action_console.sh</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/wbc_action_console.sh</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env bash</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> set -eo pipefail</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> if [[ ${1:-} == --help || ${1:-} == -h ]]; then</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a>   echo &#x27;用法：bash scripts/wbc_action_console.sh [--workspace 工作空间] [--dry-run]&#x27;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a>   echo &#x27;输入编号或完整动作 ID 发布一次请求；list 显示列表，q 退出。&#x27;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a>   echo &#x27;读取当前运行快照；--dry-run 仅显示动作，不创建 ROS 节点或发布消息。&#x27;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>   exit 0</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> fi</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> source &quot;$(dirname -- &quot;${BASH_SOURCE[0]}&quot;)/wbc_runtime_common.bash&quot;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> wbc_options &quot;$@&quot;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> wbc_current_run</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> args=(--bundle &quot;$wbc_installed&quot; --actions &quot;$wbc_actions&quot; --run-dir &quot;$wbc_run_dir&quot;)</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> if $wbc_dry_run; then</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>   args+=(--dry-run)</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> else</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>   exec 9&gt;&quot;$wbc_run_dir/.action_console.lock&quot;</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   flock -n 9 || wbc_die &#x27;本次运行已打开一个动作控制台&#x27;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> fi</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> exec /usr/bin/python3 -B &quot;$wbc_script_dir/wbc_action_console.py&quot; &quot;${args[@]}&quot;</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

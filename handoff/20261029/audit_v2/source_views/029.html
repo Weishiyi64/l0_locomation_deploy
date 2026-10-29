@@ -1,0 +1,144 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/include/rknn_model.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/include/rknn_model.h</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #ifndef LEGGED_DEPLOY_RKNN_MODEL_H</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> #define LEGGED_DEPLOY_RKNN_MODEL_H</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;rknn_api.h&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> </span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;cstddef&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;array&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> #include &lt;cstdint&gt;</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> #include &lt;mutex&gt;</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> #include &lt;string&gt;</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> #include &lt;vector&gt;</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> </span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> std::string rknnModelPath(const std::string&amp; onnx_path);</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> </span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> class RknnModel {</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>  public:</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   enum class InputMode { Copy, ResidentWbc };</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   explicit RknnModel(const std::string&amp; model_path, InputMode mode = InputMode::Copy);</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>   ~RknnModel();</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>   RknnModel(const RknnModel&amp;) = delete;</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   RknnModel&amp; operator=(const RknnModel&amp;) = delete;</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a> </span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   std::size_t inputCount() const;</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   std::size_t inputElements() const;</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   std::size_t inputElements(std::size_t index) const;</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   int inputIndex(const std::string&amp; name) const;</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   const std::string&amp; inputName(std::size_t index) const;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>   std::vector&lt;std::size_t&gt; inputShape(std::size_t index) const;</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>   rknn_tensor_type inputType(std::size_t index) const;</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   std::string runtimeVersion() const;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   std::size_t outputElements(std::size_t index) const;</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   std::size_t outputCount() const;</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   int outputIndex(const std::string&amp; name) const;</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   const std::string&amp; outputName(std::size_t index) const;</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   const std::vector&lt;float&gt;&amp; output(std::size_t index) const;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>   const std::string&amp; lastError() const;</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a> </span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>   bool run(const float* input, std::size_t element_count);</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>   bool run(const std::vector&lt;const float*&gt;&amp; inputs, const std::vector&lt;std::size_t&gt;&amp; element_counts);</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a> </span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>   struct ParameterInput {</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>     std::size_t index;</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     const float* data;</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a>     std::size_t elements;</span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a>   };</span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a>   struct ResidentStats {</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     std::uint64_t context_initializations{0}, allocated_bytes{0}, layout_bytes{0};</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a>     std::uint64_t sdk_weight_bytes{0}, sdk_internal_bytes{0}, sdk_dma_bytes{0};</span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     int sdk_memory_query{0};</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     std::uint64_t parameter_prepares{0}, parameter_write_bytes{0}, parameter_converted_elements{0};</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     std::uint64_t parameter_bind_calls{0}, parameter_sync_calls{0}, commits{0}, rollbacks{0};</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     std::uint64_t runs{0}, observation_sync_calls{0}, output_sync_calls{0};</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     double pack_ms{0.0}, commit_ms{0.0};</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>     double observation_ms{0.0}, execution_ms{0.0}, output_ms{0.0};</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     double observation_max_ms{0.0}, execution_max_ms{0.0}, output_max_ms{0.0};</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>   };</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>   // Caller keeps its prepare/inference lock for commit, validation and rollback.</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>   // stage does no SDK work; it can run in the loader after file/schema validation.</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>   void stageResidentParameters(int slot, const std::vector&lt;ParameterInput&gt;&amp; parameters);</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>   bool commitResidentParameters(int slot);</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>   bool restoreResidentParameters(int slot);  // -1 restores the initial, inference-disabled binding.</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>   bool runResident(const float* policy, std::size_t policy_size,</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>                    const float* command, std::size_t command_size);</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>   int residentSlot() const;</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>   ResidentStats residentStats() const;</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>   std::string residentLayout() const;</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a> </span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>  private:</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>   struct ResidentTensor {</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     rknn_tensor_attr attr{};</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a>     std::size_t elements{0}, width{0}, stride{0}, element_bytes{0};</span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a>     std::array&lt;rknn_tensor_mem*, 2&gt; memory{{nullptr, nullptr}};</span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a>   };</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>   void initializeResident();</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>   void releaseResident() noexcept;</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a>   ResidentTensor residentTensor(const rknn_tensor_attr&amp; logical, rknn_query_cmd query);</span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>   void writeResident(ResidentTensor&amp; tensor, int slot, const float* values, std::size_t count);</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>   bool bindResidentSlot(int slot);</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>   bool restoreResidentSlot(int slot);</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>   bool isObservation(std::size_t index) const;</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a> </span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>   InputMode input_mode_;</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>   rknn_context context_ = 0;</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>   std::vector&lt;rknn_tensor_attr&gt; input_attrs_;</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>   std::vector&lt;rknn_tensor_attr&gt; output_attrs_;</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>   std::vector&lt;std::string&gt; input_names_;</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>   std::vector&lt;std::string&gt; output_names_;</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>   std::vector&lt;std::vector&lt;float&gt;&gt; output_buffers_;</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>   std::vector&lt;rknn_output&gt; outputs_;</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>   std::string last_error_;</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>   std::vector&lt;ResidentTensor&gt; resident_inputs_, resident_outputs_;</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>   int policy_index_{-1}, command_index_{-1}, resident_slot_{-1};</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>   std::array&lt;bool, 2&gt; staged_{{false, false}};</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>   bool resident_healthy_{true};</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>   mutable std::mutex resident_mutex_;</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>   ResidentStats resident_stats_;</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a> };</span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a> </span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a> #endif</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #ifndef LEGGED_DEPLOY_RKNN_MODEL_H</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> #define LEGGED_DEPLOY_RKNN_MODEL_H</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> #include &lt;rknn_api.h&gt;</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> </span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> #include &lt;cstddef&gt;</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> #include &lt;string&gt;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> #include &lt;vector&gt;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> </span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> std::string rknnModelPath(const std::string&amp; onnx_path);</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> class RknnModel {</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>  public:</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>   explicit RknnModel(const std::string&amp; model_path);</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>   ~RknnModel();</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> </span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a>   RknnModel(const RknnModel&amp;) = delete;</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a>   RknnModel&amp; operator=(const RknnModel&amp;) = delete;</span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> </span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   std::size_t inputCount() const;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   std::size_t inputElements() const;</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>   std::size_t inputElements(std::size_t index) const;</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>   int inputIndex(const std::string&amp; name) const;</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>   const std::string&amp; inputName(std::size_t index) const;</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>   std::size_t outputElements(std::size_t index) const;</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>   std::size_t outputCount() const;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   int outputIndex(const std::string&amp; name) const;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   const std::string&amp; outputName(std::size_t index) const;</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>   const std::vector&lt;float&gt;&amp; output(std::size_t index) const;</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>   const std::string&amp; lastError() const;</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> </span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   bool run(const float* input, std::size_t element_count);</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>   bool run(const std::vector&lt;const float*&gt;&amp; inputs, const std::vector&lt;std::size_t&gt;&amp; element_counts);</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a> </span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>  private:</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>   rknn_context context_ = 0;</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   std::vector&lt;rknn_tensor_attr&gt; input_attrs_;</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>   std::vector&lt;std::string&gt; input_names_;</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>   std::vector&lt;std::string&gt; output_names_;</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a>   std::vector&lt;std::vector&lt;float&gt;&gt; output_buffers_;</span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a>   std::vector&lt;rknn_output&gt; outputs_;</span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a>   std::string last_error_;</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a> };</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> </span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a> #endif</span></pre></html>

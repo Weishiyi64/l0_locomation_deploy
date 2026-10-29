@@ -1,0 +1,471 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>scripts/convert_onnx_to_rknn_rk3588_wbc_reference.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> &quot;&quot;&quot;Convert a MimicLite WBC reference-motion ONNX to non-quantized RK3588 RKNN.&quot;&quot;&quot;</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> </span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> import argparse</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> import math</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> import sys</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> import tempfile</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> import time</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> from contextlib import contextmanager</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a> from pathlib import Path</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> from wbc_lora_assets import conversion_record, rknn_build_config, runtime_options</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> </span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> REFERENCE_OUTPUTS = {</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>     &quot;joint_pos&quot;: (1, 21), &quot;joint_vel&quot;: (1, 21),</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>     &quot;body_pos_w&quot;: (1, 23, 3), &quot;body_quat_w&quot;: (1, 23, 4),</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>     &quot;body_lin_vel_w&quot;: (1, 23, 3), &quot;body_ang_vel_w&quot;: (1, 23, 3),</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a> }</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a> RKNN_MAX_ONNX_OPSET = 19</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a> </span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a> def parse_args():</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>     parser.add_argument(&quot;onnx&quot;, type=Path, help=&quot;input WBC reference-motion .onnx model&quot;)</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>     parser.add_argument(&quot;-o&quot;, &quot;--output&quot;, type=Path, help=&quot;output .rknn (default: beside ONNX)&quot;)</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     parser.add_argument(&quot;--max-abs-error&quot;, type=float, default=0.02)</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>     parser.add_argument(</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>         &quot;--target&quot;, help=&quot;runtime target platform, e.g. rk3588; select a board with --device-id&quot;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a>     )</span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>     parser.add_argument(&quot;--device-id&quot;, help=&quot;connected device ID; requires --target rk3588&quot;)</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>     parser.add_argument(&quot;--build-only&quot;, action=&quot;store_true&quot;,</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>                         help=&quot;export FP16 RKNN without loading a Python Runtime; C++ deployment validation remains pending&quot;)</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>     return parser.parse_args()</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a> </span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a> </span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a> def static_shape(item, kind, onnx):</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a>     if item.type.tensor_type.elem_type != onnx.TensorProto.FLOAT:</span>
+<span id="C-L38" class="line"><a href="#C-L38">  38</a>         raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must be float32&quot;)</span>
+<span id="C-L39" class="line"><a href="#C-L39">  39</a>     dims = []</span>
+<span id="C-L40" class="line"><a href="#C-L40">  40</a>     for dim in item.type.tensor_type.shape.dim:</span>
+<span id="C-L41" class="line"><a href="#C-L41">  41</a>         if dim.dim_value &lt;= 0:</span>
+<span id="C-L42" class="line"><a href="#C-L42">  42</a>             raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must have a fully static shape&quot;)</span>
+<span id="C-L43" class="line"><a href="#C-L43">  43</a>         dims.append(dim.dim_value)</span>
+<span id="C-L44" class="line"><a href="#C-L44">  44</a>     return tuple(dims)</span>
+<span id="C-L45" class="line"><a href="#C-L45">  45</a> </span>
+<span id="C-L46" class="line"><a href="#C-L46">  46</a> </span>
+<span id="C-L47" class="line"><a href="#C-L47">  47</a> def check_reference_model(path):</span>
+<span id="C-L48" class="line"><a href="#C-L48">  48</a>     import onnx</span>
+<span id="C-L49" class="line"><a href="#C-L49">  49</a> </span>
+<span id="C-L50" class="line"><a href="#C-L50">  50</a>     model = onnx.load(str(path))</span>
+<span id="C-L51" class="line"><a href="#C-L51">  51</a>     onnx.checker.check_model(model)</span>
+<span id="C-L52" class="line"><a href="#C-L52">  52</a>     inputs = list(model.graph.input)</span>
+<span id="C-L53" class="line"><a href="#C-L53">  53</a>     outputs = list(model.graph.output)</span>
+<span id="C-L54" class="line"><a href="#C-L54">  54</a>     if len(inputs) != 1 or inputs[0].name != &quot;time_step&quot; or static_shape(inputs[0], &quot;input&quot;, onnx) != (1, 1):</span>
+<span id="C-L55" class="line"><a href="#C-L55">  55</a>         raise ValueError(&quot;reference model must have float32 time_step[1,1]&quot;)</span>
+<span id="C-L56" class="line"><a href="#C-L56">  56</a>     if len(outputs) != 6 or {item.name for item in outputs} != set(REFERENCE_OUTPUTS):</span>
+<span id="C-L57" class="line"><a href="#C-L57">  57</a>         raise ValueError(f&quot;reference model must have outputs {list(REFERENCE_OUTPUTS)}&quot;)</span>
+<span id="C-L58" class="line"><a href="#C-L58">  58</a>     for item in outputs:</span>
+<span id="C-L59" class="line"><a href="#C-L59">  59</a>         if static_shape(item, &quot;output&quot;, onnx) != REFERENCE_OUTPUTS[item.name]:</span>
+<span id="C-L60" class="line"><a href="#C-L60">  60</a>             raise ValueError(f&quot;reference output {item.name} must be float32 {REFERENCE_OUTPUTS[item.name]}&quot;)</span>
+<span id="C-L61" class="line"><a href="#C-L61">  61</a>     meta = {item.key: item.value for item in model.metadata_props}</span>
+<span id="C-L62" class="line"><a href="#C-L62">  62</a>     if meta.get(&quot;quaternion_order&quot;) != &quot;wxyz&quot; or \</span>
+<span id="C-L63" class="line"><a href="#C-L63">  63</a>             meta.get(&quot;time_step_semantics&quot;) != &quot;zero_based_frame_index_clamped&quot; or \</span>
+<span id="C-L64" class="line"><a href="#C-L64">  64</a>             float(meta.get(&quot;fps&quot;, 0)) != 50 or not 0 &lt; int(meta.get(&quot;num_frames&quot;, 0)) &lt;= 100000:</span>
+<span id="C-L65" class="line"><a href="#C-L65">  65</a>         raise ValueError(&quot;reference model needs valid 50 Hz frame metadata and clamped wxyz semantics&quot;)</span>
+<span id="C-L66" class="line"><a href="#C-L66">  66</a>     joints = meta[&quot;joint_names&quot;].split(&quot;,&quot;)</span>
+<span id="C-L67" class="line"><a href="#C-L67">  67</a>     bodies = meta[&quot;body_names&quot;].split(&quot;,&quot;)</span>
+<span id="C-L68" class="line"><a href="#C-L68">  68</a>     if len(joints) != 21 or len(set(joints)) != 21 or len(bodies) != 23 or len(set(bodies)) != 23 or \</span>
+<span id="C-L69" class="line"><a href="#C-L69">  69</a>             &quot;base_link&quot; not in bodies:</span>
+<span id="C-L70" class="line"><a href="#C-L70">  70</a>         raise ValueError(&quot;invalid reference joint/body metadata&quot;)</span>
+<span id="C-L71" class="line"><a href="#C-L71">  71</a>     return [(&quot;time_step&quot;, (1, 1))], [(item.name, REFERENCE_OUTPUTS[item.name]) for item in outputs], meta</span>
+<span id="C-L72" class="line"><a href="#C-L72">  72</a> </span>
+<span id="C-L73" class="line"><a href="#C-L73">  73</a> </span>
+<span id="C-L74" class="line"><a href="#C-L74">  74</a> def pack_reference_gathers(model):</span>
+<span id="C-L75" class="line"><a href="#C-L75">  75</a>     import numpy as np</span>
+<span id="C-L76" class="line"><a href="#C-L76">  76</a>     from onnx import helper, numpy_helper</span>
+<span id="C-L77" class="line"><a href="#C-L77">  77</a> </span>
+<span id="C-L78" class="line"><a href="#C-L78">  78</a>     count = int(next(item.value for item in model.metadata_props if item.key == &quot;num_frames&quot;))</span>
+<span id="C-L79" class="line"><a href="#C-L79">  79</a>     tables = {item.name: numpy_helper.to_array(item) for item in model.graph.initializer}</span>
+<span id="C-L80" class="line"><a href="#C-L80">  80</a>     gathers = [node for node in model.graph.node if node.op_type == &quot;Gather&quot;]</span>
+<span id="C-L81" class="line"><a href="#C-L81">  81</a>     by_output = {node.output[0]: node for node in gathers if len(node.output) == 1}</span>
+<span id="C-L82" class="line"><a href="#C-L82">  82</a>     if len(gathers) != 6 or set(by_output) != set(REFERENCE_OUTPUTS):</span>
+<span id="C-L83" class="line"><a href="#C-L83">  83</a>         raise ValueError(&quot;reference compatibility rewrite requires six direct table Gather outputs&quot;)</span>
+<span id="C-L84" class="line"><a href="#C-L84">  84</a>     indices = {node.input[1] for node in gathers}</span>
+<span id="C-L85" class="line"><a href="#C-L85">  85</a>     if len(indices) != 1:</span>
+<span id="C-L86" class="line"><a href="#C-L86">  86</a>         raise ValueError(&quot;reference Gather branches must share the same frame index&quot;)</span>
+<span id="C-L87" class="line"><a href="#C-L87">  87</a>     packed, widths, table_names = [], [], set()</span>
+<span id="C-L88" class="line"><a href="#C-L88">  88</a>     for name, shape in REFERENCE_OUTPUTS.items():</span>
+<span id="C-L89" class="line"><a href="#C-L89">  89</a>         node = by_output[name]</span>
+<span id="C-L90" class="line"><a href="#C-L90">  90</a>         if node.input[0] not in tables or any(attr.name == &quot;axis&quot; and attr.i != 0 for attr in node.attribute):</span>
+<span id="C-L91" class="line"><a href="#C-L91">  91</a>             raise ValueError(f&quot;{name}: expected a constant frame table on axis 0&quot;)</span>
+<span id="C-L92" class="line"><a href="#C-L92">  92</a>         table = tables[node.input[0]]</span>
+<span id="C-L93" class="line"><a href="#C-L93">  93</a>         if table.dtype != np.float32 or table.shape != (count,) + shape[1:] or not np.isfinite(table).all():</span>
+<span id="C-L94" class="line"><a href="#C-L94">  94</a>             raise ValueError(f&quot;{name}: invalid frame table shape, type or value&quot;)</span>
+<span id="C-L95" class="line"><a href="#C-L95">  95</a>         packed.append(table.reshape(count, -1))</span>
+<span id="C-L96" class="line"><a href="#C-L96">  96</a>         widths.append(math.prod(shape))</span>
+<span id="C-L97" class="line"><a href="#C-L97">  97</a>         table_names.add(node.input[0])</span>
+<span id="C-L98" class="line"><a href="#C-L98">  98</a> </span>
+<span id="C-L99" class="line"><a href="#C-L99">  99</a>     # Avoid Toolkit2 2.3.2 merging parallel Gather branches with different widths (3 vs 4).</span>
+<span id="C-L100" class="line"><a href="#C-L100"> 100</a>     prefix = &quot;wbc_rknn_reference_&quot;</span>
+<span id="C-L101" class="line"><a href="#C-L101"> 101</a>     existing_names = {name for node in model.graph.node for name in list(node.input) + list(node.output)}</span>
+<span id="C-L102" class="line"><a href="#C-L102"> 102</a>     if any(name.startswith(prefix) for name in existing_names):</span>
+<span id="C-L103" class="line"><a href="#C-L103"> 103</a>         raise ValueError(&quot;reference graph already uses compatibility rewrite names&quot;)</span>
+<span id="C-L104" class="line"><a href="#C-L104"> 104</a>     initializers = [item for item in model.graph.initializer if item.name not in table_names]</span>
+<span id="C-L105" class="line"><a href="#C-L105"> 105</a>     initializers.extend([</span>
+<span id="C-L106" class="line"><a href="#C-L106"> 106</a>         numpy_helper.from_array(np.concatenate(packed, axis=1), prefix + &quot;table&quot;),</span>
+<span id="C-L107" class="line"><a href="#C-L107"> 107</a>         numpy_helper.from_array(np.asarray(widths, dtype=np.int64), prefix + &quot;widths&quot;),</span>
+<span id="C-L108" class="line"><a href="#C-L108"> 108</a>     ])</span>
+<span id="C-L109" class="line"><a href="#C-L109"> 109</a>     nodes = [node for node in model.graph.node if node.op_type != &quot;Gather&quot;]</span>
+<span id="C-L110" class="line"><a href="#C-L110"> 110</a>     nodes.append(helper.make_node(&quot;Gather&quot;, [prefix + &quot;table&quot;, next(iter(indices))],</span>
+<span id="C-L111" class="line"><a href="#C-L111"> 111</a>                                   [prefix + &quot;frame&quot;], axis=0, name=prefix + &quot;gather&quot;))</span>
+<span id="C-L112" class="line"><a href="#C-L112"> 112</a>     split_names = [prefix + name for name in REFERENCE_OUTPUTS]</span>
+<span id="C-L113" class="line"><a href="#C-L113"> 113</a>     nodes.append(helper.make_node(&quot;Split&quot;, [prefix + &quot;frame&quot;, prefix + &quot;widths&quot;],</span>
+<span id="C-L114" class="line"><a href="#C-L114"> 114</a>                                   split_names, axis=1, name=prefix + &quot;split&quot;))</span>
+<span id="C-L115" class="line"><a href="#C-L115"> 115</a>     for name, shape in REFERENCE_OUTPUTS.items():</span>
+<span id="C-L116" class="line"><a href="#C-L116"> 116</a>         shape_name = prefix + name + &quot;_shape&quot;</span>
+<span id="C-L117" class="line"><a href="#C-L117"> 117</a>         initializers.append(numpy_helper.from_array(np.asarray(shape, dtype=np.int64), shape_name))</span>
+<span id="C-L118" class="line"><a href="#C-L118"> 118</a>         nodes.append(helper.make_node(&quot;Reshape&quot;, [prefix + name, shape_name], [name], name=prefix + name + &quot;_reshape&quot;))</span>
+<span id="C-L119" class="line"><a href="#C-L119"> 119</a>     del model.graph.node[:]</span>
+<span id="C-L120" class="line"><a href="#C-L120"> 120</a>     model.graph.node.extend(nodes)</span>
+<span id="C-L121" class="line"><a href="#C-L121"> 121</a>     del model.graph.initializer[:]</span>
+<span id="C-L122" class="line"><a href="#C-L122"> 122</a>     model.graph.initializer.extend(initializers)</span>
+<span id="C-L123" class="line"><a href="#C-L123"> 123</a>     del model.graph.value_info[:]</span>
+<span id="C-L124" class="line"><a href="#C-L124"> 124</a>     print(f&quot;packed six reference Gather branches into one Gather ({sum(widths)} floats/frame)&quot;)</span>
+<span id="C-L125" class="line"><a href="#C-L125"> 125</a> </span>
+<span id="C-L126" class="line"><a href="#C-L126"> 126</a> </span>
+<span id="C-L127" class="line"><a href="#C-L127"> 127</a> @contextmanager</span>
+<span id="C-L128" class="line"><a href="#C-L128"> 128</a> def rknn_compatible_model(path):</span>
+<span id="C-L129" class="line"><a href="#C-L129"> 129</a>     import onnx</span>
+<span id="C-L130" class="line"><a href="#C-L130"> 130</a>     from onnx import version_converter</span>
+<span id="C-L131" class="line"><a href="#C-L131"> 131</a> </span>
+<span id="C-L132" class="line"><a href="#C-L132"> 132</a>     model = onnx.load(str(path))</span>
+<span id="C-L133" class="line"><a href="#C-L133"> 133</a>     default_opsets = [item.version for item in model.opset_import if item.domain in (&quot;&quot;, &quot;ai.onnx&quot;)]</span>
+<span id="C-L134" class="line"><a href="#C-L134"> 134</a>     if len(default_opsets) != 1:</span>
+<span id="C-L135" class="line"><a href="#C-L135"> 135</a>         raise ValueError(f&quot;expected one ai.onnx opset, got {default_opsets}&quot;)</span>
+<span id="C-L136" class="line"><a href="#C-L136"> 136</a>     target_opset = max(13, min(default_opsets[0], RKNN_MAX_ONNX_OPSET))</span>
+<span id="C-L137" class="line"><a href="#C-L137"> 137</a>     if default_opsets[0] != target_opset:</span>
+<span id="C-L138" class="line"><a href="#C-L138"> 138</a>         model = version_converter.convert_version(model, target_opset)</span>
+<span id="C-L139" class="line"><a href="#C-L139"> 139</a>         print(f&quot;converted ONNX opset {default_opsets[0]} -&gt; {target_opset} for RKNN&quot;)</span>
+<span id="C-L140" class="line"><a href="#C-L140"> 140</a>     pack_reference_gathers(model)</span>
+<span id="C-L141" class="line"><a href="#C-L141"> 141</a>     onnx.checker.check_model(model)</span>
+<span id="C-L142" class="line"><a href="#C-L142"> 142</a>     with tempfile.TemporaryDirectory(prefix=&quot;wbc_reference_compatible_&quot;) as directory:</span>
+<span id="C-L143" class="line"><a href="#C-L143"> 143</a>         converted_path = Path(directory) / path.name</span>
+<span id="C-L144" class="line"><a href="#C-L144"> 144</a>         onnx.save(model, str(converted_path))</span>
+<span id="C-L145" class="line"><a href="#C-L145"> 145</a>         yield converted_path</span>
+<span id="C-L146" class="line"><a href="#C-L146"> 146</a> </span>
+<span id="C-L147" class="line"><a href="#C-L147"> 147</a> </span>
+<span id="C-L148" class="line"><a href="#C-L148"> 148</a> def verify_reference(rknn, onnx_path, output_specs, meta, args):</span>
+<span id="C-L149" class="line"><a href="#C-L149"> 149</a>     import numpy as np</span>
+<span id="C-L150" class="line"><a href="#C-L150"> 150</a>     import onnxruntime as ort</span>
+<span id="C-L151" class="line"><a href="#C-L151"> 151</a> </span>
+<span id="C-L152" class="line"><a href="#C-L152"> 152</a>     session = ort.InferenceSession(str(onnx_path), providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="C-L153" class="line"><a href="#C-L153"> 153</a>     ret = rknn.init_runtime(**runtime_options(args))</span>
+<span id="C-L154" class="line"><a href="#C-L154"> 154</a>     if ret != 0:</span>
+<span id="C-L155" class="line"><a href="#C-L155"> 155</a>         raise RuntimeError(f&quot;rknn.init_runtime failed, ret={ret}&quot;)</span>
+<span id="C-L156" class="line"><a href="#C-L156"> 156</a>     count = int(meta[&quot;num_frames&quot;])</span>
+<span id="C-L157" class="line"><a href="#C-L157"> 157</a>     names = [name for name, _ in output_specs]</span>
+<span id="C-L158" class="line"><a href="#C-L158"> 158</a>     maximum_errors = np.zeros(len(names), dtype=np.float64)</span>
+<span id="C-L159" class="line"><a href="#C-L159"> 159</a>     error_sums = np.zeros(len(names), dtype=np.float64)</span>
+<span id="C-L160" class="line"><a href="#C-L160"> 160</a>     worst_latency = 0.0</span>
+<span id="C-L161" class="line"><a href="#C-L161"> 161</a>     # Check every frame, plus the clamped boundary behavior used by the controller.</span>
+<span id="C-L162" class="line"><a href="#C-L162"> 162</a>     steps = [-8, -1] + list(range(count)) + [count, count + 8]</span>
+<span id="C-L163" class="line"><a href="#C-L163"> 163</a>     for step in steps:</span>
+<span id="C-L164" class="line"><a href="#C-L164"> 164</a>         time_step = np.array([[step]], dtype=np.float32)</span>
+<span id="C-L165" class="line"><a href="#C-L165"> 165</a>         expected = session.run(names, {&quot;time_step&quot;: time_step})</span>
+<span id="C-L166" class="line"><a href="#C-L166"> 166</a>         started = time.perf_counter()</span>
+<span id="C-L167" class="line"><a href="#C-L167"> 167</a>         actual = rknn.inference(inputs=[time_step])</span>
+<span id="C-L168" class="line"><a href="#C-L168"> 168</a>         worst_latency = max(worst_latency, time.perf_counter() - started)</span>
+<span id="C-L169" class="line"><a href="#C-L169"> 169</a>         if actual is None or len(actual) != len(names):</span>
+<span id="C-L170" class="line"><a href="#C-L170"> 170</a>             raise RuntimeError(&quot;reference RKNN must return all six outputs&quot;)</span>
+<span id="C-L171" class="line"><a href="#C-L171"> 171</a>         for i, (name, shape) in enumerate(output_specs):</span>
+<span id="C-L172" class="line"><a href="#C-L172"> 172</a>             value = np.asarray(actual[i], dtype=np.float32)</span>
+<span id="C-L173" class="line"><a href="#C-L173"> 173</a>             reference = np.asarray(expected[i], dtype=np.float32)</span>
+<span id="C-L174" class="line"><a href="#C-L174"> 174</a>             if value.size != math.prod(shape) or not np.isfinite(value).all() or \</span>
+<span id="C-L175" class="line"><a href="#C-L175"> 175</a>                     reference.shape != shape or not np.isfinite(reference).all():</span>
+<span id="C-L176" class="line"><a href="#C-L176"> 176</a>                 raise RuntimeError(f&quot;invalid reference output {name} at frame {step}&quot;)</span>
+<span id="C-L177" class="line"><a href="#C-L177"> 177</a>             error = np.abs(value.reshape(shape) - reference)</span>
+<span id="C-L178" class="line"><a href="#C-L178"> 178</a>             maximum_errors[i] = max(maximum_errors[i], float(error.max()))</span>
+<span id="C-L179" class="line"><a href="#C-L179"> 179</a>             error_sums[i] += float(error.mean())</span>
+<span id="C-L180" class="line"><a href="#C-L180"> 180</a>             if error.max() &gt; args.max_abs_error:</span>
+<span id="C-L181" class="line"><a href="#C-L181"> 181</a>                 raise RuntimeError(f&quot;reference verification failed: frame={step}, output={name}, max_abs={error.max()}&quot;)</span>
+<span id="C-L182" class="line"><a href="#C-L182"> 182</a>         if step % 50 == 0 or step == steps[-1]:</span>
+<span id="C-L183" class="line"><a href="#C-L183"> 183</a>             print(f&quot;  reference frame={step}, maximum errors={maximum_errors.tolist()}&quot;)</span>
+<span id="C-L184" class="line"><a href="#C-L184"> 184</a>     for i, name in enumerate(names):</span>
+<span id="C-L185" class="line"><a href="#C-L185"> 185</a>         print(f&quot;{name}: max_abs={maximum_errors[i]:.6g}, mean_abs={error_sums[i] / len(steps):.6g}&quot;)</span>
+<span id="C-L186" class="line"><a href="#C-L186"> 186</a>     print(f&quot;reference verification passed: {len(steps)} queries, worst inference ms={worst_latency * 1000:.3f}&quot;)</span>
+<span id="C-L187" class="line"><a href="#C-L187"> 187</a>     return {&quot;queries&quot;: len(steps), &quot;max_abs_per_output&quot;: dict(zip(names, maximum_errors.tolist())),</span>
+<span id="C-L188" class="line"><a href="#C-L188"> 188</a>             &quot;worst_ms&quot;: worst_latency * 1000.0}</span>
+<span id="C-L189" class="line"><a href="#C-L189"> 189</a> </span>
+<span id="C-L190" class="line"><a href="#C-L190"> 190</a> </span>
+<span id="C-L191" class="line"><a href="#C-L191"> 191</a> def main():</span>
+<span id="C-L192" class="line"><a href="#C-L192"> 192</a>     args = parse_args()</span>
+<span id="C-L193" class="line"><a href="#C-L193"> 193</a>     onnx_path = args.onnx.resolve()</span>
+<span id="C-L194" class="line"><a href="#C-L194"> 194</a>     output_path = (args.output or onnx_path.with_suffix(&quot;.rknn&quot;)).resolve()</span>
+<span id="C-L195" class="line"><a href="#C-L195"> 195</a>     if not onnx_path.is_file() or onnx_path.suffix.lower() != &quot;.onnx&quot;:</span>
+<span id="C-L196" class="line"><a href="#C-L196"> 196</a>         raise ValueError(f&quot;ONNX model not found: {onnx_path}&quot;)</span>
+<span id="C-L197" class="line"><a href="#C-L197"> 197</a>     if output_path.suffix.lower() != &quot;.rknn&quot;:</span>
+<span id="C-L198" class="line"><a href="#C-L198"> 198</a>         raise ValueError(&quot;output filename must end with .rknn&quot;)</span>
+<span id="C-L199" class="line"><a href="#C-L199"> 199</a>     if not math.isfinite(args.max_abs_error) or args.max_abs_error &lt;= 0:</span>
+<span id="C-L200" class="line"><a href="#C-L200"> 200</a>         raise ValueError(&quot;--max-abs-error must be finite and positive&quot;)</span>
+<span id="C-L201" class="line"><a href="#C-L201"> 201</a>     runtime_options(args)</span>
+<span id="C-L202" class="line"><a href="#C-L202"> 202</a>     input_specs, output_specs, reference_meta = check_reference_model(onnx_path)</span>
+<span id="C-L203" class="line"><a href="#C-L203"> 203</a>     print(&quot;inputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in input_specs))</span>
+<span id="C-L204" class="line"><a href="#C-L204"> 204</a>     print(&quot;outputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in output_specs))</span>
+<span id="C-L205" class="line"><a href="#C-L205"> 205</a> </span>
+<span id="C-L206" class="line"><a href="#C-L206"> 206</a>     with rknn_compatible_model(onnx_path) as rknn_onnx_path:</span>
+<span id="C-L207" class="line"><a href="#C-L207"> 207</a>         from rknn.api import RKNN</span>
+<span id="C-L208" class="line"><a href="#C-L208"> 208</a> </span>
+<span id="C-L209" class="line"><a href="#C-L209"> 209</a>         rknn = RKNN(verbose=True)</span>
+<span id="C-L210" class="line"><a href="#C-L210"> 210</a>         try:</span>
+<span id="C-L211" class="line"><a href="#C-L211"> 211</a>             print(f&quot;build: config={rknn_build_config()} do_quantization=False; output={output_path}&quot;)</span>
+<span id="C-L212" class="line"><a href="#C-L212"> 212</a>             ret = rknn.config(**rknn_build_config())</span>
+<span id="C-L213" class="line"><a href="#C-L213"> 213</a>             if ret != 0:</span>
+<span id="C-L214" class="line"><a href="#C-L214"> 214</a>                 raise RuntimeError(f&quot;rknn.config failed, ret={ret}&quot;)</span>
+<span id="C-L215" class="line"><a href="#C-L215"> 215</a>             ret = rknn.load_onnx(model=str(rknn_onnx_path))</span>
+<span id="C-L216" class="line"><a href="#C-L216"> 216</a>             if ret != 0:</span>
+<span id="C-L217" class="line"><a href="#C-L217"> 217</a>                 raise RuntimeError(f&quot;rknn.load_onnx failed, ret={ret}&quot;)</span>
+<span id="C-L218" class="line"><a href="#C-L218"> 218</a>             ret = rknn.build(do_quantization=False)</span>
+<span id="C-L219" class="line"><a href="#C-L219"> 219</a>             if ret != 0:</span>
+<span id="C-L220" class="line"><a href="#C-L220"> 220</a>                 raise RuntimeError(f&quot;rknn.build failed, ret={ret}&quot;)</span>
+<span id="C-L221" class="line"><a href="#C-L221"> 221</a>             output_path.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="C-L222" class="line"><a href="#C-L222"> 222</a>             with tempfile.TemporaryDirectory(prefix=&quot;wbc_rknn_&quot;, dir=output_path.parent) as directory:</span>
+<span id="C-L223" class="line"><a href="#C-L223"> 223</a>                 candidate = Path(directory) / output_path.name</span>
+<span id="C-L224" class="line"><a href="#C-L224"> 224</a>                 ret = rknn.export_rknn(str(candidate))</span>
+<span id="C-L225" class="line"><a href="#C-L225"> 225</a>                 if ret != 0:</span>
+<span id="C-L226" class="line"><a href="#C-L226"> 226</a>                     raise RuntimeError(f&quot;rknn.export_rknn failed, ret={ret}&quot;)</span>
+<span id="C-L227" class="line"><a href="#C-L227"> 227</a>                 verification = None if args.build_only else verify_reference(rknn, onnx_path, output_specs, reference_meta, args)</span>
+<span id="C-L228" class="line"><a href="#C-L228"> 228</a>                 candidate.replace(output_path)</span>
+<span id="C-L229" class="line"><a href="#C-L229"> 229</a>                 conversion_record(onnx_path, output_path, args, verification)</span>
+<span id="C-L230" class="line"><a href="#C-L230"> 230</a>             print(f&quot;exported: {output_path}; validation={&#x27;pending C++ deployment&#x27; if args.build_only else &#x27;Python verification completed&#x27;}&quot;)</span>
+<span id="C-L231" class="line"><a href="#C-L231"> 231</a>         finally:</span>
+<span id="C-L232" class="line"><a href="#C-L232"> 232</a>             rknn.release()</span>
+<span id="C-L233" class="line"><a href="#C-L233"> 233</a>     return 0</span>
+<span id="C-L234" class="line"><a href="#C-L234"> 234</a> </span>
+<span id="C-L235" class="line"><a href="#C-L235"> 235</a> </span>
+<span id="C-L236" class="line"><a href="#C-L236"> 236</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="C-L237" class="line"><a href="#C-L237"> 237</a>     try:</span>
+<span id="C-L238" class="line"><a href="#C-L238"> 238</a>         sys.exit(main())</span>
+<span id="C-L239" class="line"><a href="#C-L239"> 239</a>     except Exception as error:</span>
+<span id="C-L240" class="line"><a href="#C-L240"> 240</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="C-L241" class="line"><a href="#C-L241"> 241</a>         sys.exit(1)</span></pre><h2 id="A">原版本 A</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #!/usr/bin/env python3</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> &quot;&quot;&quot;Convert a MimicLite WBC reference-motion ONNX to non-quantized RK3588 RKNN.&quot;&quot;&quot;</span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> </span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> import argparse</span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> import math</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a> import sys</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a> import tempfile</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a> import time</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a> from contextlib import contextmanager</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a> from pathlib import Path</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a> </span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a> REFERENCE_OUTPUTS = {</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a>     &quot;joint_pos&quot;: (1, 21), &quot;joint_vel&quot;: (1, 21),</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a>     &quot;body_pos_w&quot;: (1, 23, 3), &quot;body_quat_w&quot;: (1, 23, 4),</span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a>     &quot;body_lin_vel_w&quot;: (1, 23, 3), &quot;body_ang_vel_w&quot;: (1, 23, 3),</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a> }</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> RKNN_MAX_ONNX_OPSET = 19</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> </span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a> def parse_args():</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>     parser = argparse.ArgumentParser(description=__doc__)</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>     parser.add_argument(&quot;onnx&quot;, type=Path, help=&quot;input WBC reference-motion .onnx model&quot;)</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>     parser.add_argument(&quot;-o&quot;, &quot;--output&quot;, type=Path, help=&quot;output .rknn (default: beside ONNX)&quot;)</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a>     parser.add_argument(&quot;--max-abs-error&quot;, type=float, default=0.005)</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a>     parser.add_argument(</span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a>         &quot;--target&quot;, help=&quot;optional connected RK3588 target id for verification; otherwise toolkit simulator is used&quot;</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>     )</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>     return parser.parse_args()</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a> </span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a> </span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a> def static_shape(item, kind, onnx):</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>     if item.type.tensor_type.elem_type != onnx.TensorProto.FLOAT:</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>         raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must be float32&quot;)</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     dims = []</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>     for dim in item.type.tensor_type.shape.dim:</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>         if dim.dim_value &lt;= 0:</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>             raise ValueError(f&quot;{kind} &#x27;{item.name}&#x27; must have a fully static shape&quot;)</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a>         dims.append(dim.dim_value)</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a>     return tuple(dims)</span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a> </span>
+<span id="A-L41" class="line"><a href="#A-L41">  41</a> </span>
+<span id="A-L42" class="line"><a href="#A-L42">  42</a> def check_reference_model(path):</span>
+<span id="A-L43" class="line"><a href="#A-L43">  43</a>     import onnx</span>
+<span id="A-L44" class="line"><a href="#A-L44">  44</a> </span>
+<span id="A-L45" class="line"><a href="#A-L45">  45</a>     model = onnx.load(str(path))</span>
+<span id="A-L46" class="line"><a href="#A-L46">  46</a>     onnx.checker.check_model(model)</span>
+<span id="A-L47" class="line"><a href="#A-L47">  47</a>     inputs = list(model.graph.input)</span>
+<span id="A-L48" class="line"><a href="#A-L48">  48</a>     outputs = list(model.graph.output)</span>
+<span id="A-L49" class="line"><a href="#A-L49">  49</a>     if len(inputs) != 1 or inputs[0].name != &quot;time_step&quot; or static_shape(inputs[0], &quot;input&quot;, onnx) != (1, 1):</span>
+<span id="A-L50" class="line"><a href="#A-L50">  50</a>         raise ValueError(&quot;reference model must have float32 time_step[1,1]&quot;)</span>
+<span id="A-L51" class="line"><a href="#A-L51">  51</a>     if len(outputs) != 6 or {item.name for item in outputs} != set(REFERENCE_OUTPUTS):</span>
+<span id="A-L52" class="line"><a href="#A-L52">  52</a>         raise ValueError(f&quot;reference model must have outputs {list(REFERENCE_OUTPUTS)}&quot;)</span>
+<span id="A-L53" class="line"><a href="#A-L53">  53</a>     for item in outputs:</span>
+<span id="A-L54" class="line"><a href="#A-L54">  54</a>         if static_shape(item, &quot;output&quot;, onnx) != REFERENCE_OUTPUTS[item.name]:</span>
+<span id="A-L55" class="line"><a href="#A-L55">  55</a>             raise ValueError(f&quot;reference output {item.name} must be float32 {REFERENCE_OUTPUTS[item.name]}&quot;)</span>
+<span id="A-L56" class="line"><a href="#A-L56">  56</a>     meta = {item.key: item.value for item in model.metadata_props}</span>
+<span id="A-L57" class="line"><a href="#A-L57">  57</a>     if meta.get(&quot;quaternion_order&quot;) != &quot;wxyz&quot; or \</span>
+<span id="A-L58" class="line"><a href="#A-L58">  58</a>             meta.get(&quot;time_step_semantics&quot;) != &quot;zero_based_frame_index_clamped&quot; or \</span>
+<span id="A-L59" class="line"><a href="#A-L59">  59</a>             float(meta.get(&quot;fps&quot;, 0)) != 50 or not 0 &lt; int(meta.get(&quot;num_frames&quot;, 0)) &lt;= 100000:</span>
+<span id="A-L60" class="line"><a href="#A-L60">  60</a>         raise ValueError(&quot;reference model needs valid 50 Hz frame metadata and clamped wxyz semantics&quot;)</span>
+<span id="A-L61" class="line"><a href="#A-L61">  61</a>     joints = meta[&quot;joint_names&quot;].split(&quot;,&quot;)</span>
+<span id="A-L62" class="line"><a href="#A-L62">  62</a>     bodies = meta[&quot;body_names&quot;].split(&quot;,&quot;)</span>
+<span id="A-L63" class="line"><a href="#A-L63">  63</a>     if len(joints) != 21 or len(set(joints)) != 21 or len(bodies) != 23 or len(set(bodies)) != 23 or \</span>
+<span id="A-L64" class="line"><a href="#A-L64">  64</a>             &quot;base_link&quot; not in bodies:</span>
+<span id="A-L65" class="line"><a href="#A-L65">  65</a>         raise ValueError(&quot;invalid reference joint/body metadata&quot;)</span>
+<span id="A-L66" class="line"><a href="#A-L66">  66</a>     return [(&quot;time_step&quot;, (1, 1))], [(item.name, REFERENCE_OUTPUTS[item.name]) for item in outputs], meta</span>
+<span id="A-L67" class="line"><a href="#A-L67">  67</a> </span>
+<span id="A-L68" class="line"><a href="#A-L68">  68</a> </span>
+<span id="A-L69" class="line"><a href="#A-L69">  69</a> def pack_reference_gathers(model):</span>
+<span id="A-L70" class="line"><a href="#A-L70">  70</a>     import numpy as np</span>
+<span id="A-L71" class="line"><a href="#A-L71">  71</a>     from onnx import helper, numpy_helper</span>
+<span id="A-L72" class="line"><a href="#A-L72">  72</a> </span>
+<span id="A-L73" class="line"><a href="#A-L73">  73</a>     count = int(next(item.value for item in model.metadata_props if item.key == &quot;num_frames&quot;))</span>
+<span id="A-L74" class="line"><a href="#A-L74">  74</a>     tables = {item.name: numpy_helper.to_array(item) for item in model.graph.initializer}</span>
+<span id="A-L75" class="line"><a href="#A-L75">  75</a>     gathers = [node for node in model.graph.node if node.op_type == &quot;Gather&quot;]</span>
+<span id="A-L76" class="line"><a href="#A-L76">  76</a>     by_output = {node.output[0]: node for node in gathers if len(node.output) == 1}</span>
+<span id="A-L77" class="line"><a href="#A-L77">  77</a>     if len(gathers) != 6 or set(by_output) != set(REFERENCE_OUTPUTS):</span>
+<span id="A-L78" class="line"><a href="#A-L78">  78</a>         raise ValueError(&quot;reference compatibility rewrite requires six direct table Gather outputs&quot;)</span>
+<span id="A-L79" class="line"><a href="#A-L79">  79</a>     indices = {node.input[1] for node in gathers}</span>
+<span id="A-L80" class="line"><a href="#A-L80">  80</a>     if len(indices) != 1:</span>
+<span id="A-L81" class="line"><a href="#A-L81">  81</a>         raise ValueError(&quot;reference Gather branches must share the same frame index&quot;)</span>
+<span id="A-L82" class="line"><a href="#A-L82">  82</a>     packed, widths, table_names = [], [], set()</span>
+<span id="A-L83" class="line"><a href="#A-L83">  83</a>     for name, shape in REFERENCE_OUTPUTS.items():</span>
+<span id="A-L84" class="line"><a href="#A-L84">  84</a>         node = by_output[name]</span>
+<span id="A-L85" class="line"><a href="#A-L85">  85</a>         if node.input[0] not in tables or any(attr.name == &quot;axis&quot; and attr.i != 0 for attr in node.attribute):</span>
+<span id="A-L86" class="line"><a href="#A-L86">  86</a>             raise ValueError(f&quot;{name}: expected a constant frame table on axis 0&quot;)</span>
+<span id="A-L87" class="line"><a href="#A-L87">  87</a>         table = tables[node.input[0]]</span>
+<span id="A-L88" class="line"><a href="#A-L88">  88</a>         if table.dtype != np.float32 or table.shape != (count,) + shape[1:] or not np.isfinite(table).all():</span>
+<span id="A-L89" class="line"><a href="#A-L89">  89</a>             raise ValueError(f&quot;{name}: invalid frame table shape, type or value&quot;)</span>
+<span id="A-L90" class="line"><a href="#A-L90">  90</a>         packed.append(table.reshape(count, -1))</span>
+<span id="A-L91" class="line"><a href="#A-L91">  91</a>         widths.append(math.prod(shape))</span>
+<span id="A-L92" class="line"><a href="#A-L92">  92</a>         table_names.add(node.input[0])</span>
+<span id="A-L93" class="line"><a href="#A-L93">  93</a> </span>
+<span id="A-L94" class="line"><a href="#A-L94">  94</a>     # Avoid Toolkit2 2.3.2 merging parallel Gather branches with different widths (3 vs 4).</span>
+<span id="A-L95" class="line"><a href="#A-L95">  95</a>     prefix = &quot;wbc_rknn_reference_&quot;</span>
+<span id="A-L96" class="line"><a href="#A-L96">  96</a>     existing_names = {name for node in model.graph.node for name in list(node.input) + list(node.output)}</span>
+<span id="A-L97" class="line"><a href="#A-L97">  97</a>     if any(name.startswith(prefix) for name in existing_names):</span>
+<span id="A-L98" class="line"><a href="#A-L98">  98</a>         raise ValueError(&quot;reference graph already uses compatibility rewrite names&quot;)</span>
+<span id="A-L99" class="line"><a href="#A-L99">  99</a>     initializers = [item for item in model.graph.initializer if item.name not in table_names]</span>
+<span id="A-L100" class="line"><a href="#A-L100"> 100</a>     initializers.extend([</span>
+<span id="A-L101" class="line"><a href="#A-L101"> 101</a>         numpy_helper.from_array(np.concatenate(packed, axis=1), prefix + &quot;table&quot;),</span>
+<span id="A-L102" class="line"><a href="#A-L102"> 102</a>         numpy_helper.from_array(np.asarray(widths, dtype=np.int64), prefix + &quot;widths&quot;),</span>
+<span id="A-L103" class="line"><a href="#A-L103"> 103</a>     ])</span>
+<span id="A-L104" class="line"><a href="#A-L104"> 104</a>     nodes = [node for node in model.graph.node if node.op_type != &quot;Gather&quot;]</span>
+<span id="A-L105" class="line"><a href="#A-L105"> 105</a>     nodes.append(helper.make_node(&quot;Gather&quot;, [prefix + &quot;table&quot;, next(iter(indices))],</span>
+<span id="A-L106" class="line"><a href="#A-L106"> 106</a>                                   [prefix + &quot;frame&quot;], axis=0, name=prefix + &quot;gather&quot;))</span>
+<span id="A-L107" class="line"><a href="#A-L107"> 107</a>     split_names = [prefix + name for name in REFERENCE_OUTPUTS]</span>
+<span id="A-L108" class="line"><a href="#A-L108"> 108</a>     nodes.append(helper.make_node(&quot;Split&quot;, [prefix + &quot;frame&quot;, prefix + &quot;widths&quot;],</span>
+<span id="A-L109" class="line"><a href="#A-L109"> 109</a>                                   split_names, axis=1, name=prefix + &quot;split&quot;))</span>
+<span id="A-L110" class="line"><a href="#A-L110"> 110</a>     for name, shape in REFERENCE_OUTPUTS.items():</span>
+<span id="A-L111" class="line"><a href="#A-L111"> 111</a>         shape_name = prefix + name + &quot;_shape&quot;</span>
+<span id="A-L112" class="line"><a href="#A-L112"> 112</a>         initializers.append(numpy_helper.from_array(np.asarray(shape, dtype=np.int64), shape_name))</span>
+<span id="A-L113" class="line"><a href="#A-L113"> 113</a>         nodes.append(helper.make_node(&quot;Reshape&quot;, [prefix + name, shape_name], [name], name=prefix + name + &quot;_reshape&quot;))</span>
+<span id="A-L114" class="line"><a href="#A-L114"> 114</a>     del model.graph.node[:]</span>
+<span id="A-L115" class="line"><a href="#A-L115"> 115</a>     model.graph.node.extend(nodes)</span>
+<span id="A-L116" class="line"><a href="#A-L116"> 116</a>     del model.graph.initializer[:]</span>
+<span id="A-L117" class="line"><a href="#A-L117"> 117</a>     model.graph.initializer.extend(initializers)</span>
+<span id="A-L118" class="line"><a href="#A-L118"> 118</a>     del model.graph.value_info[:]</span>
+<span id="A-L119" class="line"><a href="#A-L119"> 119</a>     print(f&quot;packed six reference Gather branches into one Gather ({sum(widths)} floats/frame)&quot;)</span>
+<span id="A-L120" class="line"><a href="#A-L120"> 120</a> </span>
+<span id="A-L121" class="line"><a href="#A-L121"> 121</a> </span>
+<span id="A-L122" class="line"><a href="#A-L122"> 122</a> @contextmanager</span>
+<span id="A-L123" class="line"><a href="#A-L123"> 123</a> def rknn_compatible_model(path):</span>
+<span id="A-L124" class="line"><a href="#A-L124"> 124</a>     import onnx</span>
+<span id="A-L125" class="line"><a href="#A-L125"> 125</a>     from onnx import version_converter</span>
+<span id="A-L126" class="line"><a href="#A-L126"> 126</a> </span>
+<span id="A-L127" class="line"><a href="#A-L127"> 127</a>     model = onnx.load(str(path))</span>
+<span id="A-L128" class="line"><a href="#A-L128"> 128</a>     default_opsets = [item.version for item in model.opset_import if item.domain in (&quot;&quot;, &quot;ai.onnx&quot;)]</span>
+<span id="A-L129" class="line"><a href="#A-L129"> 129</a>     if len(default_opsets) != 1:</span>
+<span id="A-L130" class="line"><a href="#A-L130"> 130</a>         raise ValueError(f&quot;expected one ai.onnx opset, got {default_opsets}&quot;)</span>
+<span id="A-L131" class="line"><a href="#A-L131"> 131</a>     target_opset = max(13, min(default_opsets[0], RKNN_MAX_ONNX_OPSET))</span>
+<span id="A-L132" class="line"><a href="#A-L132"> 132</a>     if default_opsets[0] != target_opset:</span>
+<span id="A-L133" class="line"><a href="#A-L133"> 133</a>         model = version_converter.convert_version(model, target_opset)</span>
+<span id="A-L134" class="line"><a href="#A-L134"> 134</a>         print(f&quot;converted ONNX opset {default_opsets[0]} -&gt; {target_opset} for RKNN&quot;)</span>
+<span id="A-L135" class="line"><a href="#A-L135"> 135</a>     pack_reference_gathers(model)</span>
+<span id="A-L136" class="line"><a href="#A-L136"> 136</a>     onnx.checker.check_model(model)</span>
+<span id="A-L137" class="line"><a href="#A-L137"> 137</a>     with tempfile.TemporaryDirectory(prefix=&quot;wbc_reference_compatible_&quot;) as directory:</span>
+<span id="A-L138" class="line"><a href="#A-L138"> 138</a>         converted_path = Path(directory) / path.name</span>
+<span id="A-L139" class="line"><a href="#A-L139"> 139</a>         onnx.save(model, str(converted_path))</span>
+<span id="A-L140" class="line"><a href="#A-L140"> 140</a>         yield converted_path</span>
+<span id="A-L141" class="line"><a href="#A-L141"> 141</a> </span>
+<span id="A-L142" class="line"><a href="#A-L142"> 142</a> </span>
+<span id="A-L143" class="line"><a href="#A-L143"> 143</a> def verify_reference(rknn, onnx_path, output_specs, meta, args):</span>
+<span id="A-L144" class="line"><a href="#A-L144"> 144</a>     import numpy as np</span>
+<span id="A-L145" class="line"><a href="#A-L145"> 145</a>     import onnxruntime as ort</span>
+<span id="A-L146" class="line"><a href="#A-L146"> 146</a> </span>
+<span id="A-L147" class="line"><a href="#A-L147"> 147</a>     session = ort.InferenceSession(str(onnx_path), providers=[&quot;CPUExecutionProvider&quot;])</span>
+<span id="A-L148" class="line"><a href="#A-L148"> 148</a>     ret = rknn.init_runtime(**({&quot;target&quot;: args.target} if args.target else {}))</span>
+<span id="A-L149" class="line"><a href="#A-L149"> 149</a>     if ret != 0:</span>
+<span id="A-L150" class="line"><a href="#A-L150"> 150</a>         raise RuntimeError(f&quot;rknn.init_runtime failed, ret={ret}&quot;)</span>
+<span id="A-L151" class="line"><a href="#A-L151"> 151</a>     count = int(meta[&quot;num_frames&quot;])</span>
+<span id="A-L152" class="line"><a href="#A-L152"> 152</a>     names = [name for name, _ in output_specs]</span>
+<span id="A-L153" class="line"><a href="#A-L153"> 153</a>     maximum_errors = np.zeros(len(names), dtype=np.float64)</span>
+<span id="A-L154" class="line"><a href="#A-L154"> 154</a>     error_sums = np.zeros(len(names), dtype=np.float64)</span>
+<span id="A-L155" class="line"><a href="#A-L155"> 155</a>     worst_latency = 0.0</span>
+<span id="A-L156" class="line"><a href="#A-L156"> 156</a>     # Check every frame, plus the clamped boundary behavior used by the controller.</span>
+<span id="A-L157" class="line"><a href="#A-L157"> 157</a>     steps = [-8, -1] + list(range(count)) + [count, count + 8]</span>
+<span id="A-L158" class="line"><a href="#A-L158"> 158</a>     for step in steps:</span>
+<span id="A-L159" class="line"><a href="#A-L159"> 159</a>         time_step = np.array([[step]], dtype=np.float32)</span>
+<span id="A-L160" class="line"><a href="#A-L160"> 160</a>         expected = session.run(names, {&quot;time_step&quot;: time_step})</span>
+<span id="A-L161" class="line"><a href="#A-L161"> 161</a>         started = time.perf_counter()</span>
+<span id="A-L162" class="line"><a href="#A-L162"> 162</a>         actual = rknn.inference(inputs=[time_step])</span>
+<span id="A-L163" class="line"><a href="#A-L163"> 163</a>         worst_latency = max(worst_latency, time.perf_counter() - started)</span>
+<span id="A-L164" class="line"><a href="#A-L164"> 164</a>         if actual is None or len(actual) != len(names):</span>
+<span id="A-L165" class="line"><a href="#A-L165"> 165</a>             raise RuntimeError(&quot;reference RKNN must return all six outputs&quot;)</span>
+<span id="A-L166" class="line"><a href="#A-L166"> 166</a>         for i, (name, shape) in enumerate(output_specs):</span>
+<span id="A-L167" class="line"><a href="#A-L167"> 167</a>             value = np.asarray(actual[i], dtype=np.float32)</span>
+<span id="A-L168" class="line"><a href="#A-L168"> 168</a>             reference = np.asarray(expected[i], dtype=np.float32)</span>
+<span id="A-L169" class="line"><a href="#A-L169"> 169</a>             if value.size != math.prod(shape) or not np.isfinite(value).all() or \</span>
+<span id="A-L170" class="line"><a href="#A-L170"> 170</a>                     reference.shape != shape or not np.isfinite(reference).all():</span>
+<span id="A-L171" class="line"><a href="#A-L171"> 171</a>                 raise RuntimeError(f&quot;invalid reference output {name} at frame {step}&quot;)</span>
+<span id="A-L172" class="line"><a href="#A-L172"> 172</a>             error = np.abs(value.reshape(shape) - reference)</span>
+<span id="A-L173" class="line"><a href="#A-L173"> 173</a>             maximum_errors[i] = max(maximum_errors[i], float(error.max()))</span>
+<span id="A-L174" class="line"><a href="#A-L174"> 174</a>             error_sums[i] += float(error.mean())</span>
+<span id="A-L175" class="line"><a href="#A-L175"> 175</a>             if error.max() &gt; args.max_abs_error:</span>
+<span id="A-L176" class="line"><a href="#A-L176"> 176</a>                 raise RuntimeError(f&quot;reference verification failed: frame={step}, output={name}, max_abs={error.max()}&quot;)</span>
+<span id="A-L177" class="line"><a href="#A-L177"> 177</a>         if step % 50 == 0 or step == steps[-1]:</span>
+<span id="A-L178" class="line"><a href="#A-L178"> 178</a>             print(f&quot;  reference frame={step}, maximum errors={maximum_errors.tolist()}&quot;)</span>
+<span id="A-L179" class="line"><a href="#A-L179"> 179</a>     for i, name in enumerate(names):</span>
+<span id="A-L180" class="line"><a href="#A-L180"> 180</a>         print(f&quot;{name}: max_abs={maximum_errors[i]:.6g}, mean_abs={error_sums[i] / len(steps):.6g}&quot;)</span>
+<span id="A-L181" class="line"><a href="#A-L181"> 181</a>     print(f&quot;reference verification passed: {len(steps)} queries, worst inference ms={worst_latency * 1000:.3f}&quot;)</span>
+<span id="A-L182" class="line"><a href="#A-L182"> 182</a> </span>
+<span id="A-L183" class="line"><a href="#A-L183"> 183</a> </span>
+<span id="A-L184" class="line"><a href="#A-L184"> 184</a> def main():</span>
+<span id="A-L185" class="line"><a href="#A-L185"> 185</a>     args = parse_args()</span>
+<span id="A-L186" class="line"><a href="#A-L186"> 186</a>     onnx_path = args.onnx.resolve()</span>
+<span id="A-L187" class="line"><a href="#A-L187"> 187</a>     output_path = (args.output or onnx_path.with_suffix(&quot;.rknn&quot;)).resolve()</span>
+<span id="A-L188" class="line"><a href="#A-L188"> 188</a>     if not onnx_path.is_file() or onnx_path.suffix.lower() != &quot;.onnx&quot;:</span>
+<span id="A-L189" class="line"><a href="#A-L189"> 189</a>         raise ValueError(f&quot;ONNX model not found: {onnx_path}&quot;)</span>
+<span id="A-L190" class="line"><a href="#A-L190"> 190</a>     if output_path.suffix.lower() != &quot;.rknn&quot;:</span>
+<span id="A-L191" class="line"><a href="#A-L191"> 191</a>         raise ValueError(&quot;output filename must end with .rknn&quot;)</span>
+<span id="A-L192" class="line"><a href="#A-L192"> 192</a>     if not math.isfinite(args.max_abs_error) or args.max_abs_error &lt;= 0:</span>
+<span id="A-L193" class="line"><a href="#A-L193"> 193</a>         raise ValueError(&quot;--max-abs-error must be finite and positive&quot;)</span>
+<span id="A-L194" class="line"><a href="#A-L194"> 194</a>     input_specs, output_specs, reference_meta = check_reference_model(onnx_path)</span>
+<span id="A-L195" class="line"><a href="#A-L195"> 195</a>     print(&quot;inputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in input_specs))</span>
+<span id="A-L196" class="line"><a href="#A-L196"> 196</a>     print(&quot;outputs: &quot; + &quot;, &quot;.join(f&quot;{name}{shape}&quot; for name, shape in output_specs))</span>
+<span id="A-L197" class="line"><a href="#A-L197"> 197</a> </span>
+<span id="A-L198" class="line"><a href="#A-L198"> 198</a>     with rknn_compatible_model(onnx_path) as rknn_onnx_path:</span>
+<span id="A-L199" class="line"><a href="#A-L199"> 199</a>         from rknn.api import RKNN</span>
+<span id="A-L200" class="line"><a href="#A-L200"> 200</a> </span>
+<span id="A-L201" class="line"><a href="#A-L201"> 201</a>         rknn = RKNN(verbose=True)</span>
+<span id="A-L202" class="line"><a href="#A-L202"> 202</a>         try:</span>
+<span id="A-L203" class="line"><a href="#A-L203"> 203</a>             ret = rknn.config(target_platform=&quot;rk3588&quot;)</span>
+<span id="A-L204" class="line"><a href="#A-L204"> 204</a>             if ret != 0:</span>
+<span id="A-L205" class="line"><a href="#A-L205"> 205</a>                 raise RuntimeError(f&quot;rknn.config failed, ret={ret}&quot;)</span>
+<span id="A-L206" class="line"><a href="#A-L206"> 206</a>             ret = rknn.load_onnx(model=str(rknn_onnx_path))</span>
+<span id="A-L207" class="line"><a href="#A-L207"> 207</a>             if ret != 0:</span>
+<span id="A-L208" class="line"><a href="#A-L208"> 208</a>                 raise RuntimeError(f&quot;rknn.load_onnx failed, ret={ret}&quot;)</span>
+<span id="A-L209" class="line"><a href="#A-L209"> 209</a>             ret = rknn.build(do_quantization=False)</span>
+<span id="A-L210" class="line"><a href="#A-L210"> 210</a>             if ret != 0:</span>
+<span id="A-L211" class="line"><a href="#A-L211"> 211</a>                 raise RuntimeError(f&quot;rknn.build failed, ret={ret}&quot;)</span>
+<span id="A-L212" class="line"><a href="#A-L212"> 212</a>             output_path.parent.mkdir(parents=True, exist_ok=True)</span>
+<span id="A-L213" class="line"><a href="#A-L213"> 213</a>             with tempfile.TemporaryDirectory(prefix=&quot;wbc_rknn_&quot;, dir=output_path.parent) as directory:</span>
+<span id="A-L214" class="line"><a href="#A-L214"> 214</a>                 candidate = Path(directory) / output_path.name</span>
+<span id="A-L215" class="line"><a href="#A-L215"> 215</a>                 ret = rknn.export_rknn(str(candidate))</span>
+<span id="A-L216" class="line"><a href="#A-L216"> 216</a>                 if ret != 0:</span>
+<span id="A-L217" class="line"><a href="#A-L217"> 217</a>                     raise RuntimeError(f&quot;rknn.export_rknn failed, ret={ret}&quot;)</span>
+<span id="A-L218" class="line"><a href="#A-L218"> 218</a>                 verify_reference(rknn, onnx_path, output_specs, reference_meta, args)</span>
+<span id="A-L219" class="line"><a href="#A-L219"> 219</a>                 candidate.replace(output_path)</span>
+<span id="A-L220" class="line"><a href="#A-L220"> 220</a>             print(f&quot;exported: {output_path}&quot;)</span>
+<span id="A-L221" class="line"><a href="#A-L221"> 221</a>         finally:</span>
+<span id="A-L222" class="line"><a href="#A-L222"> 222</a>             rknn.release()</span>
+<span id="A-L223" class="line"><a href="#A-L223"> 223</a>     return 0</span>
+<span id="A-L224" class="line"><a href="#A-L224"> 224</a> </span>
+<span id="A-L225" class="line"><a href="#A-L225"> 225</a> </span>
+<span id="A-L226" class="line"><a href="#A-L226"> 226</a> if __name__ == &quot;__main__&quot;:</span>
+<span id="A-L227" class="line"><a href="#A-L227"> 227</a>     try:</span>
+<span id="A-L228" class="line"><a href="#A-L228"> 228</a>         sys.exit(main())</span>
+<span id="A-L229" class="line"><a href="#A-L229"> 229</a>     except Exception as error:</span>
+<span id="A-L230" class="line"><a href="#A-L230"> 230</a>         print(f&quot;ERROR: {error}&quot;, file=sys.stderr)</span>
+<span id="A-L231" class="line"><a href="#A-L231"> 231</a>         sys.exit(1)</span></pre></html>

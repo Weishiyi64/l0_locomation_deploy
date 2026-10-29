@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_controllers/src/LeggedControllerTextMotion.cpp</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_controllers/src/LeggedControllerTextMotion.cpp</h1><p>基线 B_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><p>该版本不存在此文件。</p><h2 id="A">原版本 B</h2><pre><span id="A-L1" class="line"><a href="#A-L1">   1</a> #include &quot;legged_controllers/LeggedController.h&quot;</span>
+<span id="A-L2" class="line"><a href="#A-L2">   2</a> </span>
+<span id="A-L3" class="line"><a href="#A-L3">   3</a> namespace legged {</span>
+<span id="A-L4" class="line"><a href="#A-L4">   4</a> </span>
+<span id="A-L5" class="line"><a href="#A-L5">   5</a> void LeggedController::textMotionCallback(const std_msgs::msg::String::ConstSharedPtr msg) {</span>
+<span id="A-L6" class="line"><a href="#A-L6">   6</a>   std::unique_lock&lt;std::mutex&gt; lock(auxiliary_action_trigger_mutex_, std::try_to_lock);</span>
+<span id="A-L7" class="line"><a href="#A-L7">   7</a>   const bool allowed = lock.owns_lock() &amp;&amp; text_motion_start_allowed_.load() &amp;&amp;</span>
+<span id="A-L8" class="line"><a href="#A-L8">   8</a>                        !sequenceRuntime_.isActive() &amp;&amp; !policyMux_.imitationActiveCommanded() &amp;&amp;</span>
+<span id="A-L9" class="line"><a href="#A-L9">   9</a>                        !policyMux_.wbcActiveCommanded() &amp;&amp; !wbc_return_pending_.load() &amp;&amp;</span>
+<span id="A-L10" class="line"><a href="#A-L10">  10</a>                        !wbc_handoff_in_progress_.load();</span>
+<span id="A-L11" class="line"><a href="#A-L11">  11</a>   // Complete JSON parsing/validation stays on this dedicated executor group.</span>
+<span id="A-L12" class="line"><a href="#A-L12">  12</a>   publishTextMotionEvent(textMotionCtrl_.submitJson(msg-&gt;data, allowed));</span>
+<span id="A-L13" class="line"><a href="#A-L13">  13</a> }</span>
+<span id="A-L14" class="line"><a href="#A-L14">  14</a> </span>
+<span id="A-L15" class="line"><a href="#A-L15">  15</a> void LeggedController::textMotionCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg) {</span>
+<span id="A-L16" class="line"><a href="#A-L16">  16</a>   publishTextMotionEvent(textMotionCtrl_.cancel(msg-&gt;data));</span>
+<span id="A-L17" class="line"><a href="#A-L17">  17</a> }</span>
+<span id="A-L18" class="line"><a href="#A-L18">  18</a> </span>
+<span id="A-L19" class="line"><a href="#A-L19">  19</a> void LeggedController::publishTextMotionEvent(const TextMotionController::Event&amp; event) {</span>
+<span id="A-L20" class="line"><a href="#A-L20">  20</a>   if (event.state.empty()) return;</span>
+<span id="A-L21" class="line"><a href="#A-L21">  21</a>   std::lock_guard&lt;std::mutex&gt; lock(text_motion_events_mutex_);</span>
+<span id="A-L22" class="line"><a href="#A-L22">  22</a>   if (text_motion_events_.size() &gt;= 64) text_motion_events_.pop_front();</span>
+<span id="A-L23" class="line"><a href="#A-L23">  23</a>   text_motion_events_.push_back(event);</span>
+<span id="A-L24" class="line"><a href="#A-L24">  24</a> }</span>
+<span id="A-L25" class="line"><a href="#A-L25">  25</a> </span>
+<span id="A-L26" class="line"><a href="#A-L26">  26</a> void LeggedController::flushTextMotionEvents() {</span>
+<span id="A-L27" class="line"><a href="#A-L27">  27</a>   std::deque&lt;TextMotionController::Event&gt; events;</span>
+<span id="A-L28" class="line"><a href="#A-L28">  28</a>   {</span>
+<span id="A-L29" class="line"><a href="#A-L29">  29</a>     std::lock_guard&lt;std::mutex&gt; lock(text_motion_events_mutex_);</span>
+<span id="A-L30" class="line"><a href="#A-L30">  30</a>     events.swap(text_motion_events_);</span>
+<span id="A-L31" class="line"><a href="#A-L31">  31</a>   }</span>
+<span id="A-L32" class="line"><a href="#A-L32">  32</a>   for (const auto&amp; event : events)</span>
+<span id="A-L33" class="line"><a href="#A-L33">  33</a>   {</span>
+<span id="A-L34" class="line"><a href="#A-L34">  34</a>     std_msgs::msg::String message;</span>
+<span id="A-L35" class="line"><a href="#A-L35">  35</a>     message.data = TextMotionController::encodeEvent(event);</span>
+<span id="A-L36" class="line"><a href="#A-L36">  36</a>     textMotionStatusPub_-&gt;publish(message);</span>
+<span id="A-L37" class="line"><a href="#A-L37">  37</a>   }</span>
+<span id="A-L38" class="line"><a href="#A-L38">  38</a> }</span>
+<span id="A-L39" class="line"><a href="#A-L39">  39</a> </span>
+<span id="A-L40" class="line"><a href="#A-L40">  40</a> }  // namespace legged</span></pre></html>

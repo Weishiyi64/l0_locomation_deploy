@@ -1,0 +1,37 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>legged_deploy/include/wbc_json_reference.h</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>legged_deploy/include/wbc_json_reference.h</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> #pragma once</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> </span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> #include &lt;array&gt;</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> #include &lt;cstdint&gt;</span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> #include &lt;string&gt;</span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> #include &lt;utility&gt;</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a> #include &lt;vector&gt;</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a> </span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> std::vector&lt;std::pair&lt;double, double&gt;&gt; wbcJsonJointLimits(</span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>     const std::string&amp; mapping_file, const std::vector&lt;std::string&gt;&amp; joint_names);</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a> </span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a> // The deployed command_short ABI consumes only root pose + 21 joint positions.</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a> // For an upper-body-only reference with fixed root/lower body, these are exactly</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a> // the values used by the previous MuJoCo -&gt; reference-ONNX -&gt; RKNN path.</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a> class WbcJsonReference {</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>  public:</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>   using Joints = std::array&lt;float, 21&gt;;</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>   WbcJsonReference(const std::string&amp; payload, const std::vector&lt;std::string&gt;&amp; joint_names,</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>                    const std::vector&lt;std::pair&lt;double, double&gt;&gt;&amp; limits, const std::string&amp; base_hash,</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a>                    const std::array&lt;double, 3&gt;* base_position = nullptr,</span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>                    const std::array&lt;double, 4&gt;* base_orientation = nullptr);</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>   const std::string&amp; id() const { return id_; }</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>   const Joints&amp; frame(int index) const;</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a>   const Joints&amp; start() const { return start_; }</span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>   const std::array&lt;double, 3&gt;&amp; rootPosition() const { return root_position_; }</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>   const std::array&lt;double, 4&gt;&amp; rootOrientation() const { return root_orientation_; }</span>
+<span id="C-L27" class="line"><a href="#C-L27">  27</a>   std::size_t size() const { return frames_.size(); }</span>
+<span id="C-L28" class="line"><a href="#C-L28">  28</a>   bool expired() const;</span>
+<span id="C-L29" class="line"><a href="#C-L29">  29</a> </span>
+<span id="C-L30" class="line"><a href="#C-L30">  30</a>  private:</span>
+<span id="C-L31" class="line"><a href="#C-L31">  31</a>   std::string id_;</span>
+<span id="C-L32" class="line"><a href="#C-L32">  32</a>   std::int64_t expires_at_ms_{0};</span>
+<span id="C-L33" class="line"><a href="#C-L33">  33</a>   Joints start_{};</span>
+<span id="C-L34" class="line"><a href="#C-L34">  34</a>   std::array&lt;double, 3&gt; root_position_{};</span>
+<span id="C-L35" class="line"><a href="#C-L35">  35</a>   std::array&lt;double, 4&gt; root_orientation_{};</span>
+<span id="C-L36" class="line"><a href="#C-L36">  36</a>   std::vector&lt;Joints&gt; frames_;</span>
+<span id="C-L37" class="line"><a href="#C-L37">  37</a> };</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>

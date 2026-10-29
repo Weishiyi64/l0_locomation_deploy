@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>texttomotion/board_runtime.py</title><style>body{font:14px/1.5 system-ui;margin:24px}pre{font:12px/1.5 monospace;background:#f6f8fa;padding:14px;overflow:auto}.line{display:block}.line:target{background:#fff0a5}a{color:#327397;text-decoration:none}h1{font-size:20px;overflow-wrap:anywhere}</style><h1>texttomotion/board_runtime.py</h1><p>基线 A_to_C；<a href="#C">当前版本</a> · <a href="#A">原版本</a></p><h2 id="C">当前版本 C</h2><pre><span id="C-L1" class="line"><a href="#C-L1">   1</a> &quot;&quot;&quot;Select a process-local RKNN runtime without replacing system libraries.&quot;&quot;&quot;</span>
+<span id="C-L2" class="line"><a href="#C-L2">   2</a> import os</span>
+<span id="C-L3" class="line"><a href="#C-L3">   3</a> from pathlib import Path</span>
+<span id="C-L4" class="line"><a href="#C-L4">   4</a> </span>
+<span id="C-L5" class="line"><a href="#C-L5">   5</a> </span>
+<span id="C-L6" class="line"><a href="#C-L6">   6</a> def rknn_lite_class():</span>
+<span id="C-L7" class="line"><a href="#C-L7">   7</a>     from rknnlite.api import RKNNLite</span>
+<span id="C-L8" class="line"><a href="#C-L8">   8</a>     import rknnlite.api.rknn_lite as lite_module</span>
+<span id="C-L9" class="line"><a href="#C-L9">   9</a> </span>
+<span id="C-L10" class="line"><a href="#C-L10">  10</a>     value = os.environ.get(&quot;RKNN_RUNTIME_LIB&quot;)</span>
+<span id="C-L11" class="line"><a href="#C-L11">  11</a>     if value:</span>
+<span id="C-L12" class="line"><a href="#C-L12">  12</a>         library = Path(value).expanduser().resolve(strict=True)</span>
+<span id="C-L13" class="line"><a href="#C-L13">  13</a>         if not library.is_file() or library.name != &quot;librknnrt.so&quot;:</span>
+<span id="C-L14" class="line"><a href="#C-L14">  14</a>             raise ValueError(&quot;RKNN_RUNTIME_LIB must name an existing librknnrt.so&quot;)</span>
+<span id="C-L15" class="line"><a href="#C-L15">  15</a>         # Lite2 2.3.2 chooses /usr/lib/librknnrt.so by an absolute path on</span>
+<span id="C-L16" class="line"><a href="#C-L16">  16</a>         # aarch64. LD_LIBRARY_PATH cannot override that choice. Override only</span>
+<span id="C-L17" class="line"><a href="#C-L17">  17</a>         # the SDK&#x27;s path selection; inference and numerical settings are intact.</span>
+<span id="C-L18" class="line"><a href="#C-L18">  18</a>         base = getattr(lite_module, &quot;_deployment_runtime_base&quot;, lite_module.RKNNRuntime)</span>
+<span id="C-L19" class="line"><a href="#C-L19">  19</a>         lite_module._deployment_runtime_base = base</span>
+<span id="C-L20" class="line"><a href="#C-L20">  20</a> </span>
+<span id="C-L21" class="line"><a href="#C-L21">  21</a>         class ExplicitLibraryRuntime(base):</span>
+<span id="C-L22" class="line"><a href="#C-L22">  22</a>             def _get_rknn_api_lib_path(self):</span>
+<span id="C-L23" class="line"><a href="#C-L23">  23</a>                 return str(library)</span>
+<span id="C-L24" class="line"><a href="#C-L24">  24</a> </span>
+<span id="C-L25" class="line"><a href="#C-L25">  25</a>         lite_module.RKNNRuntime = ExplicitLibraryRuntime</span>
+<span id="C-L26" class="line"><a href="#C-L26">  26</a>     return RKNNLite</span></pre><h2 id="A">原版本 A</h2><p>该版本不存在此文件。</p></html>
