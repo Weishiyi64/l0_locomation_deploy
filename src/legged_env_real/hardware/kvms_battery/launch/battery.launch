@@ -1,9 +1,0 @@
-<?xml version="1.0"?>
-<launch>
-  <arg name="config_file" default="$(find kvms_battery)/config/battery_config.yaml" doc="Path to battery configuration file"/>
-  <rosparam command="load" file="$(arg config_file)" />
-
-  <node name="battery_node" pkg="kvms_battery" type="battery_node" output="screen" respawn="false">
-  </node>
-
-</launch>

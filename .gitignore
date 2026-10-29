@@ -1,26 +1,13 @@
+# Policy assets are deployed separately and must never be committed.
+**/policy/
+
+# Generated workspace output and local data.
 /build/
 /install/
 /log/
-/__pycache__/
+/records/
+/deliveries/
+/model_sources/
 **/__pycache__/
 *.py[cod]
-
-# Runtime-generated text-motion output and temporary packaging slots.
-/motion.json
-/src/legged_deploy/policy/l0_v3/text_motion_wbc_stg25_a/
-/src/legged_deploy/policy/l0_v3/text_motion_wbc_stg25_b/
-/src/legged_deploy/policy/l0_v3/.text_motion_wbc_*/
-
-# Local recordings and editor state.
-/bag/
-/.vscode/
-
-# Generated files
-build/
-install/
-log/
-__pycache__/
-*.pyc
-motion*.json
-.vscode/
-symlink_install_manifest.txt
+.DS_Store

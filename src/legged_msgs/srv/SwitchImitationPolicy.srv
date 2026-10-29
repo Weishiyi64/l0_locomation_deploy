@@ -1,6 +1,0 @@
-string policy_name
----
-bool success
-string message
-string policy_name
-string robot_cfg_path

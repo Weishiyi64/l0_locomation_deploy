@@ -1,9 +1,0 @@
-# Ignore Visual Studio Code files
-.vscode/
-*~
-*.tar.gz
-*.zip
-*.diff
-__pycache__/
-*.py[cod]
-*.orig

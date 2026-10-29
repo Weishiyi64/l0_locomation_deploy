@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>legged_deploy</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="starimpact@126.com">luvbot</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>luvbot_control_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+    <!-- if your code really uses actions / control msgs, keep these -->
+  <depend>control_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>rclcpp_action</depend>
+
+  <!-- runtime tools (if you launch them from this pkg / depend on them) -->
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+
+  <!-- build-time helper for Eigen3 in ROS2 -->
+  <build_depend>eigen3_cmake_module</build_depend>
+
+  <!-- system dependencies -->
+  <depend>yaml-cpp</depend>
+  <depend>openssl</depend>
+  <depend>openvino</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

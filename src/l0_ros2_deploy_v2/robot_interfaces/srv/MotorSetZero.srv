@@ -1,0 +1,13 @@
+# motors.yaml index; same meaning as the existing motor_types topic fields.
+uint8[] motor_types
+---
+uint8 CONFIRMED=0
+uint8 REJECTED=1
+uint8 SEND_FAILED=2
+uint8 DEVICE_FAILED=3
+uint8 TIMEOUT=4
+uint8 UNCONFIRMABLE=5
+
+uint8[] motor_types
+uint8[] results
+string[] messages

@@ -1,8 +1,0 @@
-numpy==2.5.1
-onnx==1.22.0
-onnxruntime==1.28.0
-torch==2.10.0
-mujoco==3.11.0
-PyYAML==6.0.3
-imageio==2.37.4
-imageio-ffmpeg==0.6.0

@@ -1,7 +1,0 @@
-RobotHw:
-  joint_filter_coeff_real: 0.9
-  imu_filter_coeff_real: 0.8
-
-  imu_startup_timeout: 20.0
-  imu_connection_timeout: 0.5
-  max_consecutive_missing: 50
