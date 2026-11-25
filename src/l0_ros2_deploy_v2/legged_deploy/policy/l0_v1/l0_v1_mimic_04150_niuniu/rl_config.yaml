@@ -1,0 +1,38 @@
+RobotCfg:
+  policy_type: "rl_imitation"
+  policy_name: "policy"
+  motion_name: "motion"
+  pub_imitationref_joint_states: false
+
+  joint_order_isaac: ['left_hip_pitch_joint', 'left_shoulder_pitch_joint', 'neck_yaw_joint', 'right_hip_pitch_joint', 'right_shoulder_pitch_joint', 'left_hip_roll_joint', 'left_shoulder_roll_joint', 'neck_pitch_joint', 'right_hip_roll_joint', 'right_shoulder_roll_joint', 'left_hip_yaw_joint', 'left_elbow_roll_joint', 'neck_roll_joint', 'right_hip_yaw_joint', 'right_elbow_roll_joint', 'left_knee_joint', 'right_knee_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint']
+  joint_order_mj: ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_elbow_roll_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_elbow_roll_joint', 'neck_yaw_joint', 'neck_pitch_joint', 'neck_roll_joint']
+  kps: [11.8440, 11.8440, 11.8440, 11.8440, 7.8960, 7.8960, 11.8440, 11.8440, 11.8440, 11.8440, 7.8960, 7.8960, 0.6910, 0.6910, 0.6910, 0.6910, 0.6910, 0.6910, 0.6910, 0.6910, 0.6910]
+  kds: [1.5080, 1.5080, 1.5080, 1.5080, 0.7540, 0.7540, 1.5080, 1.5080, 1.5080, 1.5080, 0.7540, 0.7540, 0.0880, 0.0880, 0.0880, 0.0880, 0.0880, 0.0880, 0.0880, 0.0880, 0.0880]
+  default_joint_angles: [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000]
+  action_scale: [0.7600, 0.5700, 0.2960, 0.7600, 0.4430, 0.3800, 0.7600, 0.5700, 0.2960, 0.7600, 0.4430, 0.3800, 1.9900, 1.9900, 1.9900, 1.9900, 1.9900, 1.9900, 1.9900, 1.9900, 1.9900]
+  
+  policy_frequency: 50
+  lowlevel_frequency: 500
+
+  num_actions: 21
+  num_single_obs: 114
+  frame_stack: 1
+
+  clip_obs: 2500000.0
+  clip_actions: 1000000.0
+
+    # Command configuration: specify which motion.onnx outputs to use
+  command_config:
+    items:
+      - {type: "joint_pos", dim: 21}
+      - {type: "joint_vel", dim: 21}
+
+  # Observation configuration for automatic assembly
+  observation_config:
+    items:
+      - {type: "command",          dim: 42,  scale: 1.0}
+      - {type: "anchor_ori",       dim: 6,   scale: 1.0}
+      - {type: "base_ang_vel",     dim: 3,   scale: 1.0}
+      - {type: "joint_pos",        dim: 21,  scale: 1.0}
+      - {type: "joint_vel",        dim: 21,  scale: 1.0}
+      - {type: "actions",          dim: 21,  scale: 1.0}

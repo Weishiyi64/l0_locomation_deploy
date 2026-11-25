@@ -1,0 +1,39 @@
+{
+  "format": "l0_v5_wbc_json_batch_v1",
+  "checkpoint_stem": "checkpoint_2000",
+  "checkpoint_sha256": "aa02d8da0106231ce5b3160a891d81f0f344c8fcd99d5fc9223340092a41bfc7",
+  "checkpoint_yaml_sha256": "fa4730f5e71a8da861187c44e80ec01b32666f8aa436c13b03595ade29ac2d39",
+  "amp_profile_sha256": "c24a456e917a4b0368cd2f966062f34881a8ae0972536af676fa1ece9df8addf",
+  "actions": [
+    {
+      "motion_id": "TEXT01",
+      "source_sha256": "725d71e7822bb1b7e5b767b87734cad3c4e7bb37dc1b120dddc0332fe8ad0c56",
+      "reference_sha256": "87c9db880b2b4910399702fb8e28d3d96b2e2e7a194cc71dd96a6ef8e0fb7d7f",
+      "source_frames": 107,
+      "reference_frames": 207,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    },
+    {
+      "motion_id": "TEXT02",
+      "source_sha256": "76a0d58bc84437db1fa6438f8fc2e770f97b24beee792b2c89e56e38a86a99e5",
+      "reference_sha256": "4b08260bf494c8be8ee82657cebceeb12a394ad0d2b991d87e36fe81a45c4ebb",
+      "source_frames": 136,
+      "reference_frames": 236,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    }
+  ],
+  "rknn_status": "not_converted",
+  "source_model": "checkpoint_2000.pt",
+  "installed_actions": [
+    "TEXT01",
+    "TEXT02"
+  ]
+}

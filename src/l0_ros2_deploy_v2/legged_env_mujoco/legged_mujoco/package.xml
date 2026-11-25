@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>legged_mujoco</name>
+  <version>0.0.0</version>
+  <description>Launch wrapper selecting MuJoCo as the common actuator interface provider.</description>
+
+  <maintainer email="luvbot@luvbot.com">luvbot</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <!-- ament build system -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>legged_controllers</exec_depend>
+  <exec_depend>legged_deploy</exec_depend>
+  <exec_depend>legged_real</exec_depend>
+  <exec_depend>system_command_arbiter</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,13 @@
+<launch>
+    <arg name="robot_type" default="atom_v3_smallfeet"/>
+    <arg name="description_path" default="$(eval '$(find ' + arg('robot_type') + '_description)')"/>
+    <arg name="legged_robot_scene" default="$(eval arg('description_path') + '/mjcf/' + arg('robot_type') + '.xml')"/>
+    <arg name="body_name" default="base_link"/>
+
+    <!-- Expose resolved scene path for quick inspection: rosparam get /mujoco_scene -->
+    <param name="mujoco_scene" value="$(arg legged_robot_scene)"/>
+
+    <node name="mujoco" pkg="mujoco" type="mujoco_simulate" respawn="false"
+        clear_params="true" args="$(arg legged_robot_scene) $(arg body_name)" output="screen"
+        launch-prefix="bash -c 'source $(find mujoco)/scripts/setup_mujoco_software_rendering.sh; exec $0 $@' --" />
+</launch>

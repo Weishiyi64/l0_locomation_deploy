@@ -1,0 +1,8 @@
+sequence:
+  base_vel_ramp_sec: 0.0
+  csv_entry_blend_sec: 0.35
+  csv_exit_blend_sec: 0.35
+  phases:
+    - name: L0_emotion_2
+      mode: rl_with_csv
+      csv: csv/L0_excited_a.csv

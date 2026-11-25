@@ -1,0 +1,53 @@
+# ROS / colcon / catkin build trees
+**/build/
+**/install/
+**/log/
+**/devel/
+**/.colcon/
+
+# CMake generated files
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+**/compile_commands.json
+**/*.cmake.user
+
+# Compiled objects, libraries and executables
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+
+# Python caches and tooling output
+**/__pycache__/
+*.py[cod]
+*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+
+# Runtime logs, crash dumps and ROS bags
+*.log
+core
+core.*
+rosbag2_*/
+*.db3
+*.mcap
+
+# Editor and operating-system files
+.DS_Store
+**/.vscode/
+**/.idea/
+*.swp
+*.swo
+*~

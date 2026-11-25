@@ -1,0 +1,17 @@
+{
+  "format": "wbc_rknn_conversion_v1",
+  "source_sha256": "a4f4258a3a2787ab505dcf3b1a7f01e0cf2d8467e5e93df875d8ba758d2eb1d8",
+  "rknn_sha256": "0ba694578d98f5f873e2dc905e277d13cd9a77eed6f7de89ec3c4381aa6951f0",
+  "precision": "float16",
+  "do_quantization": false,
+  "toolkit_version": "2.3.2",
+  "target_platform": "rk3588",
+  "converter_sha256": "31f3fbfd34eea29312349b9c469f8f0265d1e5ccd165934c08ff3df300651bb7",
+  "asset_helper_sha256": "1d9f577929cd42cfd72ba9a356aff7c4b94c012576384da216a90c6579b55547",
+  "verification_backend": "not_run",
+  "validation_status": "converted_pending_runtime",
+  "target": null,
+  "device_id": null,
+  "verification": null,
+  "max_abs_error": 0.02
+}

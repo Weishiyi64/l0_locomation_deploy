@@ -1,0 +1,252 @@
+observation:
+  command_short:
+    ref_root_pos_future_local:
+      _target_: mimic_lite.ref_body_pos_future_local
+      body_names: base_link
+      future_steps:
+      - -8
+      - -4
+      - -2
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      noise_std: 0.005
+    ref_root_ori_future_b:
+      _target_: mimic_lite.ref_root_ori_future_b
+      future_steps:
+      - -8
+      - -4
+      - -2
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      noise_std: 0.05
+    ref_joint_pos_future:
+      _target_: mimic_lite.ref_joint_pos_future
+      future_steps:
+      - -8
+      - -4
+      - -2
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      noise_std: 0.01
+  policy:
+    root_ang_vel_history:
+      _target_: mimic_lite.root_ang_vel_history
+      history_steps:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+      - 16
+      noise_std: 0.2
+    projected_gravity_history:
+      _target_: mimic_lite.projected_gravity_history
+      history_steps:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+      - 16
+      noise_std: 0.01
+    joint_pos_history:
+      _target_: mimic_lite.joint_pos_history
+      history_steps:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+      - 16
+      noise_std: 0.02
+    joint_vel_history:
+      _target_: mimic_lite.joint_vel_history
+      history_steps:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+      - 16
+      noise_std: 0.5
+    prev_actions:
+      _target_: mimic_lite.prev_actions
+      steps: 3
+joint_names_simulation:
+- left_hip_pitch_joint
+- left_hip_roll_joint
+- left_hip_yaw_joint
+- left_knee_joint
+- left_ankle_pitch_joint
+- left_ankle_roll_joint
+- right_hip_pitch_joint
+- right_hip_roll_joint
+- right_hip_yaw_joint
+- right_knee_joint
+- right_ankle_pitch_joint
+- right_ankle_roll_joint
+- left_shoulder_pitch_joint
+- left_shoulder_roll_joint
+- left_elbow_roll_joint
+- right_shoulder_pitch_joint
+- right_shoulder_roll_joint
+- right_elbow_roll_joint
+- neck_yaw_joint
+- neck_pitch_joint
+- neck_roll_joint
+body_names_simulation:
+- base_link
+- left_hip_pitch_link
+- left_hip_roll_link
+- left_hip_yaw_link
+- left_knee_link
+- left_ankle_pitch_link
+- left_ankle_roll_link
+- right_hip_pitch_link
+- right_hip_roll_link
+- right_hip_yaw_link
+- right_knee_link
+- right_ankle_pitch_link
+- right_ankle_roll_link
+- left_shoulder_pitch_link
+- left_shoulder_roll_link
+- left_elbow_roll_link
+- right_shoulder_pitch_link
+- right_shoulder_roll_link
+- right_elbow_roll_link
+- neck_yaw_link
+- neck_pitch_link
+- neck_roll_link
+joint_kp:
+  .*_hip_pitch_joint: 11.843525280630205
+  .*_hip_roll_joint: 11.843525280630205
+  .*_hip_yaw_joint: 11.843525280630205
+  .*_knee_joint: 11.843525280630205
+  .*_ankle_pitch_joint: 21.476259175542776
+  .*_ankle_roll_joint: 5.448969111112345
+  .*_shoulder_.*_joint: 0.6908723080369494
+  .*_elbow_roll_joint: 0.6908723080369494
+  neck_.*_joint: 5.448969111112345
+joint_kd:
+  .*_hip_pitch_joint: 1.50796447368
+  .*_hip_roll_joint: 1.50796447368
+  .*_hip_yaw_joint: 1.50796447368
+  .*_knee_joint: 1.50796447368
+  .*_ankle_pitch_joint: 2.7344422456064
+  .*_ankle_roll_joint: 0.6937842950506944
+  .*_shoulder_.*_joint: 0.10995574286938435
+  .*_elbow_roll_joint: 0.10995574286938435
+  neck_.*_joint: 0.867230368813368
+default_joint_pos:
+  .*: 0.0
+policy_joint_names:
+- left_hip_pitch_joint
+- left_hip_roll_joint
+- left_hip_yaw_joint
+- left_knee_joint
+- left_ankle_pitch_joint
+- left_ankle_roll_joint
+- right_hip_pitch_joint
+- right_hip_roll_joint
+- right_hip_yaw_joint
+- right_knee_joint
+- right_ankle_pitch_joint
+- right_ankle_roll_joint
+- left_shoulder_pitch_joint
+- left_shoulder_roll_joint
+- left_elbow_roll_joint
+- right_shoulder_pitch_joint
+- right_shoulder_roll_joint
+- right_elbow_roll_joint
+- neck_yaw_joint
+- neck_pitch_joint
+- neck_roll_joint
+action_scale:
+- 0.7598999738693237
+- 0.5698999762535095
+- 0.2639000117778778
+- 0.7598999738693237
+- 0.28519999980926514
+- 0.550599992275238
+- 0.7598999738693237
+- 0.5698999762535095
+- 0.2639000117778778
+- 0.7598999738693237
+- 0.28519999980926514
+- 0.550599992275238
+- 1.9902000427246094
+- 1.9902000427246094
+- 1.9902000427246094
+- 1.9902000427246094
+- 1.9902000427246094
+- 1.9902000427246094
+- 0.550599992275238
+- 0.550599992275238
+- 0.550599992275238
+robot_asset: l0_v5_wbc_pd
+control_dt: 0.02
+physics_dt: 0.005
+motion:
+  motion_cfgs:
+    emotion:
+      path: /home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/affectionate/L0_Hugme
+      weight: 1.0
+      full_motion: true
+      shard: false
+      filenames:
+      - L0_Hugme.npz
+  motion_path: /home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/affectionate/L0_Hugme
+  future_steps:
+  - -8
+  - -4
+  - -2
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  body_names:
+  - base_link
+  - left_hip_roll_link
+  - left_knee_link
+  - left_ankle_roll_link
+  - right_hip_roll_link
+  - right_knee_link
+  - right_ankle_roll_link
+  joint_names:
+  - left_hip_pitch_joint
+  - left_hip_roll_joint
+  - left_hip_yaw_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_hip_pitch_joint
+  - right_hip_roll_joint
+  - right_hip_yaw_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - left_shoulder_pitch_joint
+  - left_shoulder_roll_joint
+  - left_elbow_roll_joint
+  - right_shoulder_pitch_joint
+  - right_shoulder_roll_joint
+  - right_elbow_roll_joint
+  - neck_yaw_joint
+  - neck_pitch_joint
+  - neck_roll_joint
+  root_body_name: base_link
+  anchor_body_name: base_link

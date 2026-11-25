@@ -1,0 +1,1581 @@
+{
+  "samples_per_action": 33,
+  "inputs": "synthetic normalized-range conversion samples, not robot rollout",
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "base_actions": [],
+  "actions": [
+    {
+      "action_id": "L0_Hugme",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0006679892539978027
+    },
+    {
+      "action_id": "L0_act_cute_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.0004254579544067383
+    },
+    {
+      "action_id": "L0_act_cute_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0005508363246917725
+    },
+    {
+      "action_id": "L0_act_cute_3",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0009518414735794067
+    },
+    {
+      "action_id": "L0_act_cute_7",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0004996508359909058
+    },
+    {
+      "action_id": "L0_act_cute_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 9.5367431640625e-07,
+      "fp16_payload_max_abs": 0.00048304349184036255
+    },
+    {
+      "action_id": "L0_act_cute_new_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.9073486328125e-06,
+      "fp16_payload_max_abs": 0.0005376338958740234
+    },
+    {
+      "action_id": "L0_act_cute_new_3",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0006235092878341675
+    },
+    {
+      "action_id": "L0_act_cute_new_4",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0007446631789207458
+    },
+    {
+      "action_id": "L0_tired_hugme",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0006616264581680298
+    },
+    {
+      "action_id": "L0_NotLeave",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.0006165280938148499
+    },
+    {
+      "action_id": "L0_SayNo_17",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0006492137908935547
+    },
+    {
+      "action_id": "L0_angry_10",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0005195364356040955
+    },
+    {
+      "action_id": "L0_angry_7",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0005554556846618652
+    },
+    {
+      "action_id": "L0_angry_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 2.0265579223632812e-06,
+      "fp16_payload_max_abs": 0.0005384683609008789
+    },
+    {
+      "action_id": "L0_angry_9",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.000540614128112793
+    },
+    {
+      "action_id": "L0_angry_baoshouqiaojiao",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1324882507324219e-06,
+      "fp16_payload_max_abs": 0.0004729032516479492
+    },
+    {
+      "action_id": "L0_angry_chayaotaitou",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1324882507324219e-06,
+      "fp16_payload_max_abs": 0.00045752525329589844
+    },
+    {
+      "action_id": "L0_angry_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 8.940696716308594e-07,
+      "fp16_payload_max_abs": 0.00054168701171875
+    },
+    {
+      "action_id": "L0_angry_new_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.0728836059570312e-06,
+      "fp16_payload_max_abs": 0.0005518794059753418
+    },
+    {
+      "action_id": "L0_peace_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.0004687309265136719
+    },
+    {
+      "action_id": "L0_peace_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.00039255619049072266
+    },
+    {
+      "action_id": "L0_peace_new_01_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.0008730888366699219
+    },
+    {
+      "action_id": "L0_peace_new_02_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0005796551704406738
+    },
+    {
+      "action_id": "L0_peace_new_03_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.00046885013580322266
+    },
+    {
+      "action_id": "L0_peace_new_04_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1324882507324219e-06,
+      "fp16_payload_max_abs": 0.000500798225402832
+    },
+    {
+      "action_id": "L0_peace_new_05_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0005726218223571777
+    },
+    {
+      "action_id": "L0_peace_new_06_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0004690587520599365
+    },
+    {
+      "action_id": "L0_peace_new_07_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.0006948113441467285
+    },
+    {
+      "action_id": "L0_peace_new_08_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.2665987014770508e-06,
+      "fp16_payload_max_abs": 0.0005167722702026367
+    },
+    {
+      "action_id": "L0_16_strange",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 9.5367431640625e-07,
+      "fp16_payload_max_abs": 0.0006942152976989746
+    },
+    {
+      "action_id": "L0_strange_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.0004596114158630371
+    },
+    {
+      "action_id": "L0_strange_new_1_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.00040405988693237305
+    },
+    {
+      "action_id": "L0_strange_new_2_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0005248188972473145
+    },
+    {
+      "action_id": "L0_strange_new_3_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0004589557647705078
+    },
+    {
+      "action_id": "L0_strange_new_4",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.7881393432617188e-06,
+      "fp16_payload_max_abs": 0.0004889965057373047
+    },
+    {
+      "action_id": "L0_strange_new_5",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0004392266273498535
+    },
+    {
+      "action_id": "L0_strange_new_5_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6689300537109375e-06,
+      "fp16_payload_max_abs": 0.00042957067489624023
+    },
+    {
+      "action_id": "L0_strange_new_6_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0005986392498016357
+    },
+    {
+      "action_id": "L0_strange_new_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.9073486328125e-06,
+      "fp16_payload_max_abs": 0.00045333802700042725
+    },
+    {
+      "action_id": "L0_Approve_13",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0004911422729492188
+    },
+    {
+      "action_id": "L0_excited_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.00047534704208374023
+    },
+    {
+      "action_id": "L0_excited_7",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0004762411117553711
+    },
+    {
+      "action_id": "L0_excited_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.389533281326294e-06,
+      "fp16_payload_max_abs": 0.0006164908409118652
+    },
+    {
+      "action_id": "L0_excited_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.4901161193847656e-06,
+      "fp16_payload_max_abs": 0.00045896321535110474
+    },
+    {
+      "action_id": "L0_excited_new_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0005874931812286377
+    },
+    {
+      "action_id": "L0_excited_new_3",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0006039142608642578
+    },
+    {
+      "action_id": "L0_excited_new_4",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0008747577667236328
+    },
+    {
+      "action_id": "L0_excited_new_5",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0006721019744873047
+    },
+    {
+      "action_id": "L0_excited_new_6",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.9073486328125e-06,
+      "fp16_payload_max_abs": 0.00043022632598876953
+    },
+    {
+      "action_id": "L0_AfraidToLeave",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1324882507324219e-06,
+      "fp16_payload_max_abs": 0.0004730224609375
+    },
+    {
+      "action_id": "L0_SayNo_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0005509555339813232
+    },
+    {
+      "action_id": "L0_fear_10",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.00044855475425720215
+    },
+    {
+      "action_id": "L0_fear_7_A",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0005738735198974609
+    },
+    {
+      "action_id": "L0_fear_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3709068298339844e-06,
+      "fp16_payload_max_abs": 0.0006213635206222534
+    },
+    {
+      "action_id": "L0_fear_8_new_",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1324882507324219e-06,
+      "fp16_payload_max_abs": 0.00039327144622802734
+    },
+    {
+      "action_id": "L0_fear_9",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0006037354469299316
+    },
+    {
+      "action_id": "L0_fear_defend",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0007366538047790527
+    },
+    {
+      "action_id": "L0_fear_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3709068298339844e-06,
+      "fp16_payload_max_abs": 0.0006080865859985352
+    },
+    {
+      "action_id": "L0_fear_new_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.0728836059570312e-06,
+      "fp16_payload_max_abs": 0.0005024373531341553
+    },
+    {
+      "action_id": "L0_sad_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6093254089355469e-06,
+      "fp16_payload_max_abs": 0.0008044242858886719
+    },
+    {
+      "action_id": "L0_sad_10",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.0006145834922790527
+    },
+    {
+      "action_id": "L0_sad_7",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0005254819989204407
+    },
+    {
+      "action_id": "L0_sad_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.2516975402832031e-06,
+      "fp16_payload_max_abs": 0.00048810243606567383
+    },
+    {
+      "action_id": "L0_sad_9",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3709068298339844e-06,
+      "fp16_payload_max_abs": 0.0005654096603393555
+    },
+    {
+      "action_id": "L0_sad_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.000389784574508667
+    },
+    {
+      "action_id": "L0_sad_new_2",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0005794838070869446
+    },
+    {
+      "action_id": "L0_sad_new_3",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.341104507446289e-06,
+      "fp16_payload_max_abs": 0.0005047917366027832
+    },
+    {
+      "action_id": "L0_sad_new_4",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0005690902471542358
+    },
+    {
+      "action_id": "L0_sad_wanyao",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.5497207641601562e-06,
+      "fp16_payload_max_abs": 0.0004634261131286621
+    },
+    {
+      "action_id": "L0_14_satisfied",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.00037300586700439453
+    },
+    {
+      "action_id": "L0_Approve_24",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0006222203373908997
+    },
+    {
+      "action_id": "L0_Approve_26",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.00041484832763671875
+    },
+    {
+      "action_id": "L0_Approve_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.430511474609375e-06,
+      "fp16_payload_max_abs": 0.0006733834743499756
+    },
+    {
+      "action_id": "L0_delicious",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.2293457984924316e-06,
+      "fp16_payload_max_abs": 0.0005117207765579224
+    },
+    {
+      "action_id": "L0_satisfied_10",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.3113021850585938e-06,
+      "fp16_payload_max_abs": 0.0004420280456542969
+    },
+    {
+      "action_id": "L0_satisfied_7",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.1920928955078125e-06,
+      "fp16_payload_max_abs": 0.0006752610206604004
+    },
+    {
+      "action_id": "L0_satisfied_8",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.7881393432617188e-06,
+      "fp16_payload_max_abs": 0.0005685538053512573
+    },
+    {
+      "action_id": "L0_satisfied_9",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.6093254089355469e-06,
+      "fp16_payload_max_abs": 0.0004069805145263672
+    },
+    {
+      "action_id": "L0_satisfied_new_1",
+      "parameter_source": "lora",
+      "expected_source": "final_checkpoint_actor",
+      "fp32_max_abs": 1.0728836059570312e-06,
+      "fp16_payload_max_abs": 0.0004430413246154785
+    }
+  ],
+  "probes": [
+    {
+      "name": "encoder",
+      "linear_index": 0,
+      "onnx_checker": "passed",
+      "cpu_verification": [
+        {
+          "action_id": "L0_Hugme",
+          "fp16_payload_max_abs": 0.0015871524810791016
+        },
+        {
+          "action_id": "L0_act_cute_1",
+          "fp16_payload_max_abs": 0.0022134780883789062
+        },
+        {
+          "action_id": "L0_act_cute_2",
+          "fp16_payload_max_abs": 0.0033330917358398438
+        },
+        {
+          "action_id": "L0_act_cute_3",
+          "fp16_payload_max_abs": 0.0017037391662597656
+        },
+        {
+          "action_id": "L0_act_cute_7",
+          "fp16_payload_max_abs": 0.0019538402557373047
+        },
+        {
+          "action_id": "L0_act_cute_new_1",
+          "fp16_payload_max_abs": 0.0026264190673828125
+        },
+        {
+          "action_id": "L0_act_cute_new_2",
+          "fp16_payload_max_abs": 0.002971649169921875
+        },
+        {
+          "action_id": "L0_act_cute_new_3",
+          "fp16_payload_max_abs": 0.00263214111328125
+        },
+        {
+          "action_id": "L0_act_cute_new_4",
+          "fp16_payload_max_abs": 0.0013194084167480469
+        },
+        {
+          "action_id": "L0_tired_hugme",
+          "fp16_payload_max_abs": 0.0019428730010986328
+        },
+        {
+          "action_id": "L0_NotLeave",
+          "fp16_payload_max_abs": 0.0029144287109375
+        },
+        {
+          "action_id": "L0_SayNo_17",
+          "fp16_payload_max_abs": 0.0029315948486328125
+        },
+        {
+          "action_id": "L0_angry_10",
+          "fp16_payload_max_abs": 0.0020503997802734375
+        },
+        {
+          "action_id": "L0_angry_7",
+          "fp16_payload_max_abs": 0.0016422271728515625
+        },
+        {
+          "action_id": "L0_angry_8",
+          "fp16_payload_max_abs": 0.0017995834350585938
+        },
+        {
+          "action_id": "L0_angry_9",
+          "fp16_payload_max_abs": 0.00241851806640625
+        },
+        {
+          "action_id": "L0_angry_baoshouqiaojiao",
+          "fp16_payload_max_abs": 0.0022764205932617188
+        },
+        {
+          "action_id": "L0_angry_chayaotaitou",
+          "fp16_payload_max_abs": 0.0021572113037109375
+        },
+        {
+          "action_id": "L0_angry_new_1",
+          "fp16_payload_max_abs": 0.0027284622192382812
+        },
+        {
+          "action_id": "L0_angry_new_2",
+          "fp16_payload_max_abs": 0.0030364990234375
+        },
+        {
+          "action_id": "L0_peace_1",
+          "fp16_payload_max_abs": 0.0022230148315429688
+        },
+        {
+          "action_id": "L0_peace_2",
+          "fp16_payload_max_abs": 0.0019849538803100586
+        },
+        {
+          "action_id": "L0_peace_new_01_A",
+          "fp16_payload_max_abs": 0.0017328262329101562
+        },
+        {
+          "action_id": "L0_peace_new_02_A",
+          "fp16_payload_max_abs": 0.0020215511322021484
+        },
+        {
+          "action_id": "L0_peace_new_03_A",
+          "fp16_payload_max_abs": 0.0019254684448242188
+        },
+        {
+          "action_id": "L0_peace_new_04_A",
+          "fp16_payload_max_abs": 0.0018434524536132812
+        },
+        {
+          "action_id": "L0_peace_new_05_A",
+          "fp16_payload_max_abs": 0.002056121826171875
+        },
+        {
+          "action_id": "L0_peace_new_06_A",
+          "fp16_payload_max_abs": 0.0024352073669433594
+        },
+        {
+          "action_id": "L0_peace_new_07_A",
+          "fp16_payload_max_abs": 0.00180816650390625
+        },
+        {
+          "action_id": "L0_peace_new_08_A",
+          "fp16_payload_max_abs": 0.002735137939453125
+        },
+        {
+          "action_id": "L0_16_strange",
+          "fp16_payload_max_abs": 0.0021719932556152344
+        },
+        {
+          "action_id": "L0_strange_1",
+          "fp16_payload_max_abs": 0.002567291259765625
+        },
+        {
+          "action_id": "L0_strange_new_1_A",
+          "fp16_payload_max_abs": 0.0021419525146484375
+        },
+        {
+          "action_id": "L0_strange_new_2_A",
+          "fp16_payload_max_abs": 0.002305269241333008
+        },
+        {
+          "action_id": "L0_strange_new_3_A",
+          "fp16_payload_max_abs": 0.0019791126251220703
+        },
+        {
+          "action_id": "L0_strange_new_4",
+          "fp16_payload_max_abs": 0.0027437210083007812
+        },
+        {
+          "action_id": "L0_strange_new_5",
+          "fp16_payload_max_abs": 0.0024442672729492188
+        },
+        {
+          "action_id": "L0_strange_new_5_1",
+          "fp16_payload_max_abs": 0.0024251937866210938
+        },
+        {
+          "action_id": "L0_strange_new_6_A",
+          "fp16_payload_max_abs": 0.0031576156616210938
+        },
+        {
+          "action_id": "L0_strange_new_8",
+          "fp16_payload_max_abs": 0.0019664764404296875
+        },
+        {
+          "action_id": "L0_Approve_13",
+          "fp16_payload_max_abs": 0.0032606124877929688
+        },
+        {
+          "action_id": "L0_excited_1",
+          "fp16_payload_max_abs": 0.0022687911987304688
+        },
+        {
+          "action_id": "L0_excited_7",
+          "fp16_payload_max_abs": 0.0025653839111328125
+        },
+        {
+          "action_id": "L0_excited_8",
+          "fp16_payload_max_abs": 0.0029096603393554688
+        },
+        {
+          "action_id": "L0_excited_new_1",
+          "fp16_payload_max_abs": 0.0027446746826171875
+        },
+        {
+          "action_id": "L0_excited_new_2",
+          "fp16_payload_max_abs": 0.0026617050170898438
+        },
+        {
+          "action_id": "L0_excited_new_3",
+          "fp16_payload_max_abs": 0.0018472671508789062
+        },
+        {
+          "action_id": "L0_excited_new_4",
+          "fp16_payload_max_abs": 0.0018153190612792969
+        },
+        {
+          "action_id": "L0_excited_new_5",
+          "fp16_payload_max_abs": 0.0033178329467773438
+        },
+        {
+          "action_id": "L0_excited_new_6",
+          "fp16_payload_max_abs": 0.0017027854919433594
+        },
+        {
+          "action_id": "L0_AfraidToLeave",
+          "fp16_payload_max_abs": 0.003612518310546875
+        },
+        {
+          "action_id": "L0_SayNo_2",
+          "fp16_payload_max_abs": 0.0019164085388183594
+        },
+        {
+          "action_id": "L0_fear_10",
+          "fp16_payload_max_abs": 0.002726316452026367
+        },
+        {
+          "action_id": "L0_fear_7_A",
+          "fp16_payload_max_abs": 0.0016317367553710938
+        },
+        {
+          "action_id": "L0_fear_8",
+          "fp16_payload_max_abs": 0.0019943714141845703
+        },
+        {
+          "action_id": "L0_fear_8_new_",
+          "fp16_payload_max_abs": 0.0017352104187011719
+        },
+        {
+          "action_id": "L0_fear_9",
+          "fp16_payload_max_abs": 0.0029020309448242188
+        },
+        {
+          "action_id": "L0_fear_defend",
+          "fp16_payload_max_abs": 0.0030059814453125
+        },
+        {
+          "action_id": "L0_fear_new_1",
+          "fp16_payload_max_abs": 0.0021123886108398438
+        },
+        {
+          "action_id": "L0_fear_new_2",
+          "fp16_payload_max_abs": 0.001903533935546875
+        },
+        {
+          "action_id": "L0_sad_1",
+          "fp16_payload_max_abs": 0.0036954879760742188
+        },
+        {
+          "action_id": "L0_sad_10",
+          "fp16_payload_max_abs": 0.0015869140625
+        },
+        {
+          "action_id": "L0_sad_7",
+          "fp16_payload_max_abs": 0.0018661022186279297
+        },
+        {
+          "action_id": "L0_sad_8",
+          "fp16_payload_max_abs": 0.0014562606811523438
+        },
+        {
+          "action_id": "L0_sad_9",
+          "fp16_payload_max_abs": 0.0032711029052734375
+        },
+        {
+          "action_id": "L0_sad_new_1",
+          "fp16_payload_max_abs": 0.002519369125366211
+        },
+        {
+          "action_id": "L0_sad_new_2",
+          "fp16_payload_max_abs": 0.0022296905517578125
+        },
+        {
+          "action_id": "L0_sad_new_3",
+          "fp16_payload_max_abs": 0.0022683143615722656
+        },
+        {
+          "action_id": "L0_sad_new_4",
+          "fp16_payload_max_abs": 0.0025496482849121094
+        },
+        {
+          "action_id": "L0_sad_wanyao",
+          "fp16_payload_max_abs": 0.0028638839721679688
+        },
+        {
+          "action_id": "L0_14_satisfied",
+          "fp16_payload_max_abs": 0.0018644332885742188
+        },
+        {
+          "action_id": "L0_Approve_24",
+          "fp16_payload_max_abs": 0.0031337738037109375
+        },
+        {
+          "action_id": "L0_Approve_26",
+          "fp16_payload_max_abs": 0.002628326416015625
+        },
+        {
+          "action_id": "L0_Approve_8",
+          "fp16_payload_max_abs": 0.0015506744384765625
+        },
+        {
+          "action_id": "L0_delicious",
+          "fp16_payload_max_abs": 0.002143383026123047
+        },
+        {
+          "action_id": "L0_satisfied_10",
+          "fp16_payload_max_abs": 0.0030956268310546875
+        },
+        {
+          "action_id": "L0_satisfied_7",
+          "fp16_payload_max_abs": 0.002008676528930664
+        },
+        {
+          "action_id": "L0_satisfied_8",
+          "fp16_payload_max_abs": 0.0017365813255310059
+        },
+        {
+          "action_id": "L0_satisfied_9",
+          "fp16_payload_max_abs": 0.002025604248046875
+        },
+        {
+          "action_id": "L0_satisfied_new_1",
+          "fp16_payload_max_abs": 0.002313375473022461
+        }
+      ]
+    },
+    {
+      "name": "decoder",
+      "linear_index": 3,
+      "onnx_checker": "passed",
+      "cpu_verification": [
+        {
+          "action_id": "L0_Hugme",
+          "fp16_payload_max_abs": 0.0008637905120849609
+        },
+        {
+          "action_id": "L0_act_cute_1",
+          "fp16_payload_max_abs": 0.0008528232574462891
+        },
+        {
+          "action_id": "L0_act_cute_2",
+          "fp16_payload_max_abs": 0.0009253025054931641
+        },
+        {
+          "action_id": "L0_act_cute_3",
+          "fp16_payload_max_abs": 0.0008826255798339844
+        },
+        {
+          "action_id": "L0_act_cute_7",
+          "fp16_payload_max_abs": 0.0008904933929443359
+        },
+        {
+          "action_id": "L0_act_cute_new_1",
+          "fp16_payload_max_abs": 0.0008523464202880859
+        },
+        {
+          "action_id": "L0_act_cute_new_2",
+          "fp16_payload_max_abs": 0.0009305477142333984
+        },
+        {
+          "action_id": "L0_act_cute_new_3",
+          "fp16_payload_max_abs": 0.0009500980377197266
+        },
+        {
+          "action_id": "L0_act_cute_new_4",
+          "fp16_payload_max_abs": 0.0009636878967285156
+        },
+        {
+          "action_id": "L0_tired_hugme",
+          "fp16_payload_max_abs": 0.0008537769317626953
+        },
+        {
+          "action_id": "L0_NotLeave",
+          "fp16_payload_max_abs": 0.0007827281951904297
+        },
+        {
+          "action_id": "L0_SayNo_17",
+          "fp16_payload_max_abs": 0.0008590221405029297
+        },
+        {
+          "action_id": "L0_angry_10",
+          "fp16_payload_max_abs": 0.0008475780487060547
+        },
+        {
+          "action_id": "L0_angry_7",
+          "fp16_payload_max_abs": 0.0008969306945800781
+        },
+        {
+          "action_id": "L0_angry_8",
+          "fp16_payload_max_abs": 0.0008182525634765625
+        },
+        {
+          "action_id": "L0_angry_9",
+          "fp16_payload_max_abs": 0.0009031295776367188
+        },
+        {
+          "action_id": "L0_angry_baoshouqiaojiao",
+          "fp16_payload_max_abs": 0.000865936279296875
+        },
+        {
+          "action_id": "L0_angry_chayaotaitou",
+          "fp16_payload_max_abs": 0.0008835792541503906
+        },
+        {
+          "action_id": "L0_angry_new_1",
+          "fp16_payload_max_abs": 0.0008535385131835938
+        },
+        {
+          "action_id": "L0_angry_new_2",
+          "fp16_payload_max_abs": 0.0009353160858154297
+        },
+        {
+          "action_id": "L0_peace_1",
+          "fp16_payload_max_abs": 0.0008704662322998047
+        },
+        {
+          "action_id": "L0_peace_2",
+          "fp16_payload_max_abs": 0.0008676052093505859
+        },
+        {
+          "action_id": "L0_peace_new_01_A",
+          "fp16_payload_max_abs": 0.0009009838104248047
+        },
+        {
+          "action_id": "L0_peace_new_02_A",
+          "fp16_payload_max_abs": 0.0008182525634765625
+        },
+        {
+          "action_id": "L0_peace_new_03_A",
+          "fp16_payload_max_abs": 0.0007989406585693359
+        },
+        {
+          "action_id": "L0_peace_new_04_A",
+          "fp16_payload_max_abs": 0.0009114742279052734
+        },
+        {
+          "action_id": "L0_peace_new_05_A",
+          "fp16_payload_max_abs": 0.0008726119995117188
+        },
+        {
+          "action_id": "L0_peace_new_06_A",
+          "fp16_payload_max_abs": 0.0009596347808837891
+        },
+        {
+          "action_id": "L0_peace_new_07_A",
+          "fp16_payload_max_abs": 0.000919342041015625
+        },
+        {
+          "action_id": "L0_peace_new_08_A",
+          "fp16_payload_max_abs": 0.00087738037109375
+        },
+        {
+          "action_id": "L0_16_strange",
+          "fp16_payload_max_abs": 0.0008423328399658203
+        },
+        {
+          "action_id": "L0_strange_1",
+          "fp16_payload_max_abs": 0.0007801055908203125
+        },
+        {
+          "action_id": "L0_strange_new_1_A",
+          "fp16_payload_max_abs": 0.0009331703186035156
+        },
+        {
+          "action_id": "L0_strange_new_2_A",
+          "fp16_payload_max_abs": 0.0008301734924316406
+        },
+        {
+          "action_id": "L0_strange_new_3_A",
+          "fp16_payload_max_abs": 0.0008456707000732422
+        },
+        {
+          "action_id": "L0_strange_new_4",
+          "fp16_payload_max_abs": 0.0009109973907470703
+        },
+        {
+          "action_id": "L0_strange_new_5",
+          "fp16_payload_max_abs": 0.0009088516235351562
+        },
+        {
+          "action_id": "L0_strange_new_5_1",
+          "fp16_payload_max_abs": 0.000820159912109375
+        },
+        {
+          "action_id": "L0_strange_new_6_A",
+          "fp16_payload_max_abs": 0.0009465217590332031
+        },
+        {
+          "action_id": "L0_strange_new_8",
+          "fp16_payload_max_abs": 0.0008714199066162109
+        },
+        {
+          "action_id": "L0_Approve_13",
+          "fp16_payload_max_abs": 0.0008916854858398438
+        },
+        {
+          "action_id": "L0_excited_1",
+          "fp16_payload_max_abs": 0.0008933544158935547
+        },
+        {
+          "action_id": "L0_excited_7",
+          "fp16_payload_max_abs": 0.0008730888366699219
+        },
+        {
+          "action_id": "L0_excited_8",
+          "fp16_payload_max_abs": 0.0008625984191894531
+        },
+        {
+          "action_id": "L0_excited_new_1",
+          "fp16_payload_max_abs": 0.0009007453918457031
+        },
+        {
+          "action_id": "L0_excited_new_2",
+          "fp16_payload_max_abs": 0.0008268356323242188
+        },
+        {
+          "action_id": "L0_excited_new_3",
+          "fp16_payload_max_abs": 0.0008425712585449219
+        },
+        {
+          "action_id": "L0_excited_new_4",
+          "fp16_payload_max_abs": 0.0009205341339111328
+        },
+        {
+          "action_id": "L0_excited_new_5",
+          "fp16_payload_max_abs": 0.0009210109710693359
+        },
+        {
+          "action_id": "L0_excited_new_6",
+          "fp16_payload_max_abs": 0.0008597373962402344
+        },
+        {
+          "action_id": "L0_AfraidToLeave",
+          "fp16_payload_max_abs": 0.0009129047393798828
+        },
+        {
+          "action_id": "L0_SayNo_2",
+          "fp16_payload_max_abs": 0.0008547306060791016
+        },
+        {
+          "action_id": "L0_fear_10",
+          "fp16_payload_max_abs": 0.0008182525634765625
+        },
+        {
+          "action_id": "L0_fear_7_A",
+          "fp16_payload_max_abs": 0.0009548664093017578
+        },
+        {
+          "action_id": "L0_fear_8",
+          "fp16_payload_max_abs": 0.0007565021514892578
+        },
+        {
+          "action_id": "L0_fear_8_new_",
+          "fp16_payload_max_abs": 0.0009353160858154297
+        },
+        {
+          "action_id": "L0_fear_9",
+          "fp16_payload_max_abs": 0.0007951259613037109
+        },
+        {
+          "action_id": "L0_fear_defend",
+          "fp16_payload_max_abs": 0.0008604526519775391
+        },
+        {
+          "action_id": "L0_fear_new_1",
+          "fp16_payload_max_abs": 0.0008878707885742188
+        },
+        {
+          "action_id": "L0_fear_new_2",
+          "fp16_payload_max_abs": 0.0008111000061035156
+        },
+        {
+          "action_id": "L0_sad_1",
+          "fp16_payload_max_abs": 0.0008637905120849609
+        },
+        {
+          "action_id": "L0_sad_10",
+          "fp16_payload_max_abs": 0.0008640289306640625
+        },
+        {
+          "action_id": "L0_sad_7",
+          "fp16_payload_max_abs": 0.0009684562683105469
+        },
+        {
+          "action_id": "L0_sad_8",
+          "fp16_payload_max_abs": 0.0008382797241210938
+        },
+        {
+          "action_id": "L0_sad_9",
+          "fp16_payload_max_abs": 0.0008862018585205078
+        },
+        {
+          "action_id": "L0_sad_new_1",
+          "fp16_payload_max_abs": 0.0008368492126464844
+        },
+        {
+          "action_id": "L0_sad_new_2",
+          "fp16_payload_max_abs": 0.0008764266967773438
+        },
+        {
+          "action_id": "L0_sad_new_3",
+          "fp16_payload_max_abs": 0.0008795261383056641
+        },
+        {
+          "action_id": "L0_sad_new_4",
+          "fp16_payload_max_abs": 0.0009253025054931641
+        },
+        {
+          "action_id": "L0_sad_wanyao",
+          "fp16_payload_max_abs": 0.000820159912109375
+        },
+        {
+          "action_id": "L0_14_satisfied",
+          "fp16_payload_max_abs": 0.0009205341339111328
+        },
+        {
+          "action_id": "L0_Approve_24",
+          "fp16_payload_max_abs": 0.0008902549743652344
+        },
+        {
+          "action_id": "L0_Approve_26",
+          "fp16_payload_max_abs": 0.0009150505065917969
+        },
+        {
+          "action_id": "L0_Approve_8",
+          "fp16_payload_max_abs": 0.0008785724639892578
+        },
+        {
+          "action_id": "L0_delicious",
+          "fp16_payload_max_abs": 0.0008649826049804688
+        },
+        {
+          "action_id": "L0_satisfied_10",
+          "fp16_payload_max_abs": 0.0009472370147705078
+        },
+        {
+          "action_id": "L0_satisfied_7",
+          "fp16_payload_max_abs": 0.0008814334869384766
+        },
+        {
+          "action_id": "L0_satisfied_8",
+          "fp16_payload_max_abs": 0.0009529590606689453
+        },
+        {
+          "action_id": "L0_satisfied_9",
+          "fp16_payload_max_abs": 0.0008742809295654297
+        },
+        {
+          "action_id": "L0_satisfied_new_1",
+          "fp16_payload_max_abs": 0.0008611679077148438
+        }
+      ]
+    },
+    {
+      "name": "output",
+      "linear_index": 6,
+      "onnx_checker": "passed",
+      "cpu_verification": [
+        {
+          "action_id": "L0_Hugme",
+          "fp16_payload_max_abs": 1.1640600860118866e-05
+        },
+        {
+          "action_id": "L0_act_cute_1",
+          "fp16_payload_max_abs": 1.2546777725219727e-05
+        },
+        {
+          "action_id": "L0_act_cute_2",
+          "fp16_payload_max_abs": 1.0967254638671875e-05
+        },
+        {
+          "action_id": "L0_act_cute_3",
+          "fp16_payload_max_abs": 1.2561678886413574e-05
+        },
+        {
+          "action_id": "L0_act_cute_7",
+          "fp16_payload_max_abs": 1.1518597602844238e-05
+        },
+        {
+          "action_id": "L0_act_cute_new_1",
+          "fp16_payload_max_abs": 1.4163553714752197e-05
+        },
+        {
+          "action_id": "L0_act_cute_new_2",
+          "fp16_payload_max_abs": 1.189112663269043e-05
+        },
+        {
+          "action_id": "L0_act_cute_new_3",
+          "fp16_payload_max_abs": 1.2308359146118164e-05
+        },
+        {
+          "action_id": "L0_act_cute_new_4",
+          "fp16_payload_max_abs": 1.3211742043495178e-05
+        },
+        {
+          "action_id": "L0_tired_hugme",
+          "fp16_payload_max_abs": 9.953975677490234e-06
+        },
+        {
+          "action_id": "L0_NotLeave",
+          "fp16_payload_max_abs": 1.2278556823730469e-05
+        },
+        {
+          "action_id": "L0_SayNo_17",
+          "fp16_payload_max_abs": 1.3746321201324463e-05
+        },
+        {
+          "action_id": "L0_angry_10",
+          "fp16_payload_max_abs": 1.4781951904296875e-05
+        },
+        {
+          "action_id": "L0_angry_7",
+          "fp16_payload_max_abs": 1.0907649993896484e-05
+        },
+        {
+          "action_id": "L0_angry_8",
+          "fp16_payload_max_abs": 1.1339783668518066e-05
+        },
+        {
+          "action_id": "L0_angry_9",
+          "fp16_payload_max_abs": 1.245737075805664e-05
+        },
+        {
+          "action_id": "L0_angry_baoshouqiaojiao",
+          "fp16_payload_max_abs": 1.1444091796875e-05
+        },
+        {
+          "action_id": "L0_angry_chayaotaitou",
+          "fp16_payload_max_abs": 1.4007091522216797e-05
+        },
+        {
+          "action_id": "L0_angry_new_1",
+          "fp16_payload_max_abs": 1.5437602996826172e-05
+        },
+        {
+          "action_id": "L0_angry_new_2",
+          "fp16_payload_max_abs": 1.52587890625e-05
+        },
+        {
+          "action_id": "L0_peace_1",
+          "fp16_payload_max_abs": 1.7642974853515625e-05
+        },
+        {
+          "action_id": "L0_peace_2",
+          "fp16_payload_max_abs": 1.2308359146118164e-05
+        },
+        {
+          "action_id": "L0_peace_new_01_A",
+          "fp16_payload_max_abs": 1.475214958190918e-05
+        },
+        {
+          "action_id": "L0_peace_new_02_A",
+          "fp16_payload_max_abs": 1.2096017599105835e-05
+        },
+        {
+          "action_id": "L0_peace_new_03_A",
+          "fp16_payload_max_abs": 1.2114644050598145e-05
+        },
+        {
+          "action_id": "L0_peace_new_04_A",
+          "fp16_payload_max_abs": 1.1444091796875e-05
+        },
+        {
+          "action_id": "L0_peace_new_05_A",
+          "fp16_payload_max_abs": 1.2934207916259766e-05
+        },
+        {
+          "action_id": "L0_peace_new_06_A",
+          "fp16_payload_max_abs": 1.329183578491211e-05
+        },
+        {
+          "action_id": "L0_peace_new_07_A",
+          "fp16_payload_max_abs": 1.138448715209961e-05
+        },
+        {
+          "action_id": "L0_peace_new_08_A",
+          "fp16_payload_max_abs": 1.3217329978942871e-05
+        },
+        {
+          "action_id": "L0_16_strange",
+          "fp16_payload_max_abs": 1.1920928955078125e-05
+        },
+        {
+          "action_id": "L0_strange_1",
+          "fp16_payload_max_abs": 8.821487426757812e-06
+        },
+        {
+          "action_id": "L0_strange_new_1_A",
+          "fp16_payload_max_abs": 1.0073184967041016e-05
+        },
+        {
+          "action_id": "L0_strange_new_2_A",
+          "fp16_payload_max_abs": 1.1980533599853516e-05
+        },
+        {
+          "action_id": "L0_strange_new_3_A",
+          "fp16_payload_max_abs": 1.2949109077453613e-05
+        },
+        {
+          "action_id": "L0_strange_new_4",
+          "fp16_payload_max_abs": 1.4334917068481445e-05
+        },
+        {
+          "action_id": "L0_strange_new_5",
+          "fp16_payload_max_abs": 1.1265277862548828e-05
+        },
+        {
+          "action_id": "L0_strange_new_5_1",
+          "fp16_payload_max_abs": 1.0728836059570312e-05
+        },
+        {
+          "action_id": "L0_strange_new_6_A",
+          "fp16_payload_max_abs": 1.2665987014770508e-05
+        },
+        {
+          "action_id": "L0_strange_new_8",
+          "fp16_payload_max_abs": 1.3388693332672119e-05
+        },
+        {
+          "action_id": "L0_Approve_13",
+          "fp16_payload_max_abs": 1.2069940567016602e-05
+        },
+        {
+          "action_id": "L0_excited_1",
+          "fp16_payload_max_abs": 1.2896955013275146e-05
+        },
+        {
+          "action_id": "L0_excited_7",
+          "fp16_payload_max_abs": 1.7404556274414062e-05
+        },
+        {
+          "action_id": "L0_excited_8",
+          "fp16_payload_max_abs": 1.2665987014770508e-05
+        },
+        {
+          "action_id": "L0_excited_new_1",
+          "fp16_payload_max_abs": 1.4275312423706055e-05
+        },
+        {
+          "action_id": "L0_excited_new_2",
+          "fp16_payload_max_abs": 1.1861324310302734e-05
+        },
+        {
+          "action_id": "L0_excited_new_3",
+          "fp16_payload_max_abs": 1.5497207641601562e-05
+        },
+        {
+          "action_id": "L0_excited_new_4",
+          "fp16_payload_max_abs": 1.2248754501342773e-05
+        },
+        {
+          "action_id": "L0_excited_new_5",
+          "fp16_payload_max_abs": 1.4841556549072266e-05
+        },
+        {
+          "action_id": "L0_excited_new_6",
+          "fp16_payload_max_abs": 1.2561678886413574e-05
+        },
+        {
+          "action_id": "L0_AfraidToLeave",
+          "fp16_payload_max_abs": 1.1444091796875e-05
+        },
+        {
+          "action_id": "L0_SayNo_2",
+          "fp16_payload_max_abs": 1.1742115020751953e-05
+        },
+        {
+          "action_id": "L0_fear_10",
+          "fp16_payload_max_abs": 1.3560056686401367e-05
+        },
+        {
+          "action_id": "L0_fear_7_A",
+          "fp16_payload_max_abs": 1.4483928680419922e-05
+        },
+        {
+          "action_id": "L0_fear_8",
+          "fp16_payload_max_abs": 2.0503997802734375e-05
+        },
+        {
+          "action_id": "L0_fear_8_new_",
+          "fp16_payload_max_abs": 1.4036893844604492e-05
+        },
+        {
+          "action_id": "L0_fear_9",
+          "fp16_payload_max_abs": 1.341104507446289e-05
+        },
+        {
+          "action_id": "L0_fear_defend",
+          "fp16_payload_max_abs": 2.1517276763916016e-05
+        },
+        {
+          "action_id": "L0_fear_new_1",
+          "fp16_payload_max_abs": 1.3887882232666016e-05
+        },
+        {
+          "action_id": "L0_fear_new_2",
+          "fp16_payload_max_abs": 1.609325408935547e-05
+        },
+        {
+          "action_id": "L0_sad_1",
+          "fp16_payload_max_abs": 1.4483928680419922e-05
+        },
+        {
+          "action_id": "L0_sad_10",
+          "fp16_payload_max_abs": 1.099705696105957e-05
+        },
+        {
+          "action_id": "L0_sad_7",
+          "fp16_payload_max_abs": 1.3336539268493652e-05
+        },
+        {
+          "action_id": "L0_sad_8",
+          "fp16_payload_max_abs": 1.2718141078948975e-05
+        },
+        {
+          "action_id": "L0_sad_9",
+          "fp16_payload_max_abs": 1.0535120964050293e-05
+        },
+        {
+          "action_id": "L0_sad_new_1",
+          "fp16_payload_max_abs": 1.2218952178955078e-05
+        },
+        {
+          "action_id": "L0_sad_new_2",
+          "fp16_payload_max_abs": 1.2576580047607422e-05
+        },
+        {
+          "action_id": "L0_sad_new_3",
+          "fp16_payload_max_abs": 1.4960765838623047e-05
+        },
+        {
+          "action_id": "L0_sad_new_4",
+          "fp16_payload_max_abs": 1.1235475540161133e-05
+        },
+        {
+          "action_id": "L0_sad_wanyao",
+          "fp16_payload_max_abs": 1.1354684829711914e-05
+        },
+        {
+          "action_id": "L0_14_satisfied",
+          "fp16_payload_max_abs": 1.3649463653564453e-05
+        },
+        {
+          "action_id": "L0_Approve_24",
+          "fp16_payload_max_abs": 9.953975677490234e-06
+        },
+        {
+          "action_id": "L0_Approve_26",
+          "fp16_payload_max_abs": 1.1920928955078125e-05
+        },
+        {
+          "action_id": "L0_Approve_8",
+          "fp16_payload_max_abs": 1.1391937732696533e-05
+        },
+        {
+          "action_id": "L0_delicious",
+          "fp16_payload_max_abs": 1.3180077075958252e-05
+        },
+        {
+          "action_id": "L0_satisfied_10",
+          "fp16_payload_max_abs": 1.198798418045044e-05
+        },
+        {
+          "action_id": "L0_satisfied_7",
+          "fp16_payload_max_abs": 1.2993812561035156e-05
+        },
+        {
+          "action_id": "L0_satisfied_8",
+          "fp16_payload_max_abs": 1.0728836059570312e-05
+        },
+        {
+          "action_id": "L0_satisfied_9",
+          "fp16_payload_max_abs": 1.0572373867034912e-05
+        },
+        {
+          "action_id": "L0_satisfied_new_1",
+          "fp16_payload_max_abs": 1.2174248695373535e-05
+        }
+      ]
+    }
+  ],
+  "rknn_conversion": "not_run",
+  "rk3588_gate": "not_run",
+  "zero_adapter_base_max_abs": 7.152557373046875e-07,
+  "a_to_b_to_a": "passed",
+  "base_switches": [],
+  "final_fp16_delivery": {
+    "policy_and_probes": [
+      {
+        "model": "base_lora.onnx",
+        "converted_tensors": 21,
+        "all_actions_max_abs_error": 0.001839280128479004
+      },
+      {
+        "model": "probe_encoder.onnx",
+        "converted_tensors": 3,
+        "all_actions_max_abs_error": 0.005749702453613281
+      },
+      {
+        "model": "probe_decoder.onnx",
+        "converted_tensors": 3,
+        "all_actions_max_abs_error": 0.0013606548309326172
+      },
+      {
+        "model": "probe_output.onnx",
+        "converted_tensors": 1,
+        "all_actions_max_abs_error": 0.0002823248505592346
+      }
+    ],
+    "reference_actions_checked": 80
+  }
+}

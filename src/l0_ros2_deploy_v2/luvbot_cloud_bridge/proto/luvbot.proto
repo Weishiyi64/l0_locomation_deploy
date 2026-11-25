@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package luvbot.v1;
+
+option java_package = "org.luvbotics.robot.proto";
+option java_outer_classname = "LuvbotProto";
+option java_multiple_files = true;
+
+// ============================================================
+// 小伴RUMI 设备接入协议（《设备接入协议 v0.5》第三章原文镜像）
+// 服务端（robot）侧：protobuf-maven-plugin 自动生成 Java 类
+// 设备侧：nanopb 生成 C 代码（同一份 proto）
+// 命名：proto snake_case <-> JSON lowerCamelCase（服务端统一转换）
+// ============================================================
+
+// ---------- 统一信封: 所有上下行报文都包在 Envelope 里 ----------
+message Envelope {
+  string msg_id    = 1;  // 消息唯一 ID (UUID/雪花), 用于去重和指令回执关联
+  string device_id = 2;  // 设备唯一标识, 与证书 CN 一致
+  int64  ts        = 3;  // 设备端毫秒时间戳 (Unix ms)
+  uint32 seq       = 4;  // 同设备内自增序号, 用于丢包/乱序检测
+
+  oneof body {
+    PropertyReport property_report = 10;  // 上行: 属性/指标上报
+    EventReport    event_report    = 11;  // 上行: 事件上报
+    Command        command         = 12;  // 下行: 指令下发
+    CommandReply   command_reply   = 13;  // 上行: 指令执行回执
+    StatusReport   status_report   = 14;  // 上行: 上下线状态帧 (up/status, 设备主动上报)
+  }
+}
+
+// ---------- 上行: 上下线状态帧 (topic up/status) ----------
+// 两种离线来源，云端都认：
+//   ① 设备主动发本帧 online=false（正常关机 / 主动断电，能带 reason，判 normal_shutdown）
+//   ② EMQX 遗嘱 LWT：空 payload（设备异常掉线，判 will）
+// 上线：online=true，仍可在同一帧里带 PropertyReport 之外的信息（可只填 online=true）
+message StatusReport {
+  bool   online = 1;  // true=上线, false=主动下线
+  string reason = 2;  // 下线原因: normal_shutdown / power_off / reboot 等；上线时忽略
+}
+
+// ---------- 上行: 属性 / 指标上报 ----------
+message PropertyReport {
+  string fw_version  = 1;  // 固件版本, 如 "1.0.3"
+  int32  battery     = 2;  // 电量百分比 0-100, 无电池填 -1
+  sint32 rssi        = 3;  // WiFi 信号强度 dBm (负值)
+  uint32 uptime      = 4;  // 运行时长, 秒
+  sint32 temperature = 5;  // 设备温度, 单位 0.1℃ (365 = 36.5℃)
+  string net_type    = 6;  // 网络类型: wifi / 4g
+  repeated Metric metrics = 7;  // 业务自定义指标 (可扩展)
+}
+
+message Metric {
+  string key       = 1;  // 指标名, 如 "pm25" / "mood_text"
+  double value     = 2;  // 数值指标值
+  string unit      = 3;  // 单位, 如 "ug/m3"
+  string str_value = 4;  // 文本指标值（如 mood_text/behavior_text）；有值时优先于 value
+}
+
+// ---------- 上行: 事件上报 ----------
+message EventReport {
+  string event  = 1;  // 事件名: boot / shutdown / error / button / voice_wake
+  int32  level  = 2;  // 级别: 1=info 2=warn 3=error
+  string detail = 3;  // 事件详情 (文本)
+}
+
+// ---------- 下行: 指令 ----------
+message Command {
+  string cmd = 1;                 // 指令名, 见文档指令表
+  repeated KeyValue params = 2;   // 指令参数 (用 repeated 而非 map, 兼容 nanopb)
+  // field 3 = expire_at 已移除（云端恒填 0、设备侧从不校验，无实际用途；2026-09-29 删除）
+  reserved 3;                     // 保留字段号，禁止后续复用
+  string trace_id  = 4;           // 链路追踪 ID, 回执原样带回
+}
+
+message KeyValue {
+  string key   = 1;
+  string value = 2;  // 统一用字符串传递, 设备端按需转型
+}
+
+// ---------- 上行: 指令回执 ----------
+message CommandReply {
+  string msg_id   = 1;  // 对应下行指令的 msg_id
+  string cmd      = 2;  // 指令名
+  int32  code     = 3;  // 0=成功, 非 0 见错误码表
+  string message  = 4;  // 错误描述
+  string data     = 5;  // 可选返回数据 (JSON 字符串)
+}

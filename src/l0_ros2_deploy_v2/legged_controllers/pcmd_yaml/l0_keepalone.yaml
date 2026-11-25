@@ -1,0 +1,152 @@
+# Head script timeline (angles in degrees).
+# Loaded by LeggedController when launch passes head_script_config (e.g. sim2real.launch.py / sequential_launch_real.sh).
+# Total duration is inferred from segments (max t_end). Sign: pitch 低头+ 抬头-; yaw 左+ 右-; roll 右偏+ 左偏-.
+# Per segment: use constant (yaw/pitch/roll), or lerp (x_from, x_to), or sin (x_sin_amplitude_deg, x_sin_frequency_hz).
+
+head_script:
+  # Script-mode motor gains (yaw, pitch, roll). Scalar = same for all three joints.
+  kp: [3.5, 4.0, 3.0]
+  kd: [2.0, 1.0, 0.6]
+  tau_ff: [0.0, 0.0, 0.0]
+  segments:
+    # T=0~1s：头部扬起15°，目视前方偏上。（静止）
+    - t_start: 0.0
+      t_end: 1.0
+      pitch_from: 0.0
+      pitch_to: -15.0      # 抬头-
+      yaw: 0.0
+      roll: 0.0
+
+    # T=1~3s：头部缓慢向右转，从中心0°转至右侧40°，转动40°，速度20°/s，用时2秒。（动作）
+    - t_start: 1.0
+      t_end: 3.0
+      yaw_from: 0.0
+      yaw_to: 40.0       # 右转+
+      pitch: -15.0
+      roll: 0.0
+
+    # T=3~3.5s：到达右侧40°位置，停顿0.5秒，保持扬起15°。（静止）
+    - t_start: 3.0
+      t_end: 3.5
+      yaw: 40.0
+      pitch: -15.0
+      roll: 0.0
+
+    # T=3.5~5.25s：快速向左回扫，从右侧40°回中心（40°，1秒），继续向左转至左侧30°（30°，0.75秒），
+    # 总转动70°，速度40°/s，用时1.75秒。转动过程中扬起角度增加至20°。（动作）
+    - t_start: 3.5
+      t_end: 5.25
+      yaw_from: 40.0
+      yaw_to: -30.0      # 左转-
+      pitch_from: -15.0
+      pitch_to: -20.0    # 抬头角度增加
+      roll: 0.0
+
+    # T=5.25~5.5s：到达左侧30°位置，停顿0.25秒，保持扬起20°。（静止）
+    - t_start: 5.25
+      t_end: 5.5
+      yaw: -30.0
+      pitch: -20.0
+      roll: 0.0
+
+    # T=5.5~6s：向右歪头15°，用时0.5秒。（动作）
+    - t_start: 5.5
+      t_end: 6.0
+      yaw: -30.0
+      pitch: -20.0
+      roll_from: 0.0
+      roll_to: 15.0       # 右偏+
+
+    # T=6~6.25s：保持歪头向右15°姿势，停顿0.25秒。（静止）
+    - t_start: 6.0
+      t_end: 6.25
+      yaw: -30.0
+      pitch: -20.0
+      roll: 15.0
+
+    # T=6.25~7s：回正歪头，同时继续向左缓慢转动，从左侧30°转至左侧45°，转动15°，速度20°/s，用时0.75秒。扬起角度保持20°。（动作）
+    - t_start: 6.25
+      t_end: 7.0
+      yaw_from: -30.0
+      yaw_to: -45.0
+      pitch: -20.0
+      roll_from: 15.0
+      roll_to: 0.0
+
+    # T=7~7.25s：到达左侧45°位置，停顿0.25秒，保持扬起20°。（静止）
+    - t_start: 7.0
+      t_end: 7.25
+      yaw: -45.0
+      pitch: -20.0
+      roll: 0.0
+
+    # T=7.25~9.125s：快速向右回扫，从左侧45°转至右侧30°，总转动75°，速度40°/s，用时1.875秒。
+    # 扬起角度增加至22°，头顺势微微后仰。（动作）
+    - t_start: 7.25
+      t_end: 9.125
+      yaw_from: -45.0
+      yaw_to: 30.0
+      pitch_from: -20.0
+      pitch_to: -22.0     # 抬头角度增加至22°
+      roll: 0.0
+
+    # T=9.125~9.5s：到达右侧30°位置，停顿0.375秒，保持扬起22°。（静止）
+    - t_start: 9.125
+      t_end: 9.5
+      yaw: 30.0
+      pitch: -22.0
+      roll: 0.0
+
+    # T=9.5~10s：歪头向左15°，用时0.5秒。（动作）
+    - t_start: 9.5
+      t_end: 10.0
+      yaw: 30.0
+      pitch: -22.0
+      roll_from: 0.0
+      roll_to: -15.0      # 左偏-
+
+    # T=10~10.25s：保持歪头向左15°姿势，停顿0.25秒。（静止）
+    - t_start: 10.0
+      t_end: 10.25
+      yaw: 30.0
+      pitch: -22.0
+      roll: -15.0
+
+    # T=10.25~11.75s：缓缓回正歪头，同时头缓慢回至中心，从右侧30°回中心，转动30°，速度20°/s，用时1.5秒。扬起角度稳定在22°。（动作）
+    - t_start: 10.25
+      t_end: 11.75
+      yaw_from: 30.0
+      yaw_to: 0.0
+      pitch: -22.0
+      roll_from: -15.0
+      roll_to: 0.0
+
+    # T=11.75~12.5s：到达中心位置，停顿0.75秒，保持扬起22°。（静止）
+    - t_start: 11.75
+      t_end: 12.5
+      yaw: 0.0
+      pitch: -22.0
+      roll: 0.0
+
+    # T=12.5~14.5s：头部以极小幅度左右微摆，每次摆幅10°，速度缓慢，用时2秒。始终保持在扬起22°状态。
+    # 使用正弦波模拟微摆：频率 1Hz (2秒内完成一次完整周期，即左右各一次)，振幅10°
+    - t_start: 12.5
+      t_end: 14.5
+      yaw_sin_amplitude_deg: 10.0
+      yaw_sin_frequency_hz: 1.0
+      pitch: -22.0
+      roll: 0.0
+
+    # T=14.5~16.0s：微摆结束，停顿0.5秒，头部稳定在中心扬起22°。（静止）
+    - t_start: 14.5
+      t_end: 16.0
+      yaw: 0.0
+      pitch: -22.0
+      roll: 0.0
+
+    - t_start: 16.0
+      t_end: 18.0
+      yaw: 0.0
+      pitch_from: -22.0
+      pitch_to: 0.0
+      roll: 0.0

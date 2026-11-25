@@ -1,0 +1,42 @@
+{
+  "format_version": 2,
+  "inference_partition": "actor_mlp",
+  "inputs": [
+    {
+      "name": "state_history",
+      "shape": [
+        1,
+        5,
+        17
+      ]
+    }
+  ],
+  "metadata": {
+    "l0_arrival_contract": "{\"version\": 8, \"checkpoint_iteration\": 5000, \"action_mapping\": \"residual\", \"previous_input\": \"issued_velocity\", \"heading_input\": \"omega_0\", \"private_controls\": \"five raw state frames and checkpoint-specific previous_input held by runtime\", \"policy_architecture\": \"mlp_history\", \"actor_history_length\": 5, \"history_order\": \"oldest_to_newest; reset repeats first frame; updated once per 5 Hz call\", \"state_dim\": 17, \"future_waypoint_count\": 2, \"future_waypoint_slice\": [13, 17], \"future_waypoints\": \"state[13:17]=[next_dx,next_dy,next2_dx,next2_dy]; same base_link yaw frame and timestamp as current goal; repeat final point when short; zeroed inside ONNX in Face/Hold\", \"depth_shape\": null, \"target_frame\": \"upstream supplies current/future XY relative to the same base_link yaw frame, plus wrapped heading error\", \"target_updates\": \"upstream advances waypoints and selects Nav/Face/Hold; every pure Nav packet is immediately accepted regardless of target distance or preceding phase\", \"planner_hz\": 5, \"phase_command\": \"upstream supplies N=[dx,dy,v,0,0], F=[0,0,0,e,omega_0], or HOLD=zeros; classified before bounds; mixed packets fail safe\", \"output_interlocks\": \"Nav: vy=0; Face: vx=vy=0; Hold/invalid: vx=vy=wz=0\", \"depth_units\": \"meters; invalid-to-3m, clip [0.2,3], then d/3 inside ONNX\", \"input_bounds\": \"upstream applies bounds; ONNX repeats speed clamps, angle wrap and depth bounds\", \"business_inputs\": [{\"name\": \"angular_velocity_b\", \"dtype\": \"float32\", \"shape\": [3], \"units\": \"rad/s\", \"bounds\": \"finite\"}, {\"name\": \"projected_gravity_b\", \"dtype\": \"float32\", \"shape\": [3], \"units\": \"unit vector\", \"bounds\": [-1.0, 1.0]}, {\"name\": \"goal_xy_b\", \"dtype\": \"float32\", \"shape\": [2], \"units\": \"m\", \"bounds\": \"finite\"}, {\"name\": \"linear_speed\", \"dtype\": \"float32\", \"shape\": [], \"units\": \"m/s\", \"bounds\": [0.3, 1.2], \"inactive_value\": 0.0, \"default\": 0.0}, {\"name\": \"heading_error_rad\", \"dtype\": \"float32\", \"shape\": [], \"units\": \"rad\", \"bounds\": [-3.141592653589793, 3.141592653589793]}, {\"name\": \"angular_speed\", \"symbol\": \"omega_0\", \"dtype\": \"float32\", \"shape\": [], \"units\": \"rad/s\", \"bounds\": [1.57, 3.14], \"inactive_value\": 0.0, \"default\": 0.0}, {\"name\": \"future_waypoints_xy_b\", \"dtype\": \"float32\", \"shape\": [2, 2], \"units\": \"m\", \"bounds\": \"finite\", \"inactive_value\": 0.0, \"padding\": \"repeat the final route point; no future point -> repeat current goal\"}], \"task_input_fields\": [\"dx\", \"dy\", \"v_star\", \"e_psi\", \"omega_0\"], \"turn_speed_processing\": \"Face omega_0 -> abs/clip [1.57,3.14] -> signed exponential approach omega_star inside ONNX; upstream owns Nav/Face/Hold transitions\", \"mode\": \"goal_heading\", \"public_output\": \"velocity_command [vx,0,wz] (m/s,m/s,rad/s)\", \"velocity_bounds\": {\"vx\": [-1.0, 1.2], \"vy\": [0.0, 0.0], \"wz\": [-3.14, 3.14]}, \"velocity_mapping\": \"clip([v_star,omega_star]+actions) to velocity_bounds; vy=0; then phase gates\", \"previous_command\": \"state[6:8] = preceding issued velocity_command[0,2], physical m/s and rad/s; before delivery delay\", \"raw_actions\": \"Gaussian velocity residuals; diagnostics/PPO only\", \"runtime\": \"legged_lab.navigation.common.planner_runtime.L0PlannerRuntime\"}"
+  },
+  "onnx_sha256": "cf44fc38f84c9f440780ee72f8722c56c70b43e721586c5c74d096a419db41ed",
+  "outputs": [
+    {
+      "name": "actions",
+      "shape": [
+        1,
+        2
+      ]
+    }
+  ],
+  "rknn_sha256": "2b148f10d0cf2f0d74f95abb2bf3db3df820292acadb7bd932419b6eab1287b9",
+  "target_platform": "rk3588",
+  "verification": {
+    "cosine_threshold": 0.999,
+    "invariants": {
+      "face_vx_vy_zero": true,
+      "hold_all_zero": true,
+      "nav_vy_zero": true
+    },
+    "max_abs_error": 0.05,
+    "maximum_absolute_error": 0.0026047229766845703,
+    "minimum_cosine": 0.9999984003168972,
+    "performed": true,
+    "samples": 20
+  }
+}

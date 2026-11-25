@@ -1,0 +1,5 @@
+repositories:
+  src/luvbot_ros_interfaces:
+    type: git
+    url: INTERFACE_REPOSITORY_URL
+    version: v1.0.0

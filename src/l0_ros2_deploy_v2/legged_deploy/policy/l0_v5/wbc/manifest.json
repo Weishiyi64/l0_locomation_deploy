@@ -1,0 +1,70 @@
+{
+  "format": "l0_v5_wbc_json_batch_v1",
+  "checkpoint_stem": "checkpoint_2000",
+  "checkpoint_sha256": "aa02d8da0106231ce5b3160a891d81f0f344c8fcd99d5fc9223340092a41bfc7",
+  "checkpoint_yaml_sha256": "fa4730f5e71a8da861187c44e80ec01b32666f8aa436c13b03595ade29ac2d39",
+  "amp_profile_sha256": "c24a456e917a4b0368cd2f966062f34881a8ae0972536af676fa1ece9df8addf",
+  "actions": [
+    {
+      "motion_id": "A-C04_mod",
+      "source_sha256": "d5acc36113fd7d72dcf3fe7c5b3b3f294f938034c69821d35bac454db7603386",
+      "reference_sha256": "a93e31235a6fd150c45eb4eadcb0d38ce54ef38eaa862922eece93f6bdd1a436",
+      "source_frames": 360,
+      "reference_frames": 460,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    },
+    {
+      "motion_id": "A-C07_mod",
+      "source_sha256": "0d3d47575ec58f2ad0dd83be4d47f9322b5b797c08a191c2b296a9a8a674c320",
+      "reference_sha256": "60f4e602c7e1344f5937e695a14ea179e93f135bc4f1efed905bd5803feb8309",
+      "source_frames": 337,
+      "reference_frames": 437,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    },
+    {
+      "motion_id": "A-S04_mod",
+      "source_sha256": "c36a442a2680fada42d83ac79733847161a2e6b1437a983efc43a1426f3b5449",
+      "reference_sha256": "68efae3a4c2ae0b88d57844adf92d86cec72b63071a409f881b4af73e23e25ce",
+      "source_frames": 475,
+      "reference_frames": 575,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    },
+    {
+      "motion_id": "A-C08_mod",
+      "source_sha256": "083d60cc44fc61b239895886b1819f2a439064fd0bd8ea8b2b4879e7554a863c",
+      "reference_sha256": "dbfc7079fb1d54b68ab0289e6930ec864622f4655f25a94350529008a9117c69",
+      "source_frames": 301,
+      "reference_frames": 401,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    },
+    {
+      "motion_id": "A-T08-02_mod",
+      "source_sha256": "5cb6fd25104d8ddd4bb45dc1bd2eea329679f67658a638281686bb6f2de9fea7",
+      "reference_sha256": "bc111b4161fb892ecdb9251b27b4ddf700d0dd37067ab99d4af3518e2a8023ef",
+      "source_frames": 326,
+      "reference_frames": 426,
+      "clipped_values": 0,
+      "hold_frames": 10,
+      "transition_frames": 40,
+      "return_frames": 40,
+      "settle_frames": 10
+    }
+  ],
+  "rknn_status": "not_converted"
+}

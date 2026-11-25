@@ -1,0 +1,17 @@
+{
+  "format": "wbc_rknn_conversion_v1",
+  "source_sha256": "fe33c601218dccc2fcc29319e980eb8372e842e1ec67c465d73de65cb0798378",
+  "rknn_sha256": "366a7c6548a1a0512692cb05eb9b993ed5b16189dd881263ba767205f7740376",
+  "precision": "float16",
+  "do_quantization": false,
+  "toolkit_version": "2.3.2",
+  "target_platform": "rk3588",
+  "converter_sha256": "dacc8a9458c1788dfc1cea2d201396b65dcaa91e7d876884a13911a811d66440",
+  "asset_helper_sha256": "1d9f577929cd42cfd72ba9a356aff7c4b94c012576384da216a90c6579b55547",
+  "verification_backend": "toolkit_simulator",
+  "validation_status": "python_verified",
+  "target": null,
+  "device_id": null,
+  "verification": null,
+  "max_abs_error": 0.05
+}

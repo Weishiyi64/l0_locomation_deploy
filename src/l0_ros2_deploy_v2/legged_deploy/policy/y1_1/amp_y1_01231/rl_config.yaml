@@ -1,0 +1,35 @@
+RobotCfg:
+  policy_type: "rl"
+  policy_output_name: "actions"
+  policy_name: "amp_policy"
+
+  joint_order_isaac: ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'waist_yaw_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint', 'left_wrist_pitch_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint', 'right_wrist_pitch_joint']
+  joint_order_mj: ['waist_yaw_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint', 'left_wrist_pitch_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint', 'right_wrist_pitch_joint', 'left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint']
+  default_joint_angles: [0.0000, 0.0000, 0.0500, 0.0000, 1.0000, 0.0000, 0.0000, -0.0500, 0.0000, 1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000]
+  kps: [47.3740, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 3.9480, 78.9570, 47.3740, 47.3740, 78.9570, 47.3740, 3.9480, 78.9570, 47.3740, 47.3740, 78.9570, 47.3740, 3.9480]
+  kds: [3.0160, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 0.2510, 5.0270, 3.0160, 3.0160, 5.0270, 3.0160, 0.2510, 5.0270, 3.0160, 3.0160, 5.0270, 3.0160, 0.2510]
+  action_scale: [0.1900, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.8870, 0.1900, 0.1900, 0.1900, 0.1900, 0.1900, 0.8870, 0.1900, 0.1900, 0.1900, 0.1900, 0.1900, 0.8870]
+
+  policy_frequency: 50
+  lowlevel_frequency: 500
+
+  num_actions: 23
+  num_single_obs: 78
+  frame_stack: 1
+
+  clip_obs: 25.0
+  clip_actions: 10.0
+
+  gait_frequency: 0.6 # 计算gait_phase使用，obs中无gait_phase可忽略
+
+  # Observation configuration for automatic assembly
+  observation_config:
+    items:
+      - {type: "base_ang_vel",    dim: 3,   scale: 0.25}
+      - {type: "gravity_proj",    dim: 3,   scale: 1.0}
+      - {type: "lin_vel_cmd",     dim: 1,   scale: 2.0}
+      - {type: "lat_vel_cmd",     dim: 1,   scale: 2.0}
+      - {type: "ang_vel_cmd",     dim: 1,   scale: 0.25}
+      - {type: "joint_pos",       dim: 23,  scale: 1.0}
+      - {type: "joint_vel",       dim: 23,  scale: 0.05}
+      - {type: "last_actions",    dim: 23,  scale: 1.0}

@@ -1,0 +1,11 @@
+{
+  "format": "wbc_static_checkpoint_export_v1",
+  "checkpoint_sha256": "ca18ca182dac58d906bbc9c72243074772f75e8a81087395bbf151145e2b0223",
+  "adapter_sha256": "2eb7832b3bcce11ca5c55815899a991368fc0083a827c72dfbb9522cb565bc90",
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "base_onnx_sha256": "a497a69d359a56af438f5643fb07cddf7b3e7d8806c02b1e17bdc505dfa1c626",
+  "policy_onnx_sha256": "aa02d8da0106231ce5b3160a891d81f0f344c8fcd99d5fc9223340092a41bfc7",
+  "policy_yaml_sha256": "fa4730f5e71a8da861187c44e80ec01b32666f8aa436c13b03595ade29ac2d39",
+  "cpu_samples": 33,
+  "max_abs_error": 8.344650268554688e-07
+}

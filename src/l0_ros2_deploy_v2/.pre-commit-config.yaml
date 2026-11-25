@@ -1,0 +1,46 @@
+# ROS 项目 pre-commit：C++(Google 风格) + XML + Python + Launch，全 repo 化
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        files: \.(yaml|yml)$
+      - id: check-xml
+        files: \.(xml|launch)$
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.0
+    hooks:
+      - id: clang-format
+        name: clang-format (Google style via .clang-format)
+        args: ["--style=file", "--fallback-style=Google", "-i"]
+        files: \.(c|cpp|cxx|cc|h|hpp|hxx)$
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        name: black (python)
+        args: ["--line-length=120", "--target-version=py38", "--skip-string-normalization"]
+        files: \.(py|launch\.py)$
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: isort (python)
+        args: ["--line-length=120", "--profile=black"]
+        files: \.(py|launch\.py)$
+
+# 全局排除：以下路径/后缀不参与任何 hook（与各 hook 的 exclude 合并会冗余，故只保留此处）
+exclude: |
+  (?x)^(
+      build/|install/|log/|devel/|install_isolated/|build_isolated/|
+      third_party/|vendor/|docs/|
+      \.git/|\.vscode/|\.idea/|__pycache__/|
+      .*\.(png|jpg|bin|pcd|bag|csv|so|a|o|cmake|pc|pyc)$|
+      .*\.(zip|tar|tar\.gz)$|sim2real\.tar\.gz|
+      \.gitignore|version\.json|\.pre-commit-config\.yaml
+  )$
