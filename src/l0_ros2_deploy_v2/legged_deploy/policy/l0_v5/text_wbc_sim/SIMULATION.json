@@ -1,0 +1,12 @@
+{
+  "backend": "OpenVINO CPU",
+  "root_reference": "live MuJoCo snapshot",
+  "static_reference_required": false,
+  "base_checkpoint": "/home/luvbotic/l0_mimic-lite/checkpoints/base_wbc10000_20261024/checkpoint_10000.pt",
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "upper_lora_checkpoint": "/home/luvbotic/下载/稳定下半身，强化上半身/lorackpt_2000.pt",
+  "upper_lora_checkpoint_sha256": "2eb7832b3bcce11ca5c55815899a991368fc0083a827c72dfbb9522cb565bc90",
+  "upper_weights_sha256": "d089b409ffa3ee93b6d006c41c3c2acc4d1c447ed72f04504b8f4bd2e371f4c4",
+  "same_as_simulation_A-C04_mod": true,
+  "different_from_real_text_wbc_bundle": true
+}

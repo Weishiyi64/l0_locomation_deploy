@@ -1,0 +1,311 @@
+{
+  "format": "wbc_lora_adapter_v1",
+  "action_id": "L0_satisfied_7",
+  "rank": 16,
+  "alpha": 16,
+  "parameter_source": "lora",
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "normalization_sha256": "144858108b1f9b6d0708d3bece42fbd367fdaf1e9a0b18be4d48f6b7546f618a",
+  "parameter_schema_sha256": "7d651f850ee1dcb287407ad2dcc16e35ce622f44097f60fecabf3a8fd0bf9f5f",
+  "weights": {
+    "path": "weights.bin",
+    "dtype": "float16-le",
+    "size_bytes": 460032,
+    "sha256": "8d080c8398847465f363426b6b86a0d30934f4aa6480d09523aabff49ae714f7"
+  },
+  "tensors": [
+    {
+      "name": "lora_0_a",
+      "actor_key": "module.0.module.1.module.0.0.lora_A",
+      "shape": [
+        16,
+        639
+      ],
+      "offset_bytes": 0,
+      "size_bytes": 20448
+    },
+    {
+      "name": "lora_0_b",
+      "actor_key": "module.0.module.1.module.0.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 20480,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_0_bias",
+      "actor_key": "module.0.module.1.module.0.0.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 53248,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_1_a",
+      "actor_key": "module.0.module.1.module.0.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ],
+      "offset_bytes": 55296,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_1_b",
+      "actor_key": "module.0.module.1.module.0.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 88064,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_1_bias",
+      "actor_key": "module.0.module.1.module.0.3.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 120832,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_2_a",
+      "actor_key": "module.0.module.1.module.1.lora_A",
+      "shape": [
+        16,
+        1024
+      ],
+      "offset_bytes": 122880,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_2_b",
+      "actor_key": "module.0.module.1.module.1.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 155648,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_2_bias",
+      "actor_key": "module.0.module.1.module.1.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 188416,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_3_a",
+      "actor_key": "module.0.module.3.module.0.lora_A",
+      "shape": [
+        16,
+        1423
+      ],
+      "offset_bytes": 190464,
+      "size_bytes": 45536
+    },
+    {
+      "name": "lora_3_b",
+      "actor_key": "module.0.module.3.module.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 236032,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_3_bias",
+      "actor_key": "module.0.module.3.module.0.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 268800,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_4_a",
+      "actor_key": "module.0.module.3.module.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ],
+      "offset_bytes": 270848,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_4_b",
+      "actor_key": "module.0.module.3.module.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 303616,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_4_bias",
+      "actor_key": "module.0.module.3.module.3.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 336384,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_5_a",
+      "actor_key": "module.0.module.3.module.6.lora_A",
+      "shape": [
+        16,
+        1024
+      ],
+      "offset_bytes": 338432,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_5_b",
+      "actor_key": "module.0.module.3.module.6.lora_B",
+      "shape": [
+        1024,
+        16
+      ],
+      "offset_bytes": 371200,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_5_bias",
+      "actor_key": "module.0.module.3.module.6.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 403968,
+      "size_bytes": 2048
+    },
+    {
+      "name": "lora_6_a",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_A",
+      "shape": [
+        16,
+        1024
+      ],
+      "offset_bytes": 406016,
+      "size_bytes": 32768
+    },
+    {
+      "name": "lora_6_b",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_B",
+      "shape": [
+        21,
+        16
+      ],
+      "offset_bytes": 438784,
+      "size_bytes": 672
+    },
+    {
+      "name": "lora_6_bias",
+      "actor_key": "module.0.module.4.module.actor_mean.bias",
+      "shape": [
+        21
+      ],
+      "offset_bytes": 439488,
+      "size_bytes": 42
+    },
+    {
+      "name": "norm_0_gamma",
+      "actor_key": "module.0.module.1.module.0.1.weight",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 439552,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_0_beta",
+      "actor_key": "module.0.module.1.module.0.1.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 441600,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_1_gamma",
+      "actor_key": "module.0.module.1.module.0.4.weight",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 443648,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_1_beta",
+      "actor_key": "module.0.module.1.module.0.4.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 445696,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_2_gamma",
+      "actor_key": "module.0.module.3.module.1.weight",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 447744,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_2_beta",
+      "actor_key": "module.0.module.3.module.1.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 449792,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_3_gamma",
+      "actor_key": "module.0.module.3.module.4.weight",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 451840,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_3_beta",
+      "actor_key": "module.0.module.3.module.4.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 453888,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_4_gamma",
+      "actor_key": "module.0.module.3.module.7.weight",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 455936,
+      "size_bytes": 2048
+    },
+    {
+      "name": "norm_4_beta",
+      "actor_key": "module.0.module.3.module.7.bias",
+      "shape": [
+        1024
+      ],
+      "offset_bytes": 457984,
+      "size_bytes": 2048
+    }
+  ]
+}

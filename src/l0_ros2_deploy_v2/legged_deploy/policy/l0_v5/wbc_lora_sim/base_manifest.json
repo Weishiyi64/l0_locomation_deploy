@@ -1,0 +1,668 @@
+{
+  "format": "wbc_lora_graph_v1",
+  "kind": "policy",
+  "rank": 16,
+  "alpha": 16,
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "normalization_sha256": "144858108b1f9b6d0708d3bece42fbd367fdaf1e9a0b18be4d48f6b7546f618a",
+  "parameter_schema_sha256": "7d651f850ee1dcb287407ad2dcc16e35ce622f44097f60fecabf3a8fd0bf9f5f",
+  "parameters": [
+    {
+      "name": "lora_0_a",
+      "actor_key": "module.0.module.1.module.0.0.lora_A",
+      "shape": [
+        16,
+        639
+      ]
+    },
+    {
+      "name": "lora_0_b",
+      "actor_key": "module.0.module.1.module.0.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_0_bias",
+      "actor_key": "module.0.module.1.module.0.0.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_1_a",
+      "actor_key": "module.0.module.1.module.0.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_1_b",
+      "actor_key": "module.0.module.1.module.0.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_1_bias",
+      "actor_key": "module.0.module.1.module.0.3.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_2_a",
+      "actor_key": "module.0.module.1.module.1.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_2_b",
+      "actor_key": "module.0.module.1.module.1.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_2_bias",
+      "actor_key": "module.0.module.1.module.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_3_a",
+      "actor_key": "module.0.module.3.module.0.lora_A",
+      "shape": [
+        16,
+        1423
+      ]
+    },
+    {
+      "name": "lora_3_b",
+      "actor_key": "module.0.module.3.module.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_3_bias",
+      "actor_key": "module.0.module.3.module.0.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_4_a",
+      "actor_key": "module.0.module.3.module.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_4_b",
+      "actor_key": "module.0.module.3.module.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_4_bias",
+      "actor_key": "module.0.module.3.module.3.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_5_a",
+      "actor_key": "module.0.module.3.module.6.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_5_b",
+      "actor_key": "module.0.module.3.module.6.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_5_bias",
+      "actor_key": "module.0.module.3.module.6.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_6_a",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_6_b",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_B",
+      "shape": [
+        21,
+        16
+      ]
+    },
+    {
+      "name": "lora_6_bias",
+      "actor_key": "module.0.module.4.module.actor_mean.bias",
+      "shape": [
+        21
+      ]
+    },
+    {
+      "name": "norm_0_gamma",
+      "actor_key": "module.0.module.1.module.0.1.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_0_beta",
+      "actor_key": "module.0.module.1.module.0.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_1_gamma",
+      "actor_key": "module.0.module.1.module.0.4.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_1_beta",
+      "actor_key": "module.0.module.1.module.0.4.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_2_gamma",
+      "actor_key": "module.0.module.3.module.1.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_2_beta",
+      "actor_key": "module.0.module.3.module.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_3_gamma",
+      "actor_key": "module.0.module.3.module.4.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_3_beta",
+      "actor_key": "module.0.module.3.module.4.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_4_gamma",
+      "actor_key": "module.0.module.3.module.7.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_4_beta",
+      "actor_key": "module.0.module.3.module.7.bias",
+      "shape": [
+        1024
+      ]
+    }
+  ],
+  "target_precision": "float16",
+  "application_dtype": "float32",
+  "source_onnx_sha256": "a497a69d359a56af438f5643fb07cddf7b3e7d8806c02b1e17bdc505dfa1c626",
+  "inputs": [
+    {
+      "name": "command_short",
+      "shape": [
+        240
+      ],
+      "dtype": "float32",
+      "role": "observation"
+    },
+    {
+      "name": "policy",
+      "shape": [
+        399
+      ],
+      "dtype": "float32",
+      "role": "observation"
+    },
+    {
+      "name": "lora_0_a",
+      "shape": [
+        16,
+        639
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_0_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_0_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_a",
+      "shape": [
+        16,
+        1423
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_b",
+      "shape": [
+        21,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_bias",
+      "shape": [
+        21
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_0_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_0_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_1_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_1_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_2_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_2_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_3_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_3_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_4_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_4_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "action",
+      "shape": [
+        21
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "actions": [
+    {
+      "action_id": "L0_angry_new_2",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_angry_new_2/manifest.json",
+      "config": "actions/L0_angry_new_2/rl_config.yaml",
+      "config_sha256": "5d70b2f52b939c2985df51034525bcc0d7674822dd5561ab5cdcab348b79aac7",
+      "reference_onnx": "actions/L0_angry_new_2/reference_motion.onnx",
+      "reference_onnx_sha256": "1af2b0484bc972356235e3199dd4a686ab8a131508ddd72424b50ad2d9a2d5ca"
+    },
+    {
+      "action_id": "L0_strange_1",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_strange_1/manifest.json",
+      "config": "actions/L0_strange_1/rl_config.yaml",
+      "config_sha256": "01771bb1a17fccefa1211d53b32b6ee339cde5245d07788060046ea7ef18ee96",
+      "reference_onnx": "actions/L0_strange_1/reference_motion.onnx",
+      "reference_onnx_sha256": "5111f646bb46c891aeb02bd0d33e9b57d1cb70a67a7f3350349d4948c6e07981"
+    },
+    {
+      "action_id": "L0_strange_new_1_A",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_strange_new_1_A/manifest.json",
+      "config": "actions/L0_strange_new_1_A/rl_config.yaml",
+      "config_sha256": "f461e5e0672fb785ca340b20a9fed12a65614667d2c6a131eebe4d828ddfe49f",
+      "reference_onnx": "actions/L0_strange_new_1_A/reference_motion.onnx",
+      "reference_onnx_sha256": "1136ea825a23d7405c4d836ad55ceb28d39e6589e1db6ef748f779a077851812"
+    },
+    {
+      "action_id": "L0_excited_8",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_excited_8/manifest.json",
+      "config": "actions/L0_excited_8/rl_config.yaml",
+      "config_sha256": "54e4808c842be6ee83af0dc87d0e4815598ffb379bd1cc4638287a072a99182e",
+      "reference_onnx": "actions/L0_excited_8/reference_motion.onnx",
+      "reference_onnx_sha256": "a016dd4f876faeb0efa84b895eef6318f085075de724d71991da765d3fcb82c1"
+    },
+    {
+      "action_id": "A-C04_mod",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/A-C04_mod/manifest.json",
+      "config": "actions/A-C04_mod/rl_config.yaml",
+      "config_sha256": "68625a6cbf6d9bcbf882273815bc21ef64d6cdfaa94fdd555786cf19e73c6777",
+      "reference_onnx": "actions/A-C04_mod/reference_motion.onnx",
+      "reference_onnx_sha256": "a93e31235a6fd150c45eb4eadcb0d38ce54ef38eaa862922eece93f6bdd1a436"
+    },
+    {
+      "action_id": "L0_crouch_off",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_crouch_off/manifest.json",
+      "config": "actions/L0_crouch_off/rl_config.yaml",
+      "config_sha256": "ef4d1cdab9fd6067dbb1ff3c4ef583cfc8e3959499764f43dd0fbe83601c915d",
+      "reference_onnx": "actions/L0_crouch_off/reference_motion.onnx",
+      "reference_onnx_sha256": "32a99425301c81884b9a89159a42f5ca7eab164134e9df2b58e642617709b2c1"
+    },
+    {
+      "action_id": "L0_fear_7_A",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_fear_7_A/manifest.json",
+      "config": "actions/L0_fear_7_A/rl_config.yaml",
+      "config_sha256": "f4bed7f5d3a8a60b65a6390637b4003319356581c89141882538f57a70431c03",
+      "reference_onnx": "actions/L0_fear_7_A/reference_motion.onnx",
+      "reference_onnx_sha256": "d7584da5e0204f37276d7c5ebd219b6bd8d9a7002976131762ba197ebd0044ea"
+    },
+    {
+      "action_id": "L0_excited_1",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_excited_1/manifest.json",
+      "config": "actions/L0_excited_1/rl_config.yaml",
+      "config_sha256": "a04e473459de5ca83174ea1416788c4ec99398594b77e55f6afeec950401a0aa",
+      "reference_onnx": "actions/L0_excited_1/reference_motion.onnx",
+      "reference_onnx_sha256": "5d601a2a715de7d49fdd280e073d8a596d80b6c126432013fb7db6b5a78c3155"
+    },
+    {
+      "action_id": "L0_excited_new_1",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_excited_new_1/manifest.json",
+      "config": "actions/L0_excited_new_1/rl_config.yaml",
+      "config_sha256": "d24b74f65fd13b7a520f60b7b44db1db8d7090426170f25131b062efeded01a7",
+      "reference_onnx": "actions/L0_excited_new_1/reference_motion.onnx",
+      "reference_onnx_sha256": "c71df87d1e8c3f4991a55f7ac57ba289cd68df69d156a2f4b603426d4d313c5f"
+    },
+    {
+      "action_id": "L0_excited_new_5",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_excited_new_5/manifest.json",
+      "config": "actions/L0_excited_new_5/rl_config.yaml",
+      "config_sha256": "243eb2e48fafaa30a3e5bbb391d9a640224be8b9255a92187cc0b732990a71ee",
+      "reference_onnx": "actions/L0_excited_new_5/reference_motion.onnx",
+      "reference_onnx_sha256": "b74cdaec9bea627fb901f622e55741f4669fc25844222c0a4ce182501e6f50b5"
+    },
+    {
+      "action_id": "L0_satisfied_10",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_satisfied_10/manifest.json",
+      "config": "actions/L0_satisfied_10/rl_config.yaml",
+      "config_sha256": "f3ad1580a54903d2fa26743ddabf4082866d96e6eb6de9a7faa2dc0012ca573b",
+      "reference_onnx": "actions/L0_satisfied_10/reference_motion.onnx",
+      "reference_onnx_sha256": "60f4c50886cd26fe08eece50e6db79fb6728db73151995aaba59b4c5eea0f38d"
+    },
+    {
+      "action_id": "L0_SayNo_17",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_SayNo_17/manifest.json",
+      "config": "actions/L0_SayNo_17/rl_config.yaml",
+      "config_sha256": "7668936e14b15c4567402367beeb2c4af67fe7168b4c7c8d6797ed6a77940467",
+      "reference_onnx": "actions/L0_SayNo_17/reference_motion.onnx",
+      "reference_onnx_sha256": "ee83e27cef8bd019e62ea506ff8d3a90e74b95671dc1a61b2025e57501c01043"
+    },
+    {
+      "action_id": "L0_angry_9",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_angry_9/manifest.json",
+      "config": "actions/L0_angry_9/rl_config.yaml",
+      "config_sha256": "6d926a13c3727f33695ae759b8ab2096e3948abd39c92578c4f6740c101c83e7",
+      "reference_onnx": "actions/L0_angry_9/reference_motion.onnx",
+      "reference_onnx_sha256": "638e35a9d40e87dcaf70b492874fc821463960dabd6638326eb2bd7d4da086df"
+    },
+    {
+      "action_id": "L0_angry_new_1",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/L0_angry_new_1/manifest.json",
+      "config": "actions/L0_angry_new_1/rl_config.yaml",
+      "config_sha256": "28d84f5cf5208d5458359bd68c30923769b1099d26aa78f86440e08d3c9f344c",
+      "reference_onnx": "actions/L0_angry_new_1/reference_motion.onnx",
+      "reference_onnx_sha256": "9236cba5953d576e85335b828977fdb7436422b6165262054047038654beeeb7"
+    }
+  ],
+  "probes": [],
+  "model": {
+    "onnx": "base_lora.onnx",
+    "sha256": "ecbfe4b4dabe6ee284fd756aabed60288bd52d216e4c3c0e7ac18a48c51da418"
+  },
+  "initializer_dtype": "float16"
+}

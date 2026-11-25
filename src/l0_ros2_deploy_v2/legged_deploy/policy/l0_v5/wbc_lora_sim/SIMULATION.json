@@ -1,0 +1,197 @@
+{
+  "backend": "OpenVINO CPU",
+  "selected_actions": [
+    "L0_strange_new_1_A",
+    "L0_strange_1",
+    "L0_excited_8",
+    "L0_angry_new_2",
+    "A-C04_mod",
+    "L0_crouch_off",
+    "L0_fear_7_A",
+    "L0_excited_1",
+    "L0_excited_new_1",
+    "L0_excited_new_5",
+    "L0_satisfied_10",
+    "L0_SayNo_17",
+    "L0_angry_9",
+    "L0_angry_new_1"
+  ],
+  "A-C04_mod": {
+    "source_json": "/home/luvbotic/json1009/新json/A-C04_mod.json",
+    "source_json_sha256": "d5acc36113fd7d72dcf3fe7c5b3b3f294f938034c69821d35bac454db7603386",
+    "reference_source": "/home/luvbotic/l0_deploy_v2_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc/A-C04_mod/reference_motion.onnx",
+    "checked_all_360_frames": true,
+    "upper_lora_byte_identical": true
+  },
+  "upper_lora": {
+    "backend": "OpenVINO CPU",
+    "root_reference": "live MuJoCo snapshot",
+    "static_reference_required": false,
+    "base_checkpoint": "/home/luvbotic/l0_mimic-lite/checkpoints/base_wbc10000_20261024/checkpoint_10000.pt",
+    "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+    "upper_lora_checkpoint": "/home/luvbotic/下载/稳定下半身，强化上半身/lorackpt_2000.pt",
+    "upper_lora_checkpoint_sha256": "2eb7832b3bcce11ca5c55815899a991368fc0083a827c72dfbb9522cb565bc90",
+    "upper_weights_sha256": "d089b409ffa3ee93b6d006c41c3c2acc4d1c447ed72f04504b8f4bd2e371f4c4",
+    "same_as_simulation_A-C04_mod": true,
+    "different_from_real_text_wbc_bundle": true
+  },
+  "four_motion_source": "/home/luvbotic/checkpoints/wholebody1102/bushu_4motion_1102",
+  "L0_crouch_off": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_crouch_off/reference_motion.onnx",
+    "reference_sha256": "32a99425301c81884b9a89159a42f5ca7eab164134e9df2b58e642617709b2c1",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_crouch_off",
+    "adapter_weights_sha256": "a311f83d36e79201bb70bd9dd5058f96a289460e9bbd5c99596a419e141a15bf",
+    "reference_num_frames": 126,
+    "fps": 50,
+    "on_finish": "emergency_stop via MuJoCo launch default; not encoded in model",
+    "real_assets_unchanged": true
+  },
+  "L0_fear_7_A": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_fear_7_A/reference_motion.onnx",
+    "reference_sha256": "d7584da5e0204f37276d7c5ebd219b6bd8d9a7002976131762ba197ebd0044ea",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_fear_7_A",
+    "adapter_weights_sha256": "43f1d0d5448fee0a67e71acf126143eca429b4f5d8dd30f35cde2502b75c3f65",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/fearful/L0_fear_7_A/L0_fear_7_A.npz",
+      "fps": "50",
+      "num_frames": "413",
+      "duration_s": "8.2400000000000002",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_excited_1": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_excited_1/reference_motion.onnx",
+    "reference_sha256": "5d601a2a715de7d49fdd280e073d8a596d80b6c126432013fb7db6b5a78c3155",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_excited_1",
+    "adapter_weights_sha256": "9b7d7055c2efce593ffda61cf4c3a4f0a98eafa6f91653ad2cb7e34906fa6fa7",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/excited/L0_excited_1/L0_excited_1.npz",
+      "fps": "50",
+      "num_frames": "237",
+      "duration_s": "4.7199999999999998",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_excited_new_1": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_excited_new_1/reference_motion.onnx",
+    "reference_sha256": "c71df87d1e8c3f4991a55f7ac57ba289cd68df69d156a2f4b603426d4d313c5f",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_excited_new_1",
+    "adapter_weights_sha256": "53d93772dd9b5b57bf0ad7cb996f914182514bf46716ad603fbfe0206b3d1d1f",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/excited/L0_excited_new_1/L0_excited_new_1.npz",
+      "fps": "50",
+      "num_frames": "396",
+      "duration_s": "7.9000000000000004",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_excited_new_5": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_excited_new_5/reference_motion.onnx",
+    "reference_sha256": "b74cdaec9bea627fb901f622e55741f4669fc25844222c0a4ce182501e6f50b5",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_excited_new_5",
+    "adapter_weights_sha256": "967e800a2de02d45cd8d02a591146fc1c7825a5020e96ffb20b084a7000b5271",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/excited/L0_excited_new_5/L0_excited_new_5.npz",
+      "fps": "50",
+      "num_frames": "288",
+      "duration_s": "5.7400000000000002",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_satisfied_10": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_satisfied_10/reference_motion.onnx",
+    "reference_sha256": "60f4c50886cd26fe08eece50e6db79fb6728db73151995aaba59b4c5eea0f38d",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_satisfied_10",
+    "adapter_weights_sha256": "eb11bc1460b05bbe3bc5e58482db0078076c283d7a9b0ad101bcabe39301ef8b",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/tmp/bushu8_1030_stage/sim2sim/satisfied/L0_satisfied_10/reference_plus1s.npz",
+      "fps": "50",
+      "num_frames": "511",
+      "duration_s": "10.199999999999999",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_SayNo_17": {
+    "reference_source": "/home/luvbotic/l0_deploy_v5_ws/artifacts/reference_trim_20261104_1611/inputs/L0_SayNo_17/reference_motion.onnx",
+    "reference_sha256": "ee83e27cef8bd019e62ea506ff8d3a90e74b95671dc1a61b2025e57501c01043",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_SayNo_17",
+    "adapter_weights_sha256": "6e287328484b5045443bec4975814608e842a16062e8e156024ad133f4bb3939",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261030_emotions_lora_hold5s_sim2sim/clips/L0_SayNo_17/input/L0_SayNo_17.npz",
+      "fps": "50",
+      "num_frames": "272",
+      "duration_s": "5.42",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped",
+      "trim_source_onnx_sha256": "ae5ade02116337ea9f52d7ecf9f1f1906bdf58d6c22fbd6ef69d18ecdba6e43e",
+      "trim_source_start_frame": "216",
+      "trim_source_end_frame_exclusive": "488",
+      "trim_keep_endpoint_frames": "50"
+    }
+  },
+  "L0_angry_9": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_angry_9/reference_motion.onnx",
+    "reference_sha256": "638e35a9d40e87dcaf70b492874fc821463960dabd6638326eb2bd7d4da086df",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_angry_9",
+    "adapter_weights_sha256": "cdf3b28b9ecc4266456bff4513db2ded4422afa99bc0d05dbece72d429e47eb8",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/tmp/bushu8_1030_stage/sim2sim/angry/L0_angry_9/reference_plus1s.npz",
+      "fps": "50",
+      "num_frames": "302",
+      "duration_s": "6.0199999999999996",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  },
+  "L0_angry_new_1": {
+    "reference_source": "/home/luvbotic/下载/真机代码_20261106/l0_deploy_v2_ws/model_sources/wbc_lora_fp16/actions/L0_angry_new_1/reference_motion.onnx",
+    "reference_sha256": "9236cba5953d576e85335b828977fdb7436422b6165262054047038654beeeb7",
+    "adapter_source": "/home/luvbotic/l0_deploy_v5_ws/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/adapters/L0_angry_new_1",
+    "adapter_weights_sha256": "4336ceed70927c4564fb6f7b76c375fbd11128d4bf53aee792d84f82d11f15ff",
+    "same_as_real_bundle_source": true,
+    "reference_metadata": {
+      "artifact_type": "mimic_lite_motion_reference",
+      "source_motion": "/home/luvbot/SC/l0_mimic-lite/projects/mimic-lite/experiments/20261024_k0504_lora_comparison/inputs_local/angry/L0_angry_new_1/L0_angry_new_1.npz",
+      "fps": "50",
+      "num_frames": "263",
+      "duration_s": "5.2400000000000002",
+      "joint_names": "left_hip_pitch_joint,left_hip_roll_joint,left_hip_yaw_joint,left_knee_joint,left_ankle_pitch_joint,left_ankle_roll_joint,right_hip_pitch_joint,right_hip_roll_joint,right_hip_yaw_joint,right_knee_joint,right_ankle_pitch_joint,right_ankle_roll_joint,left_shoulder_pitch_joint,left_shoulder_roll_joint,left_elbow_roll_joint,right_shoulder_pitch_joint,right_shoulder_roll_joint,right_elbow_roll_joint,neck_yaw_joint,neck_pitch_joint,neck_roll_joint",
+      "body_names": "base_link,lidar_link,neck_yaw_link,neck_pitch_link,neck_roll_link,left_shoulder_pitch_link,left_shoulder_roll_link,left_elbow_roll_link,right_shoulder_pitch_link,right_shoulder_roll_link,right_elbow_roll_link,left_hip_pitch_link,left_hip_roll_link,left_hip_yaw_link,left_knee_link,left_ankle_pitch_link,left_ankle_roll_link,right_hip_pitch_link,right_hip_roll_link,right_hip_yaw_link,right_knee_link,right_ankle_pitch_link,right_ankle_roll_link",
+      "quaternion_order": "wxyz",
+      "time_step_semantics": "zero_based_frame_index_clamped"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "toolkit2_version": "2.3.2",
+  "target_platform": "rk3588",
+  "do_quantization": false,
+  "source_manifest_sha256": "07688d80a2a051d66a1aea440f37a1e4d9a0a6029c2ea78dd8ae70e0e8073493",
+  "build_only": true,
+  "board_verified": false,
+  "verification": "pending",
+  "compiled_manifest_sha256": "03ee0c9855a8836732ffacd27ec7d38ade6a1dcbdcdfee7cf62b2030340750de",
+  "environment": {
+    "python": "3.10.12",
+    "machine": "aarch64",
+    "rknn-toolkit2": "2.3.2",
+    "onnx": "1.16.1",
+    "numpy": "1.26.4",
+    "onnxruntime": "1.23.2",
+    "protobuf": "3.20.3",
+    "onnxoptimizer": "0.3.8",
+    "torch": "2.2.0",
+    "scipy": "1.15.3",
+    "opencv-python": "4.11.0.86",
+    "psutil": "5.9.0",
+    "ruamel.yaml": "0.19.1",
+    "tqdm": "4.70.1",
+    "fast-histogram": "0.14"
+  }
+}

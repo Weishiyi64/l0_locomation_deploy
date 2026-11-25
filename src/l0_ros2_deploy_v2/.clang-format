@@ -1,0 +1,12 @@
+# Google 风格 + if/for/while 等的大括号换行（便于阅读）
+BasedOnStyle: Google
+IndentWidth: 2
+ColumnLimit: 120
+IncludeBlocks: Regroup
+# if/for/while 后的 { 新开一行，便于阅读
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterControlStatement: Always
+  BeforeElse: true
+  AfterFunction: false
+  AfterClass: false

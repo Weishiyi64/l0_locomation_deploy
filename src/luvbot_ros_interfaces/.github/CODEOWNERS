@@ -1,0 +1,5 @@
+# Replace these team slugs if the GitHub organization uses different names.
+* @luvbotics/system-architecture @luvbotics/interface-reviewers
+
+/luvbot_hardware_interfaces/ @luvbotics/system-architecture @luvbotics/hardware
+/luvbot_control_interfaces/ @luvbotics/system-architecture @luvbotics/control

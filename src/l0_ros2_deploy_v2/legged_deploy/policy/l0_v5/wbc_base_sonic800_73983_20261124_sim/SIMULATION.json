@@ -1,0 +1,18 @@
+{
+  "source_delivery": "wbc_base_sonic800_73983_20261124",
+  "delivery_manifest_sha256": "e50bd74b806a3e6804fbe785f0bf9ceb6b7f38b54775756d053c6dfaf09c0fde",
+  "actor_onnx_sha256": "a7a3c02c03989afbae331e7dd723752e19b535ba4286b720ae5822dc978e795c",
+  "reference_identity": "The 14 delivered ONNX references and YAML configs match the delivery manifest SHA-256 values.",
+  "stand_random_upper_120s": {
+    "reference_source": "Frame-by-frame output dump of the deployed stand_random_upper_120s RKNN reference, six tensors in deployment order",
+    "source_dump_sha256": "2dec7b6ffeb9bc55fa5cc652bff29aff516d8c95d307375b1f1e86cbc0a39dc3",
+    "source_config_sha256": "c8f7dcf9b502d49554b9c3b22452baa22e992b1ea74ebd2be12671d93de9cd8c",
+    "source_frames": 6001,
+    "source_first_played_frame": 1,
+    "source_last_played_frame": 6000,
+    "playback_frames": 6000,
+    "control_dt": 0.02,
+    "start_hold_sec": 1.0,
+    "reference_onnx_sha256": "b389cd643c819f821fe4af24f8f37aeca2dda5fc16748dc0942e113f1b8d04a2"
+  }
+}

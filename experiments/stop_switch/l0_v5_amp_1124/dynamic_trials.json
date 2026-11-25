@@ -1,0 +1,774 @@
+{
+  "mujoco": "3.7.0",
+  "policy_sha256": "b9f1ee1735f83399bf3ae2889a1339a17f9a9f1065b292bf324c5240867a4699",
+  "amp_sha256": "d52111f0bf384bc7165bbf4ca5e1bbcafad79ff4d14e7a9dba9fe8268e77d77a",
+  "scene_sha256": "b1a54eac002742e718781a77ab3056a9e9528108e2c9fdd057ad6de881d5d254",
+  "player_sha256": "dadd744249aee3a757b555f53c7c5ad6e8cb662afd09619de989d94ff06100c6",
+  "motions": {
+    "wave": {
+      "clip": "wave_R_001__A428.npz",
+      "sha256": "73643eb32e826b9bb25183bbfd9682d8d41f39e1ea13b1316f78a025ab0bd5e3",
+      "baseline": {
+        "stop": null,
+        "landing": null,
+        "status": "clip_complete"
+      },
+      "compared_ticks": 219,
+      "clip_frames": 219,
+      "command_max_abs": 0.0,
+      "action_max_abs": 0.0,
+      "cases": {
+        "upper_63": {
+          "stop": 63,
+          "landing": 63,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.36775843748150955,
+          "peak_planned_joint_speed_rad_s": 6.8147303777906565,
+          "peak_planned_joint_acceleration_rad_s2": 48.5056171925835,
+          "support_on_stop": 3,
+          "ended_at": 243,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.0004928504435080532,
+            0.0001544094641922553
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.000384163019926928,
+            0.03733647629498185,
+            1.1978901205420496,
+            0.08021065316796305
+          ]
+        },
+        "upper_100": {
+          "stop": 100,
+          "landing": 100,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.36279851611217734,
+          "peak_planned_joint_speed_rad_s": 5.4208266947039725,
+          "peak_planned_joint_acceleration_rad_s2": 39.94747126791209,
+          "support_on_stop": 3,
+          "ended_at": 280,
+          "loaded_foot_max_horizontal_excursion_m": [
+            6.395639920963731e-05,
+            8.39433773279938e-05
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.00041655545506737076,
+            0.045689551787074324,
+            1.1598170466959477,
+            0.08054280755519871
+          ]
+        },
+        "upper_176": {
+          "stop": 176,
+          "landing": 176,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.2613595015758406,
+          "peak_planned_joint_speed_rad_s": 2.5061857477302882,
+          "peak_planned_joint_acceleration_rad_s2": 17.11615769094926,
+          "support_on_stop": 3,
+          "handoff": 210,
+          "leg_delta_rad": 0.28252565120905626,
+          "upper_delta_rad": 0.1219035469353199,
+          "delta_by_joint_rad": [
+            -0.28252565120905626,
+            -0.13280131821632385,
+            -0.08552930304706097,
+            -0.19765252113938336,
+            0.06541989797353742,
+            0.08099934364557265,
+            0.13665765007138256,
+            -0.1962380501188338,
+            0.20686596848964695,
+            -0.1164822321772575,
+            0.056311354184150675,
+            -0.20785858154371378,
+            0.01107889339774847,
+            -0.1219035469353199,
+            -0.03284519695341587,
+            0.021543312152847646,
+            0.09573092111945158,
+            0.015827082639932655,
+            0.0009954739198088645,
+            -0.029480198155343532,
+            -0.0021139075628481803
+          ],
+          "ended_at": 378,
+          "final_height_m": 0.45396612703578687,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 0.0005594395124890921,
+          "last_second_max_tilt_deg": 4.764882127561228,
+          "loaded_foot_max_horizontal_excursion_m": [
+            1.2456904184858288e-05,
+            1.6723607540023527e-05
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.008001221212891358,
+            0.005095801530641159,
+            0.2780377038985491,
+            0.053443513056635854
+          ]
+        }
+      }
+    },
+    "wave_on_amp_stance": {
+      "clip": "wave_R_001__A428.npz",
+      "sha256": "73643eb32e826b9bb25183bbfd9682d8d41f39e1ea13b1316f78a025ab0bd5e3",
+      "baseline": {
+        "stop": null,
+        "landing": null,
+        "status": "clip_complete"
+      },
+      "compared_ticks": 219,
+      "clip_frames": 219,
+      "command_max_abs": 0.0,
+      "action_max_abs": 0.0,
+      "cases": {
+        "upper_54": {
+          "stop": 54,
+          "landing": 54,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.0,
+          "peak_planned_joint_speed_rad_s": 6.177605649958717,
+          "peak_planned_joint_acceleration_rad_s2": 37.48044948895866,
+          "support_on_stop": 3,
+          "handoff": 88,
+          "leg_delta_rad": 0.16566361881960182,
+          "upper_delta_rad": 0.15927349854707729,
+          "delta_by_joint_rad": [
+            -0.016663913753628683,
+            0.13976433428637683,
+            0.01772734254896641,
+            0.0034203545689582837,
+            -0.01992810359597209,
+            -0.05583387625366449,
+            0.04899383718520402,
+            -0.16566361881960182,
+            0.0009871475830674145,
+            0.024512709337472904,
+            -0.02099384893029929,
+            0.02966831046938896,
+            -0.012492334469407796,
+            -0.15927349854707729,
+            -0.03417086281776427,
+            -0.010088629063591361,
+            0.11681820477843285,
+            0.06134518917500975,
+            -0.011444136999547482,
+            -0.004043946912884712,
+            -0.0026209144154563544
+          ],
+          "ended_at": 256,
+          "final_height_m": 0.4548379251866186,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 4.2414444342667525e-06,
+          "last_second_max_tilt_deg": 5.68363850621596,
+          "loaded_foot_max_horizontal_excursion_m": [
+            4.90099664805397e-06,
+            4.994749719707126e-06
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.0051531380313783815,
+            0.003448382522670356,
+            0.16098204029276966,
+            0.06316277672275901
+          ]
+        },
+        "upper_100": {
+          "stop": 100,
+          "landing": 100,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.0,
+          "peak_planned_joint_speed_rad_s": 5.4208266947039725,
+          "peak_planned_joint_acceleration_rad_s2": 39.94747126791209,
+          "support_on_stop": 3,
+          "handoff": 134,
+          "leg_delta_rad": 0.1753374839797616,
+          "upper_delta_rad": 0.15794572708606724,
+          "delta_by_joint_rad": [
+            -0.019180198010802202,
+            0.12525980106294154,
+            0.016586667701601984,
+            0.001951597341895095,
+            -0.025310888928174978,
+            -0.05168805335313082,
+            0.05888374471664427,
+            -0.1753374839797616,
+            0.004066264989227054,
+            0.0356532289415597,
+            -0.019225890296697603,
+            -0.002010733441263437,
+            -0.01863909752368927,
+            -0.15794572708606724,
+            -0.03443940053284167,
+            -0.028752648992836475,
+            0.1123892749667168,
+            0.06175062032938006,
+            -0.0032965466544032096,
+            -0.003913481794297695,
+            -0.0005423755122348666
+          ],
+          "ended_at": 302,
+          "final_height_m": 0.4548380372469705,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 8.883890273605809e-06,
+          "last_second_max_tilt_deg": 5.682705791158761,
+          "loaded_foot_max_horizontal_excursion_m": [
+            4.263313334068446e-06,
+            4.563367432424857e-06
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.005132827392341683,
+            0.003396820269210571,
+            0.1726915905088186,
+            0.08323631052970892
+          ]
+        },
+        "upper_166": {
+          "stop": 166,
+          "landing": 166,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.0,
+          "peak_planned_joint_speed_rad_s": 2.4747458149909973,
+          "peak_planned_joint_acceleration_rad_s2": 16.060055011113405,
+          "support_on_stop": 3,
+          "handoff": 200,
+          "leg_delta_rad": 0.1282404115812853,
+          "upper_delta_rad": 0.15695846915841105,
+          "delta_by_joint_rad": [
+            -0.014950690146535647,
+            0.09196019007265568,
+            0.005977692598104479,
+            0.012467314800620077,
+            -0.03155349393188957,
+            0.08935986796468495,
+            0.06363214137554173,
+            -0.1282404115812853,
+            0.02093599606305361,
+            0.037535312637686724,
+            -0.03918140669614077,
+            -0.11190105796903371,
+            -0.011802885016053914,
+            -0.15695846915841105,
+            -0.024498760068416614,
+            -0.011378598021157085,
+            0.11615004854202271,
+            0.03435277450680735,
+            0.00030136650651693345,
+            -0.0027753384441137315,
+            0.00032557501527480777
+          ],
+          "ended_at": 368,
+          "final_height_m": 0.45483865069002843,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 1.0689912504992466e-05,
+          "last_second_max_tilt_deg": 5.680382960204425,
+          "loaded_foot_max_horizontal_excursion_m": [
+            6.651136060298932e-06,
+            7.738823451052277e-06
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.005811583772592788,
+            0.0022261218900443917,
+            0.12415654045268894,
+            0.0674533282369375
+          ]
+        }
+      }
+    },
+    "dance": {
+      "clip": "L0_billiejean_A.npz",
+      "sha256": "5465b34dd707f40d8cf380b22b9715154f98e40f68082e6fc5c756ce7e829768",
+      "baseline": {
+        "stop": null,
+        "landing": null,
+        "status": "clip_complete"
+      },
+      "compared_ticks": 966,
+      "clip_frames": 966,
+      "command_max_abs": 0.0,
+      "action_max_abs": 0.0,
+      "cases": {
+        "left_whole_body_direct_139": {
+          "stop": 139,
+          "landing": 139,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.17095021828533757,
+          "peak_planned_joint_speed_rad_s": 3.4147767395884876,
+          "peak_planned_joint_acceleration_rad_s2": 29.829336570368902,
+          "support_on_stop": 1,
+          "handoff": 177,
+          "leg_delta_rad": 0.2640956856027245,
+          "upper_delta_rad": 0.3650371453940869,
+          "delta_by_joint_rad": [
+            -0.12590810829699034,
+            -0.09073204908668994,
+            0.003857327317446471,
+            -0.04766091790199278,
+            -0.05191577994525433,
+            -0.2640956856027245,
+            0.08443899379000067,
+            -0.24267270604372024,
+            -0.006037799583375454,
+            0.10083106054067614,
+            0.03510072723925115,
+            -0.04934628217890859,
+            -0.0327727260556072,
+            -0.01153659232258808,
+            -0.3650371453940869,
+            0.03869987686090171,
+            -0.11907748322486866,
+            0.1559371618807316,
+            0.03295626921057701,
+            -0.030648193867504597,
+            -0.014946251440793276
+          ],
+          "ended_at": 345,
+          "final_height_m": 0.45477420027308396,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 0.00010624966337179862,
+          "last_second_max_tilt_deg": 5.550018324251845,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.00039869105760896047,
+            0.011191896355136602
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.014750994557619442,
+            0.08127668461196094,
+            0.23845265336111188,
+            0.19983731551766395
+          ]
+        },
+        "left_whole_body_after_landing_139": {
+          "stop": 139,
+          "landing": 148,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 5.338242774705096,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 1,
+          "handoff": 182,
+          "leg_delta_rad": 0.20399604692086576,
+          "upper_delta_rad": 0.21464292079806335,
+          "delta_by_joint_rad": [
+            0.07141578468829396,
+            0.1753581189751625,
+            0.015825861502438785,
+            0.11403789543509485,
+            0.017334627497196206,
+            -0.11919023327119649,
+            0.06687755019217732,
+            -0.20399604692086576,
+            -0.0005470747292041773,
+            0.044038586002588254,
+            -0.017544655434787296,
+            0.05376295703798532,
+            -0.14750164286792278,
+            -0.21464292079806335,
+            -0.19561603368520736,
+            -0.06341687923818827,
+            0.11857486552000052,
+            0.13499572786092756,
+            -0.004993902852013707,
+            -0.060503981256484984,
+            -0.0052862422700971365
+          ],
+          "ended_at": 350,
+          "final_height_m": 0.4547426420000819,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 1.554443564245099e-05,
+          "last_second_max_tilt_deg": 5.417186072856008,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.00021605447430379614,
+            0.011664588510643422
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.02866956653788859,
+            0.0794737904789923,
+            0.11405766851902008,
+            0.21464292079806335
+          ]
+        },
+        "left_upper_direct_139": {
+          "stop": 139,
+          "landing": 139,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.17095021828533757,
+          "peak_planned_joint_speed_rad_s": 2.7111331641868297,
+          "peak_planned_joint_acceleration_rad_s2": 16.48806937323716,
+          "support_on_stop": 1,
+          "ended_at": 319,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.0001530918385614304,
+            0.001988252851529959
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.00035813673939959765,
+            0.04324840571356219,
+            0.5569408629238606,
+            0.12684784521460532
+          ]
+        },
+        "left_upper_after_landing_139": {
+          "stop": 139,
+          "landing": 148,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 4.298728433453619,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 1,
+          "ended_at": 328,
+          "loaded_foot_max_horizontal_excursion_m": [
+            8.4385527355433e-05,
+            0.002494287293871447
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.00014238869483592344,
+            0.02547049971363266,
+            0.508376157861948,
+            0.12791535843610763
+          ]
+        },
+        "left_upper_matched_landing_139": {
+          "stop": 139,
+          "landing": 151,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.10820352247449898,
+          "peak_planned_joint_speed_rad_s": 4.6579691841531545,
+          "peak_planned_joint_acceleration_rad_s2": 41.64004403379218,
+          "support_on_stop": 1,
+          "ended_at": 331,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.0006467509331289288,
+            0.0016304827087432639
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            9.283837244668591e-06,
+            0.0004730264823167396,
+            0.4991936875104904,
+            0.06689666891396046
+          ]
+        },
+        "right_whole_body_direct_114": {
+          "stop": 114,
+          "landing": 114,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.46045430445155133,
+          "peak_planned_joint_speed_rad_s": 3.677965967621613,
+          "peak_planned_joint_acceleration_rad_s2": 31.73913141091611,
+          "support_on_stop": 2,
+          "handoff": 149,
+          "leg_delta_rad": 0.1508679585069418,
+          "upper_delta_rad": 0.2595547817099839,
+          "delta_by_joint_rad": [
+            0.13929294318258764,
+            0.11521555127352476,
+            0.04501027296185493,
+            0.12026503655314444,
+            0.01904232912063599,
+            -0.1508679585069418,
+            0.04211998315751557,
+            -0.09795787133276462,
+            -0.029254720285534865,
+            0.0875713001102209,
+            0.01357451781630515,
+            0.02829209149032831,
+            -0.025556382916867734,
+            -0.2548155105352402,
+            0.2595547817099839,
+            0.007654563029855489,
+            0.2497200259268284,
+            -0.16445211655199526,
+            -0.021524396006017923,
+            -0.034968536649644374,
+            0.016712850185856224
+          ],
+          "ended_at": 317,
+          "final_height_m": 0.4548357809155467,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 3.550442959459352e-05,
+          "last_second_max_tilt_deg": 5.528424570219915,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.010645684286688212,
+            0.0007578297615572067
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.02647284672043626,
+            0.03788825804047105,
+            0.1330993934512138,
+            0.13203025241196156
+          ]
+        },
+        "right_whole_body_after_landing_114": {
+          "stop": 114,
+          "landing": 148,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 5.338242774705096,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 2,
+          "handoff": 182,
+          "leg_delta_rad": 0.20399604692086576,
+          "upper_delta_rad": 0.21464292079806335,
+          "delta_by_joint_rad": [
+            0.07141578468829396,
+            0.1753581189751625,
+            0.015825861502438785,
+            0.11403789543509485,
+            0.017334627497196206,
+            -0.11919023327119649,
+            0.06687755019217732,
+            -0.20399604692086576,
+            -0.0005470747292041773,
+            0.044038586002588254,
+            -0.017544655434787296,
+            0.05376295703798532,
+            -0.14750164286792278,
+            -0.21464292079806335,
+            -0.19561603368520736,
+            -0.06341687923818827,
+            0.11857486552000052,
+            0.13499572786092756,
+            -0.004993902852013707,
+            -0.060503981256484984,
+            -0.0052862422700971365
+          ],
+          "ended_at": 350,
+          "final_height_m": 0.4547426420000819,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 1.554443564245099e-05,
+          "last_second_max_tilt_deg": 5.417186072856008,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.011664588510643422
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.02866956653788859,
+            0.0794737904789923,
+            0.11405766851902008,
+            0.21464292079806335
+          ]
+        },
+        "right_upper_direct_114": {
+          "stop": 114,
+          "landing": 114,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.46045430445155133,
+          "peak_planned_joint_speed_rad_s": 3.677965967621613,
+          "peak_planned_joint_acceleration_rad_s2": 31.060808877415024,
+          "support_on_stop": 2,
+          "ended_at": 294,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.015480183230188956,
+            0.00013788903316547593
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.0005681908440158053,
+            0.02829004755681669,
+            0.7356156155467035,
+            0.0893700579583645
+          ]
+        },
+        "right_upper_after_landing_114": {
+          "stop": 114,
+          "landing": 148,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 4.298728433453619,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 2,
+          "ended_at": 328,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.004024310348658682
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.00014238869483592344,
+            0.02547049971363266,
+            0.508376157861948,
+            0.12791535843610763
+          ]
+        },
+        "right_upper_matched_landing_114": {
+          "stop": 114,
+          "landing": 151,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.10820352247449898,
+          "peak_planned_joint_speed_rad_s": 4.6579691841531545,
+          "peak_planned_joint_acceleration_rad_s2": 41.64004403379218,
+          "support_on_stop": 2,
+          "ended_at": 331,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.004024310348658682
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            9.283837244668591e-06,
+            0.0004730264823167396,
+            0.4991936875104904,
+            0.06689666891396046
+          ]
+        },
+        "double_whole_body_direct_110": {
+          "stop": 110,
+          "landing": 110,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.3661009325473011,
+          "peak_planned_joint_speed_rad_s": 5.065162645666687,
+          "peak_planned_joint_acceleration_rad_s2": 49.76151181591892,
+          "support_on_stop": 3,
+          "handoff": 147,
+          "leg_delta_rad": 0.17003007194586095,
+          "upper_delta_rad": 0.11432499646544458,
+          "delta_by_joint_rad": [
+            0.04286516428738832,
+            0.03666799035072327,
+            0.07712164720594884,
+            0.05458476338684551,
+            -0.027802463972568532,
+            -0.17003007194586095,
+            -0.05992788129709661,
+            -0.10174347708821296,
+            -0.022783444169163704,
+            -0.04322626979947097,
+            -0.054516590011119845,
+            0.04209821950159967,
+            0.006718558587133884,
+            0.0006395097017287688,
+            -0.11432499646544458,
+            0.0402288884986192,
+            0.08138136883974079,
+            0.03472199532985687,
+            -0.014411989744752645,
+            0.00402736135572195,
+            0.010152870559319854
+          ],
+          "ended_at": 315,
+          "final_height_m": 0.4545174543959488,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 1.9342076210699483e-05,
+          "last_second_max_tilt_deg": 4.926752669242431,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.003142786762760468,
+            0.001669471688841035
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.037350837551741435,
+            0.06046010273016729,
+            0.15255910040140147,
+            0.11432499646544458
+          ]
+        },
+        "double_whole_body_after_landing_110": {
+          "stop": 110,
+          "landing": 148,
+          "status": "stood",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 5.338242774705096,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 3,
+          "handoff": 182,
+          "leg_delta_rad": 0.20399604692086576,
+          "upper_delta_rad": 0.21464292079806335,
+          "delta_by_joint_rad": [
+            0.07141578468829396,
+            0.1753581189751625,
+            0.015825861502438785,
+            0.11403789543509485,
+            0.017334627497196206,
+            -0.11919023327119649,
+            0.06687755019217732,
+            -0.20399604692086576,
+            -0.0005470747292041773,
+            0.044038586002588254,
+            -0.017544655434787296,
+            0.05376295703798532,
+            -0.14750164286792278,
+            -0.21464292079806335,
+            -0.19561603368520736,
+            -0.06341687923818827,
+            0.11857486552000052,
+            0.13499572786092756,
+            -0.004993902852013707,
+            -0.060503981256484984,
+            -0.0052862422700971365
+          ],
+          "ended_at": 350,
+          "final_height_m": 0.4547426420000819,
+          "last_second_both": 50,
+          "last_second_max_xy_m_s": 1.554443564245099e-05,
+          "last_second_max_tilt_deg": 5.417186072856008,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.011664588510643422
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.02866956653788859,
+            0.0794737904789923,
+            0.11405766851902008,
+            0.21464292079806335
+          ]
+        },
+        "double_upper_direct_110": {
+          "stop": 110,
+          "landing": 110,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.3661009325473011,
+          "peak_planned_joint_speed_rad_s": 3.2112559119745407,
+          "peak_planned_joint_acceleration_rad_s2": 25.54420763942966,
+          "support_on_stop": 3,
+          "ended_at": 290,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.004331705823189803,
+            0.0009757412488269329
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.0040230957560472595,
+            0.0726934412116497,
+            0.4643011630058288,
+            0.08393683805018663
+          ]
+        },
+        "double_upper_after_landing_110": {
+          "stop": 110,
+          "landing": 148,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.1591524906462874,
+          "peak_planned_joint_speed_rad_s": 4.298728433453619,
+          "peak_planned_joint_acceleration_rad_s2": 40.846870521968334,
+          "support_on_stop": 3,
+          "ended_at": 328,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.0031945375380269324
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            0.00014238869483592344,
+            0.02547049971363266,
+            0.508376157861948,
+            0.12791535843610763
+          ]
+        },
+        "double_upper_matched_landing_110": {
+          "stop": 110,
+          "landing": 151,
+          "status": "gate_timeout",
+          "leg_pose_rms_rad_at_blend": 0.10820352247449898,
+          "peak_planned_joint_speed_rad_s": 4.6579691841531545,
+          "peak_planned_joint_acceleration_rad_s2": 41.64004403379218,
+          "support_on_stop": 3,
+          "ended_at": 331,
+          "loaded_foot_max_horizontal_excursion_m": [
+            0.008310353485995245,
+            0.0031945375380269324
+          ],
+          "hold_min_speed_omega_leg_gap_upper_gap": [
+            9.283837244668591e-06,
+            0.0004730264823167396,
+            0.4991936875104904,
+            0.06689666891396046
+          ]
+        }
+      }
+    }
+  }
+}

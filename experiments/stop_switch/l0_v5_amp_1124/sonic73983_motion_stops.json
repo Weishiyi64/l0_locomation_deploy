@@ -1,0 +1,190 @@
+{
+  "actor_sha256": "a7a3c02c03989afbae331e7dd723752e19b535ba4286b720ae5822dc978e795c",
+  "backend": "MuJoCo 3.7.0 + ONNX Runtime CPU, standalone deterministic playback",
+  "method": "Each clip starts in its first reference pose without AMP entry blend. Request at clip midpoint. Select first eligible double support on the baseline after request, then freeze lower body and retract upper body. Evaluate up to 3 s after retraction for handoff, then observe AMP for 3 s after its transition.",
+  "results": {
+    "L0_angry_baoshouqiaojiao": {
+      "baseline": "clip_complete",
+      "request_frame": 223,
+      "landing_frame": 223,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_sad_8": {
+      "baseline": "clip_complete",
+      "request_frame": 179,
+      "landing_frame": 179,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_backseat_A": {
+      "baseline": "clip_complete",
+      "request_frame": 462,
+      "landing_frame": 476,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_box_1_A": {
+      "baseline": "clip_complete",
+      "request_frame": 324,
+      "landing_frame": 324,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_box_2_A": {
+      "baseline": "clip_complete",
+      "request_frame": 154,
+      "landing_frame": 154,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_box_3": {
+      "baseline": "clip_complete",
+      "request_frame": 233,
+      "landing_frame": 233,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_caipanwu_A": {
+      "baseline": "clip_complete",
+      "request_frame": 445,
+      "landing_frame": 521,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_direct_01": {
+      "baseline": "clip_complete",
+      "request_frame": 466,
+      "landing_frame": 466,
+      "result": "stood",
+      "handoff_frame": 500
+    },
+    "L0_sing_01": {
+      "baseline": "clip_complete",
+      "request_frame": 264,
+      "landing_frame": 264,
+      "result": "stood",
+      "handoff_frame": 298
+    },
+    "L0_taiji_01": {
+      "baseline": "clip_complete",
+      "request_frame": 259,
+      "landing_frame": 259,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_taiji_1_A": {
+      "baseline": "clip_complete",
+      "request_frame": 261,
+      "landing_frame": 273,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_yoga_X": {
+      "baseline": "clip_complete",
+      "request_frame": 270,
+      "landing_frame": 270,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    },
+    "L0_angry_8_E": {
+      "baseline": "clip_complete",
+      "request_frame": 168,
+      "landing_frame": 168,
+      "result": "stood",
+      "handoff_frame": 202
+    },
+    "L0_billiejean_D": {
+      "baseline": "clip_complete",
+      "request_frame": 450,
+      "landing_frame": 450,
+      "result": "gate_timeout",
+      "handoff_frame": null
+    }
+  },
+  "ros2_sim2mujoco_recheck": {
+    "action": "L0_direct_01",
+    "tracking": "wbc_base_sonic800_73983_20261124_sim",
+    "amp": "l0_v5_amp_1124",
+    "backend": "OpenVINO CPU",
+    "mujoco": "3.0.1",
+    "start_frame": 451,
+    "gate_frame": 485,
+    "preview_leg_max_rad": 0.27797,
+    "preview_upper_max_rad": 0.08793,
+    "actual_leg_max_rad": 0.27832211244106286,
+    "actual_upper_max_rad": 0.09313508653640756,
+    "joint_names": [
+      "left_hip_pitch_joint",
+      "left_hip_roll_joint",
+      "left_hip_yaw_joint",
+      "left_knee_joint",
+      "left_ankle_pitch_joint",
+      "left_ankle_roll_joint",
+      "right_hip_pitch_joint",
+      "right_hip_roll_joint",
+      "right_hip_yaw_joint",
+      "right_knee_joint",
+      "right_ankle_pitch_joint",
+      "right_ankle_roll_joint",
+      "left_shoulder_pitch_joint",
+      "left_shoulder_roll_joint",
+      "left_elbow_roll_joint",
+      "right_shoulder_pitch_joint",
+      "right_shoulder_roll_joint",
+      "right_elbow_roll_joint",
+      "neck_yaw_joint",
+      "neck_pitch_joint",
+      "neck_roll_joint"
+    ],
+    "first_amp_minus_preceding_sent_rad": [
+      0.011342903143167438,
+      0.27832211244106286,
+      -0.07500951121747501,
+      0.02254670542478554,
+      -0.09424564762115484,
+      -0.0925003749832511,
+      -0.07670515716075904,
+      -0.26847620760202406,
+      0.05912488371729858,
+      0.0639952511906624,
+      -0.12099048664569861,
+      0.11471829423457384,
+      0.060357063293456914,
+      -0.0749905982017518,
+      -0.008479235649108852,
+      0.02926203536987293,
+      0.09313508653640756,
+      0.008299587249755824,
+      -0.0007468662261962411,
+      -0.034255775809288014,
+      -0.0009701161384582657
+    ],
+    "amp_handoff_id": 1795517595882556367,
+    "first_amp_minus_measured_command_stamp_ms": 2.083363,
+    "seconds_after_035s_blend": 2.997254507,
+    "support_samples": 1500,
+    "max_sample_gap_s": 0.006107619,
+    "both_feet_samples": 1500,
+    "valid_command_samples": 1500,
+    "min_max_pelvis_height_m": [
+      0.45477468614083977,
+      0.45569408574448034
+    ],
+    "max_tilt_deg": 5.802326236812706,
+    "max_horizontal_speed_m_s": 0.04936932520633033,
+    "max_angular_speed_rad_s": 0.21329240374023437,
+    "feedback": [
+      "started",
+      "completed"
+    ],
+    "post_blend_amp_ticks": 150,
+    "post_blend_wbc_ticks": 0,
+    "upper_joint_farthest_from_stand_at_stop": {
+      "name": "left_shoulder_pitch_joint",
+      "angle_at_stop_rad": -1.7481097273826598,
+      "angle_three_seconds_later_rad": -0.0008985691070555468,
+      "amp_stand_rad": -0.0009078674316405078
+    }
+  }
+}

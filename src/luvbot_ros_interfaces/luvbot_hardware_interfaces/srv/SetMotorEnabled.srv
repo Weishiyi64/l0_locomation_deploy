@@ -1,0 +1,13 @@
+MotorRoute motor
+bool enabled
+---
+uint16 ERROR_NONE=0
+uint16 ERROR_INVALID_ROUTE=1
+uint16 ERROR_UNSUPPORTED_TYPE=2
+uint16 ERROR_NOT_ACTIVE=3
+uint16 ERROR_SEND_FAILED=4
+uint16 ERROR_ACK_TIMEOUT=5
+
+bool success
+uint16 error_code
+string<=256 diagnostic_message

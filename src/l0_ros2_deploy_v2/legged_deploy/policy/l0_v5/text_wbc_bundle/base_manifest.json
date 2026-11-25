@@ -1,0 +1,555 @@
+{
+  "format": "wbc_lora_graph_v1",
+  "kind": "policy",
+  "rank": 16,
+  "alpha": 16,
+  "base_checkpoint_sha256": "f02d4845019346b577fb0babceb8c288e1b5e1694f7888907ae8cfd63d7e4142",
+  "normalization_sha256": "144858108b1f9b6d0708d3bece42fbd367fdaf1e9a0b18be4d48f6b7546f618a",
+  "parameter_schema_sha256": "7d651f850ee1dcb287407ad2dcc16e35ce622f44097f60fecabf3a8fd0bf9f5f",
+  "parameters": [
+    {
+      "name": "lora_0_a",
+      "actor_key": "module.0.module.1.module.0.0.lora_A",
+      "shape": [
+        16,
+        639
+      ]
+    },
+    {
+      "name": "lora_0_b",
+      "actor_key": "module.0.module.1.module.0.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_0_bias",
+      "actor_key": "module.0.module.1.module.0.0.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_1_a",
+      "actor_key": "module.0.module.1.module.0.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_1_b",
+      "actor_key": "module.0.module.1.module.0.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_1_bias",
+      "actor_key": "module.0.module.1.module.0.3.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_2_a",
+      "actor_key": "module.0.module.1.module.1.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_2_b",
+      "actor_key": "module.0.module.1.module.1.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_2_bias",
+      "actor_key": "module.0.module.1.module.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_3_a",
+      "actor_key": "module.0.module.3.module.0.lora_A",
+      "shape": [
+        16,
+        1423
+      ]
+    },
+    {
+      "name": "lora_3_b",
+      "actor_key": "module.0.module.3.module.0.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_3_bias",
+      "actor_key": "module.0.module.3.module.0.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_4_a",
+      "actor_key": "module.0.module.3.module.3.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_4_b",
+      "actor_key": "module.0.module.3.module.3.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_4_bias",
+      "actor_key": "module.0.module.3.module.3.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_5_a",
+      "actor_key": "module.0.module.3.module.6.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_5_b",
+      "actor_key": "module.0.module.3.module.6.lora_B",
+      "shape": [
+        1024,
+        16
+      ]
+    },
+    {
+      "name": "lora_5_bias",
+      "actor_key": "module.0.module.3.module.6.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "lora_6_a",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_A",
+      "shape": [
+        16,
+        1024
+      ]
+    },
+    {
+      "name": "lora_6_b",
+      "actor_key": "module.0.module.4.module.actor_mean.lora_B",
+      "shape": [
+        21,
+        16
+      ]
+    },
+    {
+      "name": "lora_6_bias",
+      "actor_key": "module.0.module.4.module.actor_mean.bias",
+      "shape": [
+        21
+      ]
+    },
+    {
+      "name": "norm_0_gamma",
+      "actor_key": "module.0.module.1.module.0.1.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_0_beta",
+      "actor_key": "module.0.module.1.module.0.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_1_gamma",
+      "actor_key": "module.0.module.1.module.0.4.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_1_beta",
+      "actor_key": "module.0.module.1.module.0.4.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_2_gamma",
+      "actor_key": "module.0.module.3.module.1.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_2_beta",
+      "actor_key": "module.0.module.3.module.1.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_3_gamma",
+      "actor_key": "module.0.module.3.module.4.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_3_beta",
+      "actor_key": "module.0.module.3.module.4.bias",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_4_gamma",
+      "actor_key": "module.0.module.3.module.7.weight",
+      "shape": [
+        1024
+      ]
+    },
+    {
+      "name": "norm_4_beta",
+      "actor_key": "module.0.module.3.module.7.bias",
+      "shape": [
+        1024
+      ]
+    }
+  ],
+  "target_precision": "float16",
+  "application_dtype": "float32",
+  "source_onnx_sha256": "a497a69d359a56af438f5643fb07cddf7b3e7d8806c02b1e17bdc505dfa1c626",
+  "inputs": [
+    {
+      "name": "command_short",
+      "shape": [
+        240
+      ],
+      "dtype": "float32",
+      "role": "observation"
+    },
+    {
+      "name": "policy",
+      "shape": [
+        399
+      ],
+      "dtype": "float32",
+      "role": "observation"
+    },
+    {
+      "name": "lora_0_a",
+      "shape": [
+        16,
+        639
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_0_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_0_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_1_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_2_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_a",
+      "shape": [
+        16,
+        1423
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_3_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_4_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_b",
+      "shape": [
+        1024,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_5_bias",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_a",
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_b",
+      "shape": [
+        21,
+        16
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "lora_6_bias",
+      "shape": [
+        21
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_0_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_0_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_1_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_1_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_2_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_2_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_3_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_3_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_4_gamma",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    },
+    {
+      "name": "norm_4_beta",
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "role": "adapter"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "action",
+      "shape": [
+        21
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "actions": [
+    {
+      "action_id": "UpperBody_Enhanced",
+      "parameter_source": "lora",
+      "adapter_manifest": "adapters/UpperBody_Enhanced/manifest.json",
+      "config": "actions/UpperBody_Enhanced/rl_config.yaml",
+      "config_sha256": "533fcd7b3ad3dea51c57621c37c4cadf0e64845d60259a9a4efa83d66481f813",
+      "reference_onnx": "actions/UpperBody_Enhanced/reference_motion.onnx",
+      "reference_onnx_sha256": "781a799c8de1d3ee7626bc7c4e3004314678f2fee922c4da099bea395e82919e",
+      "reference_rknn": "actions/UpperBody_Enhanced/reference_motion.rknn",
+      "reference_rknn_record": "actions/UpperBody_Enhanced/reference_motion.rknn.json"
+    }
+  ],
+  "probes": [],
+  "model": {
+    "onnx": "base_lora.onnx",
+    "sha256": "ecbfe4b4dabe6ee284fd756aabed60288bd52d216e4c3c0e7ac18a48c51da418",
+    "rknn": "base_lora.rknn",
+    "rknn_record": "base_lora.rknn.json"
+  },
+  "initializer_dtype": "float16"
+}

@@ -1,0 +1,25 @@
+# motor_index is motors.yaml index; current_id is the ID presently in the device.
+uint8 QUERY=0
+uint8 CONFIGURE=1
+uint8 operation
+uint8 motor_index
+uint16 current_id
+---
+# CONFIRMED confirms this operation, not persistence across a power cycle.
+uint8 CONFIRMED=0
+uint8 REJECTED=1
+uint8 SEND_FAILED=2
+uint8 DEVICE_FAILED=3
+uint8 TIMEOUT=4
+uint8 UNSUPPORTED=5
+
+uint8 result
+string stage
+string message
+string motor_name
+string motor_type
+string model
+uint8 bus_index
+uint16 target_id
+uint16[] detected_ids
+bool power_cycle_required

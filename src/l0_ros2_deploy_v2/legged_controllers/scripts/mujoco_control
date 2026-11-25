@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Send ordinary controller commands to the local MuJoCo domain only."""
+import argparse
+import json
+import os
+import time
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('walk', 'action', 'stop', 'soft-stop'))
+    parser.add_argument('action_id', nargs='?')
+    parser.add_argument('--timeout', type=float, help='action timeout in seconds (default 60, or 150 for stand_random_upper_120s)')
+    args = parser.parse_args()
+    if (args.command == 'action') != bool(args.action_id):
+        parser.error('action requires an action ID; walk/stop do not take one')
+    if args.timeout is None:
+        args.timeout = 150 if args.action_id == 'stand_random_upper_120s' else 60
+    if not 0 < args.timeout <= 300:
+        parser.error('timeout must be in (0, 300] seconds')
+    os.environ['ROS_LOCALHOST_ONLY'] = '1'
+    os.environ['ROS_DOMAIN_ID'] = '77'
+    import rclpy
+    from sensor_msgs.msg import Joy
+    from std_msgs.msg import String, UInt64
+    rclpy.init(args=[])
+    node = rclpy.create_node('mujoco_control_client')
+    result = []
+    stamp = int(time.time() * 1000)
+
+    def feedback(message):
+        try:
+            value = json.loads(message.data)
+            if value.get('timestamp_ms') == stamp and value.get('action_id') == args.action_id:
+                print(json.dumps(value, ensure_ascii=False), flush=True)
+                if value.get('status') in ('completed', 'failed', 'rejected', 'cancelled'):
+                    result.append(value['status'])
+        except ValueError:
+            pass
+
+    def spin(seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not result:
+            rclpy.spin_once(node, timeout_sec=0.02)
+
+    try:
+        if args.command == 'action':
+            pub = node.create_publisher(String, '/algorithm/brain/wbc_action_cmd', 10)
+            node.create_subscription(String, '/system/state_machine/wbc_action_fdb', feedback, 10)
+        elif args.command == 'soft-stop':
+            from luvbot_control_interfaces.msg import PolicyCommand
+            from rclpy.qos import qos_profile_sensor_data
+            active = []
+            def remember_active(msg):
+                active[:] = [msg]
+            node.create_subscription(PolicyCommand, '/control/policy/command/wbc',
+                                     remember_active, qos_profile_sensor_data)
+            pub = node.create_publisher(UInt64, '/experiment/stop_switch/request', 1)
+        else:
+            pub = node.create_publisher(Joy, '/joy', 10)
+        deadline = time.monotonic() + 5
+        while pub.get_subscription_count() == 0 and time.monotonic() < deadline:
+            spin(0.05)
+        if pub.get_subscription_count() == 0:
+            raise RuntimeError('No soft-stop trial subscriber in domain 77; set stop_trial_profile'
+                               if args.command == 'soft-stop' else 'No simulation controller in localhost ROS domain 77')
+        spin(0.2)
+        if args.command == 'action':
+            stamp = int(time.time() * 1000)
+            pub.publish(String(data=json.dumps({'timestamp_ms': stamp, 'action_id': args.action_id})))
+            spin(args.timeout)
+            if not result or result[-1] != 'completed':
+                raise RuntimeError('Action did not complete: ' + (result[-1] if result else 'timeout'))
+            # Allow a normal AMP blend to settle. Configured finish-to-emergency
+            # actions also report completed, but remain in EmergencyStop.
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                rclpy.spin_once(node, timeout_sec=0.02)
+        elif args.command == 'soft-stop':
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                spin(0.02)
+                if active:
+                    cmd = active[0]
+                    expiry = cmd.valid_until.sec * 10**9 + cmd.valid_until.nanosec
+                    if cmd.source_id == 'wbc' and cmd.handoff_id and expiry > node.get_clock().now().nanoseconds:
+                        pub.publish(UInt64(data=cmd.handoff_id))
+                        spin(0.1)
+                        print(f'Sent soft STOP for active WBC handoff {cmd.handoff_id}')
+                        break
+            else:
+                raise RuntimeError('No fresh active WBC command for the stop trial')
+        else:
+            message = Joy(axes=[0.0] * 8, buttons=[0] * 15)
+            if args.command == 'walk':
+                message.buttons[1] = message.buttons[4] = 1
+            else:
+                message.buttons[7] = 1
+            pub.publish(message)
+            spin(0.1)
+            message.buttons = [0] * 15
+            pub.publish(message)
+            spin(0.2)
+            print('Sent ' + args.command + ' to MuJoCo domain 77; inspect controller state in launch output')
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

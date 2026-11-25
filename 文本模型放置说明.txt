@@ -1,0 +1,96 @@
+文本动作生成模型补充包（2026-11-02）
+
+本包从板端当前文本工作区拉取，模型对应 2026-10-30 更新后的交付版本。
+来源：forlinx@192.168.5.2
+原工作区：/userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_20261028_203257
+
+一、应放在哪里
+
+ZIP 内的 model_sources/ 和 src/ 都是相对于目标工作区根目录的路径。
+工作区可以使用你准备的统一工作区名称，不必沿用原工作区名称。
+
+<你的工作区>/
+├── model_sources/
+│   └── text_to_motion/
+│       ├── compiled/
+│       │   ├── manifest.json
+│       │   ├── qwen_tokenizer.rknn      文本分类模型
+│       │   ├── inbetweener.rknn        动作插帧模型
+│       │   ├── vocabulary.json        词表
+│       │   ├── motion_assets.npz      动作素材
+│       │   ├── deploy_rknn/           配套分词、素材组合、裁切及回正后处理
+│       │   ├── fixtures/              原交付自带的验证资料
+│       │   └── conversion_record.json
+│       ├── deps/
+│       │   ├── rknnlite/
+│       │   └── rknn_toolkit_lite2-2.3.2.dist-info/
+│       └── runtime/
+│           └── librknnrt.so
+└── src/
+    └── l0_ros2_deploy_v2/
+        └── texttomotion/
+            └── baseline/
+                ├── BASELINE.json
+                ├── README.txt
+                ├── compile.sh
+                └── onnx/
+                    ├── qwen_tokenizer.onnx
+                    ├── inbetweener.onnx
+                    ├── manifest.json
+                    ├── vocabulary.json
+                    ├── motion_assets.npz
+                    └── 其余原交付脚本与资料
+
+原始 ONNX 在源码的 texttomotion/baseline/onnx/ 内。
+实际 NPU 推理使用 model_sources/text_to_motion/compiled/ 下的两个 RKNN。
+这部分不能只靠复制源码补齐，也不要放到 legged_deploy/policy/l0_v5/ 内。
+必须保留 compiled/、deps/、runtime/ 三个目录，不能只取两个 .rknn。
+
+二、如何合并进已有工作区
+
+1. 先将压缩包解压到一个独立目录，核对清单：
+   sha256sum -c TEXT_MODELS_SHA256SUMS
+2. 将解压目录中的 model_sources/text_to_motion 整体放到：
+   <你的工作区>/model_sources/text_to_motion
+3. 将 src/l0_ros2_deploy_v2/texttomotion/baseline 放到目标工作区的相同相对位置。
+   若已有同版本 baseline 且哈希一致，无需重复替换。原始 ONNX 用于追溯和重新编译。
+4. 已有同名但不同版本的目录先保留备份；本包不需要覆盖你修改过的控制器源码。
+
+文本源码应使用与板端当前文本工作区匹配的版本。
+本包包含模型本身所需的 deploy_rknn 后处理，但不包含完整 ROS 工程、机器人控制器，
+也不覆盖 texttomotion 顶层的 generate_wbc_json.py、motion_adapter.py、board_runtime.py。
+PACKAGE_INFO.json 提供配套源码的板端哈希，便于核对版本；不同版本不应绕过 source 哈希检查。
+
+之前已交付的 LoRA 运行包仍放在：
+  <你的工作区>/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/text_wbc_bundle/
+  <你的工作区>/src/l0_ros2_deploy_v2/legged_deploy/policy/l0_v5/wbc_lora_fp16/
+文本 JSON 跟踪使用 text_wbc_bundle 中 UpperBody_Enhanced 的统一 LoRA。
+这两个 LoRA 包、AMP 资产和接口源码不重复包含在本次文本模型补充包内。
+
+三、构建与模型选择
+
+本包已带编译好的 RK3588 RKNN，不需要为了补齐目录重新编译模型。
+Python 扩展和私有 Runtime 适用于板端 Linux/aarch64、Python 3.10、RKNNLite2 2.3.2。
+NumPy、PyYAML、psutil、ruamel.yaml、ROS Humble 等系统依赖沿用文本工作区环境。
+不要用包内 librknnrt.so 覆盖系统库；text_wbc_generate 会按工作区路径选择私有库。
+
+在已经放好配套源码、接口和 WBC/AMP 资产的目标板端工作区构建：
+
+  cd /实际路径/你的工作区
+  source /opt/ros/humble/setup.bash
+  export MAKEFLAGS='-j2 -l2'
+  colcon build --executor sequential --packages-up-to legged_deploy legged_real legged_controllers --cmake-args -DLEGGED_DEPLOY_BACKEND=RKNN
+  source install/setup.bash
+
+若已有相同源码构建结果而仅补入 model_sources/text_to_motion，模型目录本身无需 colcon 编译。
+新增或替换 baseline 源码归档后构建会将其同步到 ROS 安装目录。
+
+生成器 --model 参数应指向：
+  <你的工作区>/model_sources/text_to_motion/compiled/manifest.json
+
+ros2 run legged_controllers text_wbc_generate 安装入口会在所属工作区寻找
+model_sources/text_to_motion/deps 和 runtime；不要只复制旧工作区 install/。
+如有旧环境覆盖项，使用目标工作区默认路径前清除：
+  unset TEXT_WBC_MODEL_ROOT RKNN_RUNTIME_LIB TEXT_WBC_PYTHON
+
+本次仅拉取、打包及完整性核验，未修改板端文件，未启动 HPM 或执行动作。

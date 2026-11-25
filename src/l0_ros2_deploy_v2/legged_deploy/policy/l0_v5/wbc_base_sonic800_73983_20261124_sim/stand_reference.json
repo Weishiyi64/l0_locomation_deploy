@@ -1,0 +1,172 @@
+{
+  "policy_name": "l0_v5_amp_1124",
+  "policy_sha256": "d52111f0bf384bc7165bbf4ca5e1bbcafad79ff4d14e7a9dba9fe8268e77d77a",
+  "rl_config_sha256": "b60df57827bfd03e67f2b751aca60cc2c747ea65d05a87a327af7f0e277e19e2",
+  "scene": "l0_base_hip_collision_split_experimental.xml",
+  "scene_sha256": "b1a54eac002742e718781a77ab3056a9e9528108e2c9fdd057ad6de881d5d254",
+  "mujoco_version": "3.0.1",
+  "backend": "OpenVINO CPU",
+  "joint_names": [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_elbow_roll_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_elbow_roll_joint",
+    "neck_yaw_joint",
+    "neck_pitch_joint",
+    "neck_roll_joint"
+  ],
+  "foot_body_names": [
+    "left_ankle_roll_link",
+    "right_ankle_roll_link"
+  ],
+  "reference_frame": "odom",
+  "quaternion_order": "xyzw",
+  "velocity_command": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "sample_count": 150,
+  "window_span_s": 2.9800703250000002,
+  "representative_index": 74,
+  "representative_selection": "actual frame closest to coordinatewise median measured joint angles (L2, rad)",
+  "representative_frame": {
+    "q_stand_rad": [
+      -0.14544483947753895,
+      -0.0017109444141387709,
+      -0.03278000068664544,
+      0.17027658224105835,
+      -0.1283447008132934,
+      -0.0006817684173583971,
+      -0.1452681713104247,
+      0.0015915563106536634,
+      0.032445380210876396,
+      0.17015208303928375,
+      -0.12839530515670772,
+      0.0007682845592498766,
+      -0.0009078674316405078,
+      -0.9421189627647399,
+      0.29594363784790034,
+      -0.0009097747802733203,
+      0.9420818886756896,
+      -0.29594363784790034,
+      0.00015832996368403407,
+      0.08030870854854583,
+      0.0030856339931488175
+    ],
+    "q_target_amp_rad": [
+      -0.06253169254660607,
+      0.13058100686073304,
+      -0.02128147700726986,
+      0.2919910309076309,
+      -0.011930362701416009,
+      0.009287366698682308,
+      -0.06131125731468201,
+      -0.13064861161708832,
+      0.02088911616206169,
+      0.29312101488113407,
+      -0.01121751637458801,
+      -0.009295673219114543,
+      0.0,
+      -0.925,
+      0.298,
+      0.0,
+      0.925,
+      -0.298,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "q_target_sent_rad": [
+      -0.06253167915344227,
+      0.13058099842071536,
+      -0.02128143024444573,
+      0.2919910252094269,
+      -0.011930392265319778,
+      0.009287376642227174,
+      -0.06131121444702137,
+      -0.13064861989021304,
+      0.02088911247253411,
+      0.29312101006507874,
+      -0.011217520713806106,
+      -0.009295661687850953,
+      3.051757824223955e-08,
+      -0.9249999723434448,
+      0.2979999980926513,
+      3.051757824223955e-08,
+      0.9249999723434448,
+      -0.2979999980926513,
+      2.0027160596569615e-08,
+      2.980232227667301e-09,
+      -9.05990599209261e-09
+    ],
+    "pelvis_pos_m": [
+      0.022339355467882464,
+      0.00013185437607787066,
+      0.45483681179750013
+    ],
+    "pelvis_quat_xyzw": [
+      -0.00013045167188178135,
+      0.04959340035228515,
+      7.964494366966636e-05,
+      0.9987694785487506
+    ],
+    "feet_pos_m": [
+      [
+        0.024439583440643,
+        0.104576110272576,
+        0.0339983926785042
+      ],
+      [
+        0.0244397251656143,
+        -0.104307244795394,
+        0.0339983928392346
+      ]
+    ],
+    "feet_quat_xyzw": [
+      [
+        -1.20953394440552e-06,
+        1.07290068339263e-06,
+        0.00123295187573551,
+        0.99999923991324
+      ],
+      [
+        1.21175876720731e-06,
+        1.07852306623143e-06,
+        -0.00123514912156779,
+        0.999999237201718
+      ]
+    ]
+  },
+  "metrics": {
+    "pelvis_height_min_max_m": [
+      0.4548363984446447,
+      0.45483721692968027
+    ],
+    "base_horizontal_speed_max_m_s": 9.595976802621014e-07,
+    "base_angular_speed_max_rad_s": 2.664647061618562e-06,
+    "both_feet_floor_geometry_samples": 150,
+    "foot_excursion_from_first_max_m": [
+      6.23551053599576e-05,
+      6.236227238726904e-05
+    ],
+    "joint_abs_target_minus_measured_max_rad": 0.13292712433338164,
+    "joint_with_max_abs_error": "left_hip_roll_joint",
+    "amp_to_sent_max_abs_rad": 1.1819005019120254e-07,
+    "max_abs_feedback_to_sent_skew_ms": 1.629546
+  }
+}

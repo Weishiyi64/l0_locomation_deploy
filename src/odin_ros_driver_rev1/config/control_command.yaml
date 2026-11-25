@@ -1,0 +1,198 @@
+# =============================================================================
+# Odin ROS Driver - 数据流与后处理总开关
+# Odin ROS Driver - master switches for data streams and post-processing
+# =============================================================================
+#
+# 本文件中的开关分为三个层次：
+# Switches in this file fall into three layers:
+#
+#   A. SDK 通道开关 / SDK channel switches  (read by  odin_ros_driver_node)
+#      决定主驱动是否向设备订阅该数据流；关闭后该路数据从源头就不会上来。
+#      Decide whether the main driver subscribes a data stream from the
+#      device. When disabled, that stream simply does not arrive.
+#
+#   B. 后处理开关 / Post-process switches   (read by  post_process_node)
+#      决定 post_process_node 拿到原始数据后是否再做解码/着色/校正等处理，
+#      并发布相应的派生话题。
+#      Decide whether post_process_node further decodes / colorizes /
+#      rectifies the raw data and publishes derived topics.
+#
+#   C. 重投影开关 / Reprojection switches   (read by  pointcloud_reprojector_node)
+#      控制 pointcloud_reprojector_node 节点的启停与工作模式。
+#      Control whether the reprojector node runs and in which mode.
+#
+#   D. 点云转深度图开关 / Depth switches     (read by  pointcloud_to_depth_node)
+#      控制 pointcloud_to_depth_node 节点的启停。
+#      Control whether the pointcloud_to_depth node runs.
+#
+#   E. 深度图转点云开关 / Depth->cloud switches (read by depth_to_pointcloud_node)
+#      控制 depth_to_pointcloud_node 节点的启停。
+#      Control whether the depth_to_pointcloud node runs.
+#
+# 重要：B、C 层的开关都隐含依赖 A 层。常见死配置见每项的 "Requires" 注释。
+# IMPORTANT: layers B and C have implicit dependencies on layer A. See each
+# key's "Requires" line for the typical pitfalls.
+#
+# 依赖关系图 / Dependency graph:
+#
+#     enable_raw_point ─────────────────────────┐
+#                                                ├─> send_cloud_render
+#     enable_image0  ─> send_image_raw  ────────┤
+#                                                ├─> enable_reprojection (raw)
+#                                                ├─> send_undistort
+#                                                ├─> send_rectify
+#                                                │
+#     enable_image1  ─> send_image2_raw ─> send_rectify
+#
+#     enable_raw_point ─> enable_pointcloud_to_depth ─> enable_depth_to_pointcloud
+#     send_undistort ────────────────────────────────┘
+#     enable_slam_point ─> enable_reprojection (slam)
+#     enable_imu                  (independent / 独立)
+#     enable_odom                 (independent / 独立)
+#
+# 取值约定 / Value convention: 1 = enable / 启用，0 = disable / 禁用。
+# =============================================================================
+
+register_keys:
+
+  # ===========================================================================
+  # A. SDK Data Channel Enable/Disable
+  # A. SDK 数据通道开关  (read by odin_ros_driver_node)
+  # ---------------------------------------------------------------------------
+  # 控制主驱动从设备订阅哪些数据流。关闭后底层 SDK 不再推送对应数据，
+  # 与之相关的所有下游话题 (compressed/raw/render/rect/...) 都不会有数据。
+  # Control which channels the main driver subscribes from the device.
+  # When disabled, the SDK stops pushing that stream and every downstream
+  # topic depending on it will be silent.
+  # ===========================================================================
+
+  # Raw point cloud stream / 原始点云流
+  # Topic:    {prefix}/cloud/raw
+  # Required by: send_cloud_render, enable_reprojection (mode=raw)
+  enable_raw_point: 1
+
+  # SLAM point cloud stream / SLAM 点云流
+  # Topic:    {prefix}/cloud/slam
+  # Required by: enable_reprojection (mode=slam)
+  # Runtime: ros2 param set /odin_hotplug_manager enable_slam_point true|false
+  enable_slam_point: 0
+
+  # Left camera (Image0) stream, JPEG-compressed / 左相机压缩图流
+  # Topic:    {prefix}/camera0/compressed
+  # Required by: send_image_raw, send_cloud_render, send_undistort, send_rectify,
+  #              enable_reprojection, enable_pointcloud_to_depth
+  enable_image0: 1
+
+  # Right camera (Image1) stream, JPEG-compressed / 右相机压缩图流
+  # Topic:    {prefix}/camera1/compressed
+  # Required by: send_image2_raw, send_undistort, send_rectify
+  # Current Odin hardware has no camera1; keep the channel disabled.
+  enable_image1: 0
+
+  # IMU data stream / IMU 数据流  (independent / 独立)
+  # Topic:    {prefix}/imu
+  enable_imu: 0
+
+  # Odometry data stream / 里程计数据流  (independent / 独立)
+  # Topic:    {prefix}/odom  (TF: odom -> base_link)
+  enable_odom: 1
+
+  # ===========================================================================
+  # B. Post-Processing Options
+  # B. 后处理开关  (read by post_process_node)
+  # ---------------------------------------------------------------------------
+  # 这些开关决定 post_process_node 在拿到压缩图 / 原始点云后再做什么处理，
+  # 它们都是 SDK 通道开关 (A 组) 的“下游”。
+  # These switches govern what post_process_node does AFTER the raw streams
+  # are produced; they all sit downstream of the layer-A switches.
+  # ===========================================================================
+
+  # Master switch / 总开关
+  # 0 = post_process_node 启动后立即退出，B 组其它开关全部失效
+  # 0 = post_process_node exits immediately on startup; the rest of layer B
+  #     becomes a no-op.
+  post_process: 1
+
+  # Maximum JPEG decode/post-process rate per camera. 0 = process every frame.
+  # 每个相机的 JPEG 解码/后处理上限；0 = 不限频。
+  image_process_fps: 10
+
+  # Decode camera0 JPEG → publish raw image
+  # 解码 camera0 压缩图，发布原始 BGR 图
+  # Topic:    {prefix}/camera0/raw
+  # Requires: enable_image0 = 1
+  send_image_raw: 1
+
+  # Decode camera1 JPEG → publish raw image
+  # 解码 camera1 压缩图，发布原始 BGR 图
+  # Topic:    {prefix}/camera1/raw
+  # Requires: enable_image1 = 1
+  send_image2_raw: 0
+
+  # send cloud render to topic {topic_prefix}/cloud/render, processed with raw point cloud, rgb image, and calib.yaml from device
+  # reply on send_image_raw to be enabled
+  send_cloud_render: 0
+
+  # Publish undistorted (non-rectified) images / 发布去畸变（不校正）图像
+  # Topic:    {prefix}/camera{0,1}/undistort
+  # Requires: send_image_raw / send_image2_raw, enable_image0 / enable_image1
+  # 独立于 send_rectify，可单独或同时开启。Independent from send_rectify.
+  send_undistort: 1
+
+  # Publish stereo-rectified images + camera_info / 发布立体校正图像 + 相机信息
+  # Topic:    {prefix}/camera{0,1}/rect, {prefix}/camera{0,1}/camera_info
+  # Requires: enable_image0 & enable_image1 (needs both cameras + stereo calib)
+  # 独立于 send_undistort，可单独或同时开启。Independent from send_undistort.
+  send_rectify: 0
+
+  # ===========================================================================
+  # C. Point-Cloud Reprojection Options
+  # C. 点云重投影开关  (read by pointcloud_reprojector_node)
+  # ---------------------------------------------------------------------------
+  # 重投影节点把点云投到 camera0 图像上，输出叠加可视化与 pointcloud2depth
+  # 的输入。它独立于 post_process_node，但同样需要 A 组通道与 send_image_raw。
+  # The reprojector projects a cloud onto camera0 to produce an overlay and
+  # to feed pointcloud_to_depth_node. It runs as a separate node but still
+  # needs layer-A channels plus send_image_raw.
+  # ===========================================================================
+
+  # Enable pointcloud_reprojector_node (1=enable, 0=disable)
+  enable_reprojection: 0
+
+  # Reprojection mode / 重投影模式
+  #   "raw"  : project per-frame {prefix}/cloud/raw onto {prefix}/camera0/raw
+  #            using the static extrinsic from device calibration.
+  #            按帧把 cloud/raw 通过静态外参投到 camera0/raw 上。
+  #   "slam" : project {prefix}/cloud/slam using the latest odometry pose,
+  #            so that the global SLAM cloud is reprojected onto the live image.
+  #            用最新里程计位姿把 cloud/slam (全局 SLAM 点云) 投到当前图像上。
+  reprojection_mode: "raw"
+
+  # ===========================================================================
+  # D. Point-Cloud -> Depth Map Options
+  # D. 点云转深度图开关  (read by pointcloud_to_depth_node)
+  # ---------------------------------------------------------------------------
+  # 深度图节点把每台设备的 dToF 点云投影到其相机图像上，生成稠密深度图。
+  # 它是独立节点，禁用后启动即退出。
+  # The depth node projects each device's dToF cloud onto its camera image to
+  # produce a dense depth map. It is a standalone node and exits on startup
+  # when disabled.
+  # ===========================================================================
+
+  # Enable pointcloud_to_depth_node (1=enable, 0=disable)
+  enable_pointcloud_to_depth: 1
+
+  # ===========================================================================
+  # E. Depth Map -> Point-Cloud Options
+  # E. 深度图转点云开关  (read by depth_to_pointcloud_node)
+  # ---------------------------------------------------------------------------
+  # 该节点把 pointcloud_to_depth 生成的深度图与去畸变 RGB 图反投影成稠密
+  # XYZRGB 彩色点云。它是独立节点，禁用后启动即退出。
+  # This node back-projects the depth map (from pointcloud_to_depth) together
+  # with the undistorted RGB image into a dense XYZRGB colored point cloud.
+  # It is a standalone node and exits on startup when disabled.
+  # Requires: enable_pointcloud_to_depth = 1 (depth input) and send_undistort = 1
+  # ===========================================================================
+
+  # Enable depth_to_pointcloud_node (1=enable, 0=disable)
+  enable_depth_to_pointcloud: 0

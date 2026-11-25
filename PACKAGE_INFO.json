@@ -1,0 +1,138 @@
+{
+  "format": "text_generation_workspace_model_package_v1",
+  "packaged_date": "2026-11-02",
+  "source_host": "forlinx@192.168.5.2",
+  "source_workspace": "/userdata/forlinx/text_wbc_workspaces/l0_text_wbc_board_ws_20261028_203257",
+  "remote_inventory_captured_utc": "2026-11-02T07:39:07.351788+00:00",
+  "remote_asset_files": 98,
+  "remote_asset_bytes": 40938902,
+  "relative_paths_are_workspace_relative": true,
+  "included_roots": [
+    "model_sources/text_to_motion",
+    "src/l0_ros2_deploy_v2/texttomotion/baseline"
+  ],
+  "models": {
+    "qwen_tokenizer": {
+      "file": "qwen_tokenizer.rknn",
+      "sha256": "d3f1bdc977acc00b16bccbace375b4d8e6d1a9a1b8ddfcc52a357facf4a266b9",
+      "inputs": [
+        {
+          "name": "input_ids",
+          "shape": [
+            1,
+            129
+          ],
+          "dtype": "int32"
+        },
+        {
+          "name": "padding_mask",
+          "shape": [
+            1,
+            129
+          ],
+          "dtype": "int32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "qwen_embedding",
+          "shape": [
+            1,
+            1024
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "head_logits",
+          "shape": [
+            1,
+            47
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "left_hand_logits",
+          "shape": [
+            1,
+            43
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "right_hand_logits",
+          "shape": [
+            1,
+            43
+          ],
+          "dtype": "float32"
+        }
+      ],
+      "source_onnx_sha256": "e1d1436784104b96fadabb5d74d718f25f627bda127e8453249035c81ffc609b"
+    },
+    "inbetweener": {
+      "file": "inbetweener.rknn",
+      "sha256": "63712f2203045f587713f0f8c4db4eefab42739bfec195ca12103055cd9ceac3",
+      "inputs": [
+        {
+          "name": "initial_pose",
+          "shape": [
+            1,
+            9
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "target_pose",
+          "shape": [
+            1,
+            9
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "frame_count",
+          "shape": [
+            1
+          ],
+          "dtype": "int32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "motion",
+          "shape": [
+            1,
+            90,
+            9
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "output_frame_count",
+          "shape": [
+            1
+          ],
+          "dtype": "int32"
+        }
+      ],
+      "source_onnx_sha256": "18c483f64f229e148466983986448e9c6aa9341479c72fa7f85e4c65a7bf3142"
+    }
+  },
+  "source_delivery_sha256": "35918078c0dab7cf1845c87de72c33554c138e576ff781dab7ab5dfa905b8aff",
+  "toolkit2_version": "2.3.2",
+  "runtime_platform": "Linux aarch64 / Python 3.10 / RKNNLite2 2.3.2",
+  "matching_source_hashes": {
+    "src/l0_ros2_deploy_v2/texttomotion/generate_wbc_json.py": "0a144a08f762a3bd8831c0e127d5604583dbd31a2eb0fc7f6560c6e6a3c7065d",
+    "src/l0_ros2_deploy_v2/texttomotion/motion_adapter.py": "1c757a2b2c883742f7303a9de17a2a0387a53c5bbb150d44105db79fa0b35670",
+    "src/l0_ros2_deploy_v2/texttomotion/board_runtime.py": "52cdd1f5d1fd250e605cd3e757fe49f9cea603dfc412712cca8176d4032b95c0",
+    "src/l0_ros2_deploy_v2/legged_controllers/scripts/text_wbc_generate": "f4625e32745d80afc0991b9d2efa5d66fb79699e48b60fa346e3f955a1368539",
+    "src/l0_ros2_deploy_v2/legged_deploy/src/wbc_json_reference.cpp": "6308cf464f870a8e2d4193eb49caac96583d35cc481379c96f818c02a9b7b482"
+  },
+  "contains_full_ros_project": false,
+  "contains_wbc_or_amp_policy_bundles": false,
+  "remote_file_sha256_verified": true,
+  "compiled_manifest_and_source_verified": true,
+  "postprocess_matches_source": true,
+  "remote_modified": false,
+  "runtime_or_hardware_started": false
+}

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=77
+sim_text_share="$(ros2 pkg prefix --share legged_controllers)"
+exec "${TEXT_MUJOCO_PYTHON:-/usr/bin/python3}" -B "$sim_text_share/texttomotion/generate_mujoco_json.py" "$@"

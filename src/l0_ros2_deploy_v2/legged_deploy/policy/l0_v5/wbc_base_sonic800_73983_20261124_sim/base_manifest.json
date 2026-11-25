@@ -1,0 +1,126 @@
+{
+  "format": "wbc_base_graph_v1",
+  "kind": "policy",
+  "target_precision": "float16",
+  "model": {
+    "onnx": "model/actor.onnx",
+    "sha256": "a7a3c02c03989afbae331e7dd723752e19b535ba4286b720ae5822dc978e795c"
+  },
+  "actions": [
+    {
+      "action_id": "L0_angry_baoshouqiaojiao",
+      "config": "actions/L0_angry_baoshouqiaojiao/rl_config.yaml",
+      "config_sha256": "17cf6dc28aec008bfd4fe93083edc82146a14e15c8203dc7b96592c32a02f687",
+      "reference_onnx": "actions/L0_angry_baoshouqiaojiao/reference_motion.onnx",
+      "reference_onnx_sha256": "0e09758155dcc8ac0311a97b745efae896a38f38931025c39c9bffc0fda4634f"
+    },
+    {
+      "action_id": "L0_sad_8",
+      "config": "actions/L0_sad_8/rl_config.yaml",
+      "config_sha256": "d5368edea5d71cfab828a9eea1b7552995c5ef3b1fc394ee3c9b02b732864ff8",
+      "reference_onnx": "actions/L0_sad_8/reference_motion.onnx",
+      "reference_onnx_sha256": "8d64c1567c926c17273d5437c1e5bbd98c47c12ef32fb0c2f532cda7d204b19a"
+    },
+    {
+      "action_id": "L0_backseat_A",
+      "config": "actions/L0_backseat_A/rl_config.yaml",
+      "config_sha256": "4901732bda65531a05ef801b2c68dade55f1a31ef2b455cd6774ba6efa4aa1c3",
+      "reference_onnx": "actions/L0_backseat_A/reference_motion.onnx",
+      "reference_onnx_sha256": "92b9bd47b3afc132b9ecc8b1d3c4bd7e82f1850f8c2c91d2d042babdc52bd0fe"
+    },
+    {
+      "action_id": "L0_box_1_A",
+      "config": "actions/L0_box_1_A/rl_config.yaml",
+      "config_sha256": "1960d8e62bed185a7d7390f918156767f9f2a983477d09e405eff91555cc0b59",
+      "reference_onnx": "actions/L0_box_1_A/reference_motion.onnx",
+      "reference_onnx_sha256": "bea7d200a44e4a9cdf5cd484c2cd0e0fbb108c5e362fb5ee681dfabf322005ea"
+    },
+    {
+      "action_id": "L0_box_2_A",
+      "config": "actions/L0_box_2_A/rl_config.yaml",
+      "config_sha256": "e0bbd1a30396b9ce52072399c6771eb333530ce353144a1ffc7fe50a6e328bbd",
+      "reference_onnx": "actions/L0_box_2_A/reference_motion.onnx",
+      "reference_onnx_sha256": "54661b58eabbdc7fbfe1fdead1f0a96dbe45717971f56032e3d3b91ef3b44389"
+    },
+    {
+      "action_id": "L0_box_3",
+      "config": "actions/L0_box_3/rl_config.yaml",
+      "config_sha256": "0338eedb2fdfb4b24b0601798ff11dec22344837fc5408f9c442029ebc67b563",
+      "reference_onnx": "actions/L0_box_3/reference_motion.onnx",
+      "reference_onnx_sha256": "5a703af18e73888277ca8c78400d89851341516ae353ab5cfbddda1a6eb388af"
+    },
+    {
+      "action_id": "L0_caipanwu_A",
+      "config": "actions/L0_caipanwu_A/rl_config.yaml",
+      "config_sha256": "6b9233d0f453d86543d9de8b2ffa917c21ce63c4f2d6fdb025aeb3b1aee068e8",
+      "reference_onnx": "actions/L0_caipanwu_A/reference_motion.onnx",
+      "reference_onnx_sha256": "4d8c47e1ed8efc863036d7f2f04040e4d3ef0dba37b8d2922eeeaabd2b5bf3aa"
+    },
+    {
+      "action_id": "L0_direct_01",
+      "config": "actions/L0_direct_01/rl_config.yaml",
+      "config_sha256": "7a593310df68789d78525e3b879e10f7cbf09188a516425fd448edb179e88037",
+      "reference_onnx": "actions/L0_direct_01/reference_motion.onnx",
+      "reference_onnx_sha256": "9dd126d027f6e59ae155fc31686dff708c6479ffb7a2b7d4806cd5b30807fb54"
+    },
+    {
+      "action_id": "L0_sing_01",
+      "config": "actions/L0_sing_01/rl_config.yaml",
+      "config_sha256": "e5960da3ff4e1e24f478c6b01b4ec5a7c25ccd77f75f8bea6872ede9e7ae5d73",
+      "reference_onnx": "actions/L0_sing_01/reference_motion.onnx",
+      "reference_onnx_sha256": "b61a63c1f7c6dc7be5b0dfdf75d7c0a1a6ee052384870a86da8a9cdc7c38ad89"
+    },
+    {
+      "action_id": "L0_taiji_01",
+      "config": "actions/L0_taiji_01/rl_config.yaml",
+      "config_sha256": "1af624744fd53388c6dff391a787f6831c8c0d6652cc17d57d07dfa6128fc98b",
+      "reference_onnx": "actions/L0_taiji_01/reference_motion.onnx",
+      "reference_onnx_sha256": "4972732dcce1a41abad4564666d5e8f5e0de305482f558b1ae9265f5d1535c58"
+    },
+    {
+      "action_id": "L0_taiji_1_A",
+      "config": "actions/L0_taiji_1_A/rl_config.yaml",
+      "config_sha256": "04863dda2b7ee029b26e236be7fad458deecf59d44852030ba2b2c4dbddfa0f6",
+      "reference_onnx": "actions/L0_taiji_1_A/reference_motion.onnx",
+      "reference_onnx_sha256": "5ac0d1940a407f9f46f8fb64e89838e92748c047a0961370a79fa02c61c6f7c0"
+    },
+    {
+      "action_id": "L0_yoga_X",
+      "config": "actions/L0_yoga_X/rl_config.yaml",
+      "config_sha256": "efbc5210af695a502c908688da050428665f45cb29988c643e34b1901564fd9e",
+      "reference_onnx": "actions/L0_yoga_X/reference_motion.onnx",
+      "reference_onnx_sha256": "3681a110db34a2898837f83b693ba6a48e222db2330d0d00769843ab0792e0fc"
+    },
+    {
+      "action_id": "L0_angry_8_E",
+      "config": "actions/L0_angry_8_E/rl_config.yaml",
+      "config_sha256": "7e3e46adf8ae71b2e950e05cbc45b70a604a9980340a327199ef0d936a37b3f0",
+      "reference_onnx": "actions/L0_angry_8_E/reference_motion.onnx",
+      "reference_onnx_sha256": "eac992e1bc947cb306c17fc88ffb5271bc71c9ca30f160710468d8e33810e8ef"
+    },
+    {
+      "action_id": "L0_billiejean_D",
+      "config": "actions/L0_billiejean_D/rl_config.yaml",
+      "config_sha256": "07d155ff9627b768559aab4ca53ee7dbcd592f03891c2549241d73d79da840a4",
+      "reference_onnx": "actions/L0_billiejean_D/reference_motion.onnx",
+      "reference_onnx_sha256": "2cfea5e99a082d0dd8cf78c568b1b7c987cff5e1ceec3ba3d514044108e8540f"
+    },
+    {
+      "action_id": "stand_random_upper_120s",
+      "config": "actions/stand_random_upper_120s/rl_config.yaml",
+      "config_sha256": "cb75535f8eacbb0fa20e855ad7375f810a5b4a735135b16f5988e6e6385d8a1a",
+      "reference_onnx": "actions/stand_random_upper_120s/reference_motion.onnx",
+      "reference_onnx_sha256": "b389cd643c819f821fe4af24f8f37aeca2dda5fc16748dc0942e113f1b8d04a2"
+    }
+  ],
+  "model_name": "wbc_base_sonic800_73983_20261124",
+  "normalization_inside_model": true,
+  "dynamic_lora": false,
+  "checkpoint_sha256": "a524785a10b1535cbb4a268fdb8b0ef3ba3f7b9486d37b4f6661eede607f2914",
+  "checkpoint_last_iter": 73983,
+  "source_type": "partymimic_native_export",
+  "source_onnx_sha256": "a7a3c02c03989afbae331e7dd723752e19b535ba4286b720ae5822dc978e795c",
+  "reference_bundle": "dance12_actor300W_1123",
+  "reference_manifest_sha256": "4e2e952b02bbb7bd5a0d4867d5af3af010d608e74b728077c972db61cf9b8fa9",
+  "hardware_validated": false
+}

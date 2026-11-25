@@ -1,0 +1,15 @@
+{
+  "format": "wbc_lora_installation_v1",
+  "validation_status": "pending_formal_runtime",
+  "asset_profile": "rknn_runtime_only",
+  "files": {
+    "base_lora.rknn.json": "26aadadb48a3d0ebd3e5a4d5775389627f4228867f48d5c61164528d825b3c43",
+    "base_manifest.json": "c46e799784415989b9785bf58608ab444519122805f75aa5b7f0e166770ee40c",
+    "base_lora.rknn": "0a7776dc83cf975a0e148202d086bffe7897a9ca0e42c41458c7cd455e2d1395",
+    "actions/UpperBody_Enhanced/rl_config.yaml": "533fcd7b3ad3dea51c57621c37c4cadf0e64845d60259a9a4efa83d66481f813",
+    "actions/UpperBody_Enhanced/reference_motion.rknn": "46be8405a4b692cf832c792064e89f0e0303e66839e464748784b0aa74802f85",
+    "actions/UpperBody_Enhanced/reference_motion.rknn.json": "481ddd26faa8b702794a49e097530abd4f8cd9cbf4fe7351e9540b9523d9a9e6",
+    "adapters/UpperBody_Enhanced/weights.bin": "a3e77f3837aa99d2e721e74870ccc5a99a44e796ef309945d5fbe229abd49920",
+    "adapters/UpperBody_Enhanced/manifest.json": "438be375945f20eca00650d20481b686465875dfd1570baf54f53cabac4b592d"
+  }
+}

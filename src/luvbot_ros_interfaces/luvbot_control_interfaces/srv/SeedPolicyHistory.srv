@@ -1,0 +1,6 @@
+# Stage the WBC -> AMP history seed before re-enabling AMP inference.
+uint64 handoff_id
+PolicyCommand source_command
+---
+bool success
+string message

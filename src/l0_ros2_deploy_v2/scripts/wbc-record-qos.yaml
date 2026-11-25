@@ -1,0 +1,29 @@
+/control/policy/observation: &sample
+  history: keep_last
+  depth: 200
+  reliability: best_effort
+  durability: volatile
+/control/policy/command/rl: *sample
+/control/policy/command/wbc: *sample
+/actuator/motor/state: *sample
+/imu/data: *sample
+/odom: *sample
+/actuator/motor/command: &event
+  history: keep_last
+  depth: 100
+  reliability: reliable
+  durability: volatile
+/actuator/motor/enable: *event
+/algorithm/brain/wbc_action_cmd: *event
+/system/state_machine/wbc_action_fdb: *event
+/control/policy/wbc/done: *event
+/joy: *event
+/control/policy/wbc/active: &latched
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: transient_local
+/hardware_status/motors_ready: *latched
+/system/safety/emergency_stop: *sample
+/system/safety/hardware_fault: *sample
+/rosout: *sample

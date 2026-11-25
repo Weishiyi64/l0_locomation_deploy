@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Translate deliberate Joy combinations into the existing WBC action protocol."""
+import json
+import math
+import re
+import time
+
+import yaml
+import rclpy
+from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import Joy
+from std_msgs.msg import Bool, String
+from luvbot_control_interfaces.msg import PolicyObservation
+
+
+class ComboGate:
+    """One request per release/press, with no deferred input or reconnect replay."""
+
+    def __init__(self, config):
+        self.lt = config['lt_button']
+        self.rt = config['rt_button']
+        self.lr = config['dpad_lr_axis']
+        self.ud = config['dpad_ud_axis']
+        for index in (self.lt, self.rt, self.lr, self.ud):
+            if type(index) is not int or not 0 <= index < 32:
+                raise ValueError('Joy indices must be integers in [0, 31]')
+        if self.lt == self.rt or self.lr == self.ud:
+            raise ValueError('LT/RT and D-pad axes must be distinct')
+        self.threshold = float(config['axis_threshold'])
+        self.release = float(config['release_threshold'])
+        self.timeout = float(config['joy_timeout_sec'])
+        self.neutral_hold = float(config['neutral_hold_sec'])
+        if not (0 <= self.release < self.threshold <= 1 and
+                0.1 <= self.timeout <= 1 and 0.1 <= self.neutral_hold <= 1):
+            raise ValueError('Invalid Joy threshold or timeout')
+        self.last_joy = None
+        self.reset()
+
+    def reset(self):
+        self.armed = False
+        self.neutral_since = None
+
+    def consume(self, axes, buttons, now, ready):
+        if self.last_joy is None or now - self.last_joy > self.timeout:
+            self.reset()
+        self.last_joy = now
+        if (not ready or len(axes) < max(8, self.lr + 1, self.ud + 1) or
+                len(buttons) < max(15, self.lt + 1, self.rt + 1) or
+                any(not math.isfinite(v) or abs(v) > 1.01 for v in axes) or
+                any(v not in (0, 1) for v in buttons)):
+            self.reset()
+            return None
+        pressed = {i for i, value in enumerate(buttons) if value}
+        lr, ud = axes[self.lr], axes[self.ud]
+        if not pressed and abs(lr) <= self.release and abs(ud) <= self.release:
+            if self.neutral_since is None:
+                self.neutral_since = now
+            if now - self.neutral_since >= self.neutral_hold:
+                self.armed = True
+            return None
+        self.neutral_since = None
+        # Other buttons include emergency/reset/calibration: never combine them
+        # with WBC requests. They still reach the original controller unchanged.
+        if pressed not in (set(), {self.lt}, {self.rt}):
+            self.reset()
+            return None
+        horizontal = abs(lr) >= self.threshold
+        vertical = abs(ud) >= self.threshold
+        if ((horizontal and abs(ud) > self.release) or
+                (vertical and abs(lr) > self.release)):
+            self.reset()
+            return None
+        if not (horizontal or vertical):
+            return None
+        if not pressed or not self.armed:
+            return None
+        self.reset()
+        direction = ('Left' if lr > 0 else 'Right') if horizontal else ('Up' if ud > 0 else 'Down')
+        return ('LT' if self.lt in pressed else 'RT') + '+' + direction
+
+
+class JoystickWbcRequest(Node):
+    def __init__(self):
+        super().__init__('joystick_wbc_request')
+        self.declare_parameter('config_path', '')
+        # The launch passes the actual preloaded action list, never a policy path.
+        self.declare_parameter('allowed_actions', rclpy.Parameter.Type.STRING_ARRAY)
+        path = self.get_parameter('config_path').value
+        with open(path, encoding='utf-8') as stream:
+            config = yaml.safe_load(stream)['joystick_wbc_actions']
+        self.gate = ComboGate(config)
+        self.actions = config['actions']
+        expected = {t + '+' + d for t in ('LT', 'RT') for d in ('Up', 'Down', 'Left', 'Right')}
+        allowed = set(self.get_parameter('allowed_actions').value or [])
+        if not isinstance(self.actions, dict) or set(self.actions) != expected:
+            raise ValueError('Expected exactly eight LT/RT + D-pad bindings')
+        if any(not isinstance(action, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', action)
+               or action not in allowed for action in self.actions.values()):
+            raise ValueError('Every mapped action must belong to the preloaded WBC action list')
+        if len(set(self.actions.values())) != 8:
+            raise ValueError('The eight WBC bindings must use distinct action IDs')
+        self.active = None
+        self.running = set()
+        self.pending = None
+        self.pending_since = 0.0
+        self.pending_warned = False
+        self.observation_time = 0.0
+        self.inference_enabled = False
+        self.cooldown_until = 0.0
+        self.last_stamp = 0
+        self.command = self.create_publisher(String, '/algorithm/brain/wbc_action_cmd', 10)
+        self.create_subscription(Joy, '/joy', self.on_joy, qos_profile_sensor_data)
+        self.create_subscription(String, '/system/state_machine/wbc_action_fdb', self.on_feedback, 10)
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Bool, '/control/policy/wbc/active', self.on_active, latched)
+        self.create_subscription(PolicyObservation, '/control/policy/observation',
+                                 self.on_observation, qos_profile_sensor_data)
+        self.create_timer(0.05, self.watchdog)
+        self.get_logger().info('WBC joystick ready; release all buttons and D-pad before use. ' +
+                               json.dumps(self.actions, ensure_ascii=False))
+
+    def fresh_stamp(self, header):
+        stamp = header.stamp.sec * 1_000_000_000 + header.stamp.nanosec
+        age = (self.get_clock().now().nanoseconds - stamp) / 1e9
+        return stamp > 0 and -0.1 <= age <= self.gate.timeout
+
+    def ready(self, now):
+        return (self.active is False and not self.running and self.pending is None and
+                self.inference_enabled and now - self.observation_time <= self.gate.timeout and
+                now >= self.cooldown_until and self.command.get_subscription_count() > 0)
+
+    def on_observation(self, msg):
+        self.inference_enabled = msg.inference_enabled and self.fresh_stamp(msg.header)
+        self.observation_time = time.monotonic()
+        if not self.inference_enabled:
+            self.gate.reset()
+
+    def on_active(self, msg):
+        self.active = msg.data
+        if msg.data:
+            self.gate.reset()
+        else:
+            # The controller may still be blending to AMP after active=false.
+            self.cooldown_until = time.monotonic() + 0.5
+
+    def on_feedback(self, msg):
+        try:
+            value = json.loads(msg.data)
+            key = (value['timestamp_ms'], value['action_id'])
+            if type(key[0]) is not int or not isinstance(key[1], str):
+                return
+            status = value['status']
+        except (ValueError, KeyError, TypeError):
+            return
+        if status == 'started':
+            self.running.add(key)
+            self.gate.reset()
+        elif status in ('completed', 'failed', 'cancelled', 'rejected'):
+            self.running.discard(key)
+            self.cooldown_until = time.monotonic() + 0.5
+            self.gate.reset()
+        else:
+            return
+        if key == self.pending:
+            self.get_logger().info(f'{key[1]}: {status} (timestamp_ms={key[0]})')
+            if status != 'started':
+                self.pending = None
+
+    def on_joy(self, msg):
+        now = time.monotonic()
+        combo = self.gate.consume(msg.axes, msg.buttons, now,
+                                  self.ready(now) and self.fresh_stamp(msg.header))
+        if combo is None:
+            return
+        action = self.actions[combo]
+        self.last_stamp = max(time.time_ns() // 1_000_000, self.last_stamp + 1)
+        self.pending = (self.last_stamp, action)
+        self.pending_since = now
+        self.pending_warned = False
+        self.command.publish(String(data=json.dumps({'timestamp_ms': self.last_stamp, 'action_id': action})))
+        self.get_logger().info(f'{combo} -> {action} (timestamp_ms={self.last_stamp})')
+
+    def watchdog(self):
+        now = time.monotonic()
+        if (not self.ready(now) or self.gate.last_joy is None or
+                now - self.gate.last_joy > self.gate.timeout):
+            self.gate.reset()
+        if self.pending and not self.pending_warned and now - self.pending_since > 10:
+            self.pending_warned = True
+            self.get_logger().warning('Waiting for WBC terminal feedback; no requests are queued or retried.')
+
+
+def main():
+    rclpy.init()
+    node = None
+    try:
+        node = JoystickWbcRequest()
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

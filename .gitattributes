@@ -1,0 +1,10 @@
+# Preserve model, runtime, parameter and mesh bytes.
+*.onnx binary
+*.rknn binary
+*.trt binary
+*.bin binary
+*.npz binary
+*.so binary
+*.so.* binary
+*.STL binary
+*.stl binary

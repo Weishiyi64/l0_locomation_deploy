@@ -1,0 +1,20 @@
+# Same Joy layout as JoystickInput.cpp and l0_locomotion_deploy.
+# D-pad axes: left/up +1, right/down -1. LT/RT are digital buttons.
+joystick_wbc_actions:
+  lt_button: 8
+  rt_button: 9
+  dpad_lr_axis: 6
+  dpad_ud_axis: 7
+  axis_threshold: 0.5
+  release_threshold: 0.2
+  joy_timeout_sec: 0.5
+  neutral_hold_sec: 0.15
+  actions:
+    LT+Up: L0_fear_7_A
+    LT+Down: L0_excited_1
+    LT+Left: L0_excited_new_1
+    LT+Right: L0_excited_new_5
+    RT+Up: L0_satisfied_10
+    RT+Down: L0_SayNo_17
+    RT+Left: L0_angry_9
+    RT+Right: L0_angry_new_1

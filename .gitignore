@@ -1,0 +1,19 @@
+# Complete deployment assets (policy/ and model_sources/) are tracked.
+# Generated workspace output and local-only data.
+/build/
+/install/
+/log/
+/records/
+/runs/
+/reports/
+/artifacts/
+/deliveries/
+/.aws/
+/.codex/
+/.agents/
+**/__pycache__/
+*.py[cod]
+.DS_Store
+# Device credentials are provisioned separately.
+/src/l0_ros2_deploy_v2/luvbot_cloud_bridge/certs/*.crt
+/src/l0_ros2_deploy_v2/luvbot_cloud_bridge/certs/*.key

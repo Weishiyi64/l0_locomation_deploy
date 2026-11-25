@@ -1,0 +1,12 @@
+{
+  "baseline_commit": "f9f6e37",
+  "action": "A-C04_mod",
+  "source": "same measured ROS observation sequence, first full playback",
+  "ticks": 510,
+  "clip_frames": 460,
+  "initial_hold_ticks": 50,
+  "command_max_abs": 0.0,
+  "action_max_abs": 0.0,
+  "inference_backend": "ONNX Runtime CPU",
+  "base_sha256": "ecbfe4b4dabe6ee284fd756aabed60288bd52d216e4c3c0e7ac18a48c51da418"
+}

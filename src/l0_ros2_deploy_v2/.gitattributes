@@ -1,0 +1,4 @@
+# Inference artifacts must remain byte-for-byte identical during migration.
+*.onnx binary
+*.rknn binary
+*.trt binary

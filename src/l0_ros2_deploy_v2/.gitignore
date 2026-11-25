@@ -1,0 +1,12 @@
+# Ignore Visual Studio Code files
+.vscode/
+**/__pycache__/
+*.py[cod]
+*~
+*.tar.gz
+*.zip
+*.diff
+
+# Local MQTT device credentials (deployed separately from Git)
+/luvbot_cloud_bridge/certs/*.crt
+/luvbot_cloud_bridge/certs/*.key

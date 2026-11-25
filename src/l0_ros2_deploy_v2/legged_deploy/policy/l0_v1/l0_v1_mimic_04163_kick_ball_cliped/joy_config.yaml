@@ -1,0 +1,70 @@
+joystick_mapping:
+  # 手柄输入范围：-1~1
+  # 
+  # 正向映射：手柄输入 [0, 1] 分为两段 [0, threshold] 和 [threshold, 1]
+  #      将 [0, threshold] -> [first_segment_min, first_segment_max]
+  #      将 [threshold, 1] -> [second_segment_min, second_segment_max]
+  # 
+  # 负向映射：手柄输入 [0, -1] 分为两段 [0, -threshold] 和 [-threshold, -1]
+  #      将 [0, -threshold]  -> [first_segment_min, -first_segment_max]
+  #      将 [-threshold, -1] -> [second_segment_min, -second_segment_max]
+  # 
+  # 若不需要分段映射，将 threshold = 1.0 即可，退化为y=kx线性映射，此时只需要设置first_segment即可，second_segment无意义
+  
+  linear_x:
+    # 0 ~ 1段映射
+    positive:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+    # 0 ~ -1段映射
+    negative:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+  
+  linear_y:
+    # 0 ~ 1段映射
+    positive:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+    # 0 ~ -1段映射
+    negative:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+  
+  angular_z:
+    # 0 ~ 1段映射
+    positive:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+    # 0 ~ -1段映射
+    negative:
+      threshold: 1.0        # 分段阈值
+      first_segment_min: 0.0    # 第一段最小值
+      first_segment_max: 1.0    # 第一段最大值
+      second_segment_min: 1.0   # 第二段最小值
+      second_segment_max: 1.0   # 第二段最大值
+  
+  lt_multiplier_max: 2.5  # LT按到底时的最大速度倍数
+
+# 是否对手柄输入进行平滑处理
+enable_smooth_transition: false
+# 平滑处理参数
+smooth_params:
+  rate_linear_x: 0.05
+  rate_linear_y: 0.05 
+  rate_angular_z: 0.1
