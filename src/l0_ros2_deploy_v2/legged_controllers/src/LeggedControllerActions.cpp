@@ -197,6 +197,11 @@ bool LeggedController::canStartAmpDerivedAction(const char* context, const std::
                                                 bool require_walking, bool block_imitation_active) const {
   const char* tag = context != nullptr ? context : "[ActionTrigger]";
   const std::string label = action_label.empty() ? "unnamed" : action_label;
+  if (textMotionCtrl_.busy())
+  {
+    RCLCPP_WARN(nh_->get_logger(), "%s Ignoring action '%s': text motion owns auxiliary joints", tag, label.c_str());
+    return false;
+  }
 
   if (require_walking && (!fsm_ || !fsm_->isWalking()))
   {

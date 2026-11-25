@@ -52,6 +52,7 @@ add_library(${PROJECT_NAME} SHARED
   src/SequenceInspection.cpp
   src/SequenceRuntime.cpp
   src/JointCommandComposer.cpp
+  src/TextMotionController.cpp
   src/LeggedHardwareInterface.cpp
   src/LeggedControlloop.cpp
   src/LeggedController.cpp
@@ -59,6 +60,7 @@ add_library(${PROJECT_NAME} SHARED
   src/LeggedControllerJoystickImitation.cpp
   src/LeggedControllerJoystickSequence.cpp
   src/LeggedControllerRuntime.cpp
+  src/LeggedControllerTextMotion.cpp
   src/LeggedControllerRosIo.cpp
   src/LeggedControllerActions.cpp
   src/LeggedControllerWbc.cpp
@@ -136,7 +138,8 @@ install(
 )
 
 install(PROGRAMS
-  scripts/text_wbc_generate
+  scripts/text_motion_node
+  scripts/text_motion_request
   scripts/check_hardware_ready.bash
   scripts/follow_goal_test.py
   scripts/rosbag_record.sh
@@ -146,8 +149,13 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY ../texttomotion/ DESTINATION share/${PROJECT_NAME}/texttomotion
-  PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+# Frozen source delivery plus the small ROS adapter. Board compilation writes
+# to a separately selected output directory; source files remain reproducible.
+install(DIRECTORY ../texttomotion/
+  DESTINATION share/${PROJECT_NAME}/texttomotion
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)
 
 # ---- export ----
 ament_export_include_directories(include)

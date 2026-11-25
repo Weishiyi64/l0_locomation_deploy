@@ -33,6 +33,7 @@ def generate_launch_description():
         DeclareLaunchArgument('robot_type', default_value='l0_v3'),
         DeclareLaunchArgument('subpolicy', default_value='l0_v3_amp_06152'),
         DeclareLaunchArgument('wbc_enabled', default_value='false'),
+        DeclareLaunchArgument('text_motion_enabled', default_value='false'),
         DeclareLaunchArgument('wbc_policies', default_value='[]'),
         DeclareLaunchArgument('bag_enabled', default_value='false'),
         DeclareLaunchArgument(
@@ -102,6 +103,7 @@ def generate_launch_description():
             emergency_damping_kd,
             wbc_enabled,
             wbc_policies,
+            LaunchConfiguration('text_motion_enabled'),
         ],
         output='screen',
         sigterm_timeout='15',

@@ -22,12 +22,14 @@ void JointCommandComposer::composeAll(const Context& ctx) const {
   {
     double q_j, dq_j, kp_j, kd_j, tau_ff_j;
     const bool is_leg_joint = ctx.is_leg_joint != nullptr && j < ctx.is_leg_joint->size() && (*ctx.is_leg_joint)[j];
+    bool csv_selected = false;
 
     const bool csv_allowed_for_joint = ctx.action_sequence_full_csv || !is_leg_joint;
     if (csv_allowed_for_joint && ctx.joint_csv != nullptr && ctx.joint_csv->isEnabled() &&
         ctx.joint_csv->getJointCmd(j, q_j, dq_j, kp_j, kd_j, tau_ff_j))
     {
       // Joint CSV timeline (auxiliary joints normally; full body only for back-emergency full_csv).
+      csv_selected = true;
     }
     else if (ctx.arm_swing_ctrl != nullptr && ctx.arm_swing_ctrl->getJointCmd(j, q_j, dq_j, kp_j, kd_j, tau_ff_j))
     {
@@ -43,6 +45,12 @@ void JointCommandComposer::composeAll(const Context& ctx) const {
       q_j = (j < q_snapshot.size()) ? q_snapshot[j] : 0.0;
       dq_j = 0.0;
       kp_j = kd_j = tau_ff_j = 0.0;
+    }
+
+    if (ctx.allow_auxiliary_overlays && !ctx.emergency && !csv_selected && ctx.text_motion != nullptr &&
+        ctx.text_motion->getJointPosition(j, q_j))
+    {
+      dq_j = tau_ff_j = 0.0;
     }
 
     if (release_handoff_available && !ctx.emergency && !ctx.blend_policy_gains)

@@ -1,24 +1,18 @@
-# L0 V5 RK3588 部署源码
+# L0 V5 RK3588 部署源码快照
 
-`l0_v5` 分支交付当前 L0 V5 / ROS 2 Humble / RK3588 源码，包含 LoRA 共享 WBC、板端文本生成和 JSON → WBC 接入。
+本分支记录 2026-11-25 本地 ROS 2 Humble / RK3588 部署工作区的源码状态。仓库根目录可作为 ROS 工作区。
 
-```text
-src/
-├── l0_ros2_deploy_v2/     控制器、模型工具、硬件桥与使用说明
-├── luvbot_ros_interfaces/ 匹配版本的 ROS 接口
-└── odin_ros_driver_rev1/  雷达驱动源码
-```
+| 目录 | 内容 |
+| --- | --- |
+| `src/l0_ros2_deploy_v2/` | 运控、WBC Base/LoRA/Static、文本动作生成、HPM 启动和机器人描述 |
+| `src/luvbot_ros_interfaces/` | 与部署源码配套的 ROS 接口 |
+| `src/odin_ros_driver_rev1/` | 雷达驱动及 SDK |
 
-使用说明：
+机器人描述和雷达 SDK 的文件已随源码收录，克隆后即可在 `src/` 中查看。
+板端构建和运行前，请在 `src/l0_ros2_deploy_v2/legged_deploy/policy/` 下配齐目标设备的 AMP/WBC 资产，按需配置文本 RKNN 模型及运行依赖。MQTT 设备凭据由目标设备单独配置。
 
-- [LoRA 正式部署与使用](src/l0_ros2_deploy_v2/docs/wbc-lora-production-deployment.md)
-- [板端文本动作生成与 WBC](src/l0_ros2_deploy_v2/docs/text-motion-deployment.md)
+- [WBC 模型打包、安装和使用](src/l0_ros2_deploy_v2/docs/wbc-lora-deployment.md)
+- [本快照的文本动作生成入口](src/l0_ros2_deploy_v2/legged_controllers/launch/text_motion.launch.py)
+- [10 月 29 日历史交付记录](handoff/20261029/README.md)
 
-所有 `policy/` 目录均不纳入本分支。构建和运行前，需另行部署匹配的 WBC、AMP 及其他策略资产；文本 RKNN 编译产物和工作区运行依赖也按使用说明单独部署。
-
-本仓库根目录作为 ROS 工作区；文档中的工作区路径应替换为实际克隆位置。`src/` 下源码按交付快照保存，机器人描述文件已包含，无需初始化子模块。构建和正式操作按上述两份说明执行。
-
-软件交付变更说明：
-
-- [更新说明与文件／函数级变更清单](handoff/20261029/README.md)
-- [离线文档包](handoff/20261029-documentation.zip)（解压后打开 `20261029/更新说明.html`）
+JSON → WBC 文本动作链和已集成的 AMP/WBC 交接请参阅仓库的 `l0_v5` 交付分支。

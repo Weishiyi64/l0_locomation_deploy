@@ -6,12 +6,24 @@
 #include <string>
 #include <vector>
 
+// A fixed two-input actor plus a catalog of references. No adapter tensors.
+class WbcBaseAssets {
+ public:
+  struct Action { std::string config, reference; };
+  WbcBaseAssets(const std::string& manifest, const std::vector<std::string>& selected);
+  const Action& action(const std::string& id) const { return actions_.at(id); }
+  const std::string& modelPath() const { return model_path_; }
+
+ private:
+  std::string model_path_;
+  std::map<std::string, Action> actions_;
+};
+
 // Shared by the deployed worker in both HPM and isolated runs. No ROS or training dependencies.
 class WbcLoraAssets {
  public:
   struct Action {
     std::string id, config, reference, adapter, adapter_hash;
-    std::string parameter_source;
   };
   struct Buffer {
     std::vector<std::vector<float>> parameters;

@@ -131,8 +131,7 @@ add_executable(rl_controller
   src/base/base_rl_controller.cpp
 )
 if(LEGGED_DEPLOY_USE_RKNN)
-  target_sources(rl_controller PRIVATE src/rknn_model.cpp src/wbc_lora_assets.cpp src/rl_controller_wbc.cpp src/wbc_io_probe.cpp
-    src/wbc_json_reference.cpp src/rl_controller_wbc_json.cpp)
+  target_sources(rl_controller PRIVATE src/rknn_model.cpp src/wbc_lora_assets.cpp src/rl_controller_wbc.cpp src/wbc_io_probe.cpp)
   target_link_libraries(rl_controller OpenSSL::Crypto)
   set_target_properties(rl_controller PROPERTIES INSTALL_RPATH "$ORIGIN/..")
 endif()
@@ -161,8 +160,6 @@ target_link_libraries(rl_controller
 )
 
 if(LEGGED_DEPLOY_USE_RKNN)
-  add_executable(wbc_json_reference_probe src/wbc_json_reference_probe.cpp src/wbc_json_reference.cpp)
-  target_link_libraries(wbc_json_reference_probe yaml-cpp)
   add_executable(local_planner_rknn
     src/local_planner_rknn.cpp
     src/rknn_model.cpp
@@ -194,7 +191,7 @@ install(TARGETS rl_controller
 )
 
 if(LEGGED_DEPLOY_USE_RKNN)
-  install(TARGETS local_planner_rknn wbc_json_reference_probe
+  install(TARGETS local_planner_rknn
     RUNTIME DESTINATION lib/${PROJECT_NAME}
   )
 endif()
@@ -214,9 +211,11 @@ if(LEGGED_DEPLOY_USE_RKNN)
   )
 endif()
 
-# install policy folder if it exists
+# Keep bundles self-contained. USE_SOURCE_PERMISSIONS makes ament use CMake's
+# directory copy even with --symlink-install, avoiding per-file links out of bundles.
 install(DIRECTORY policy/
   DESTINATION share/${PROJECT_NAME}/policy
+  USE_SOURCE_PERMISSIONS
 )
 
 install(

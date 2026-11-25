@@ -46,7 +46,8 @@ RuntimeControlState LeggedController::computeRuntimeControlState() const {
 
 bool LeggedController::faceFollowAllowed() const {
   return face_follow_allowed_.load() && !sequenceRuntime_.isActive() && !policyMux_.imitationActiveCommanded() &&
-         !policyMux_.wbcActiveCommanded() && !wbc_return_pending_.load() && !wbc_handoff_in_progress_.load();
+         !policyMux_.wbcActiveCommanded() && !wbc_return_pending_.load() && !wbc_handoff_in_progress_.load() &&
+         !textMotionCtrl_.busy();
 }
 
 void LeggedController::syncFaceFollowState(bool allowed, double wall_sec) {
@@ -180,7 +181,8 @@ void LeggedController::update(const rclcpp::Time& time, const rclcpp::Duration& 
   publishPolicyObservationWithJoystick(time.seconds());
   updateWbcControlState();
   runtime = computeRuntimeControlState();
-  syncFaceFollowState(runtime.allow_auxiliary_overlays && !sequenceRuntime_.releaseHandoffActive(time.seconds()),
+  syncFaceFollowState(runtime.allow_auxiliary_overlays && !textMotionCtrl_.busy() &&
+                          !sequenceRuntime_.releaseHandoffActive(time.seconds()),
                       time.seconds());
   stepAuxiliaryMotionSources(runtime.allow_auxiliary_overlays, period, time);
   applyJointCommands(runtime.policy_drives_legs, runtime.allow_auxiliary_overlays, runtime.emergency_control);
@@ -192,6 +194,15 @@ void LeggedController::applyJointCommands(bool walking, bool allow_auxiliary_ove
   const PolicyInputs policy_inputs = policyMux_.selectInputs(walking);
   const bool policy_expired = walking && !policy_inputs.valid;
   const bool effective_emergency = emergency_control || policy_expired;
+  const bool text_motion_allowed = allow_auxiliary_overlays && !effective_emergency &&
+                                   policyMux_.source() == PolicyCmdSource::kRl &&
+                                   !sequenceRuntime_.jointCsv().isEnabled() &&
+                                   !sequenceRuntime_.releaseHandoffActive(last_controller_wall_sec_);
+  text_motion_start_allowed_.store(text_motion_enabled_ && text_motion_allowed);
+  textMotionCtrl_.setAllowed(text_motion_enabled_ && text_motion_allowed);
+  if (text_motion_enabled_ && textMotionCtrl_.busy())
+    publishTextMotionEvent(textMotionCtrl_.step(policy_inputs.q_snapshot, robot_hw_->getJointMotorCommands(),
+                                               text_motion_allowed));
   if (policy_expired)
   {
     if (policyMux_.source() == PolicyCmdSource::kWbc) triggerEmergencyStop();
@@ -210,6 +221,7 @@ void LeggedController::applyJointCommands(bool walking, bool allow_auxiliary_ove
   ctx.head_ctrl = &headCtrl_;
   ctx.joint_csv = &sequenceRuntime_.jointCsv();
   ctx.arm_swing_ctrl = &armSwingCtrl_;
+  ctx.text_motion = text_motion_enabled_ ? &textMotionCtrl_ : nullptr;
   ctx.release_handoff = &sequenceRuntime_.releaseHandoff();
   ctx.policy_inputs = policy_inputs;
   ctx.blend_policy_gains = wbc_handoff_in_progress_.load();

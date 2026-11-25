@@ -89,6 +89,8 @@ def run_console(args, actions, durations):
     from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
     from std_msgs.msg import Bool, String
 
+    graph = json.loads((args.bundle / 'base_manifest.json').read_text())
+    expected_mode = {'wbc_base_graph_v1': 'base', 'wbc_lora_graph_v1': 'lora'}[graph['format']]
     if not sys.stdin.isatty():
         raise ValueError('动作控制台需要交互终端，不接受管道或批量输入')
     rclpy.init(args=[])
@@ -147,10 +149,10 @@ def run_console(args, actions, durations):
         if response is None or len(response.values) != 3:
             raise ValueError('无法读取 worker 参数')
         mode, manifest, loaded = [parameter_value_to_python(v) for v in response.values]
-        if (mode != 'lora' or not isinstance(manifest, str) or
+        if (mode != expected_mode or not isinstance(manifest, str) or
                 Path(manifest).resolve() != (args.bundle / 'base_manifest.json').resolve() or
                 not isinstance(loaded, list) or loaded != actions):
-            raise ValueError('运行中的 worker 与本次快照不一致，请重新启动部署/控制台')
+            raise ValueError('运行中的 worker 与控制台加载的配置不一致，请核对启动参数并重启部署/控制台')
         services = dict(node.get_service_names_and_types())
         if 'luvbot_control_interfaces/srv/ControlWbcMotion' not in services.get('/control/policy/wbc/prepare', []):
             raise ValueError('prepare 服务未就绪，未发送动作')

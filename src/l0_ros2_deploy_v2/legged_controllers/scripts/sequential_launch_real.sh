@@ -14,6 +14,7 @@ function showHelp(){
     echo "Usage: sequential_launch_real.sh [robot_type] [bag_enabled] [subpolicy] [bag_name] [rviz] [battery_enabled] [imu_enabled] [head_script_enabled] [head_script_config] [joystick_imitation_enabled] [joystick_imitation_config_path] [arm_swing_enabled] [arm_swing_stop_vx_threshold] [arm_swing_high_vx_threshold] [arm_swing_vx_hysteresis] [arm_swing_blend_sec] [safety_orientation_roll_limit_deg] [safety_orientation_pitch_limit_deg] [safety_orientation_consecutive_violation_count] [joystick_sequence_enabled] [joystick_sequence_config_path] [joystick_back_emergency_sequence_enabled] [joystick_back_emergency_sequence_path] [emergency_damping_kd] [radar_control_enabled] [nav_planner_model_path] [planner_depth_input_enabled] [raw_depth_preview_enabled] [wbc_enabled] [wbc_policies] [wbc_mode] [wbc_lora_bundle] [hpm_mode]"
     echo "Body joy is fixed at /dev/input/js0 (see joy_teleop.launch.py). Defaults live in legged_controllers/launch/sim2real.launch.py — use:"
     echo "  ros2 launch legged_controllers sim2real.launch.py"
+    echo "Optional final positional argument after hpm_mode: text_motion_enabled (default false)."
     echo "Example (manual): sequential_launch_real.sh l0_v4 false l0_v3_amp_07090 l0_v4_real false true true false /path/head.yaml true /path/to/joystick_imitation_actions.yaml true 0.05 0.8 0.03 0.35 30.0 30.0 3 false /path/to/joystick_sequence_actions.yaml true /path/to/walking_back_emergency.yaml 5.0 true /path/planner_09090.onnx false true"
     echo
 }
@@ -30,6 +31,7 @@ MANAGED_PIDS=()
 MANAGED_NAMES=()
 STARTED_PID=""
 CLEANUP_STARTED=false
+CLEANUP_FAILED=false
 SIGINT_GRACE_SEC=3
 SIGTERM_GRACE_SEC=2
 
@@ -100,15 +102,29 @@ function cleanup() {
             fi
         fi
 
-        wait "$pid" 2>/dev/null || true
+        # SIGKILL cannot release a task blocked in an uninterruptible kernel wait.
+        # Never follow the bounded group shutdown with an unbounded wait on it.
+        local state
+        state=$(ps -o stat= -p "$pid" 2>/dev/null) || state=""
+        if [[ -z "$state" || "$state" == Z* ]]; then
+            wait "$pid" 2>/dev/null || true
+        else
+            echo "ERROR: $name PID=$pid remains after shutdown deadline (state=$state); not waiting indefinitely" >&2
+            CLEANUP_FAILED=true
+        fi
+        if process_group_alive "$pid"; then
+            echo "ERROR: process group $pid still exists after shutdown deadline" >&2
+            CLEANUP_FAILED=true
+        fi
     done
 
+    if [[ "$CLEANUP_FAILED" == true ]]; then return 1; fi
     return "$exit_code"
 }
 
-trap cleanup EXIT
-trap 'cleanup; exit 0' INT
-trap 'cleanup; exit 0' TERM
+trap 'cleanup; exit $?' EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 # Parse arguments.
 SCRIPT_ARGS=()
@@ -161,7 +177,7 @@ WBC_POLICIES=${30:-"[]"}
 WBC_MODE=${31:-"static"}
 WBC_LORA_BUNDLE=${32:-"wbc_lora"}
 HPM_MODE=${33:-"real"}
-WBC_JSON_BASE_ACTION=${34:-""}
+TEXT_MOTION_ENABLED=${34:-"false"}
 if [[ "$HPM_MODE" != "real" && "$HPM_MODE" != "isolated" ]]; then
     echo "ERROR: hpm_mode must be real or isolated"
     exit 1
@@ -231,6 +247,7 @@ start_managed_process "hardware bridge" ros2 launch legged_real legged_real.laun
     robot_type:=$ROBOT_TYPE \
     subpolicy:=$SUBPOLICY \
     wbc_enabled:=$WBC_ENABLED \
+    text_motion_enabled:=$TEXT_MOTION_ENABLED \
     "hpm_mode:=$HPM_MODE" \
     rviz:=$RVIZ \
     imu_enabled:=$IMU_ENABLED \
@@ -294,7 +311,11 @@ if [[ -f "$READY_CHECK_SCRIPT" ]]; then
     echo "Running hardware readiness check: $READY_CHECK_SCRIPT"
 
     # Run the check with battery and imu enabled flag
-    if bash "$READY_CHECK_SCRIPT" "$BATTERY_ENABLED" "$IMU_ENABLED" "$IMU_READY_TOPIC"; then
+    # Waiting on an owned background job is interruptible in Bash. A foreground
+    # readiness command can otherwise defer the launcher's cleanup trap.
+    start_managed_process "hardware readiness check" bash "$READY_CHECK_SCRIPT" "$BATTERY_ENABLED" "$IMU_ENABLED" "$IMU_READY_TOPIC"
+    READY_CHECK_PID=$STARTED_PID
+    if wait "$READY_CHECK_PID"; then
         echo "SUCCESS: All hardware nodes are ready!"
         echo "Hardware readiness check completed."
     else
@@ -336,7 +357,6 @@ start_managed_process "main controller" ros2 launch legged_controllers one_start
     subpolicy:=$SUBPOLICY \
     wbc_enabled:=$WBC_ENABLED \
     "wbc_policies:=$WBC_POLICIES" \
-    "wbc_json_base_action:=$WBC_JSON_BASE_ACTION" \
     "wbc_mode:=$WBC_MODE" \
     "wbc_lora_bundle:=$WBC_LORA_BUNDLE" \
     bag_name:=$BAG_NAME \

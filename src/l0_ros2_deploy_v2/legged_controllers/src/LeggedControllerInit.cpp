@@ -70,6 +70,7 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   declare_if_absent("imitation_policy_switch_timeout_sec", 120.0);
   declare_if_absent("imitation_return_blend_sec", 0.35);
   declare_if_absent("wbc_enabled", false);
+  declare_if_absent("text_motion_enabled", false);
   declare_if_absent("wbc_transition_sec", 0.35);
   declare_if_absent("wbc_command_timeout_sec", 0.5);
   declare_if_absent("arm_swing.enabled", true);
@@ -137,6 +138,7 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   controller_nh->get_parameter("imitation_policy_switch_timeout_sec", imitation_policy_switch_timeout_sec_);
   controller_nh->get_parameter("imitation_return_blend_sec", imitation_return_blend_sec_);
   controller_nh->get_parameter("wbc_enabled", wbc_enabled_);
+  controller_nh->get_parameter("text_motion_enabled", text_motion_enabled_);
   controller_nh->get_parameter("wbc_transition_sec", wbc_transition_sec_);
   controller_nh->get_parameter("wbc_command_timeout_sec", wbc_command_timeout_sec_);
   controller_nh->get_parameter("emergency.damping_kd", emergency_damping_kd_);
@@ -232,6 +234,16 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   }
 
   dataInit(joint_names);
+  if (text_motion_enabled_)
+  {
+    std::string mapping_file, error;
+    if (robot_type != "l0_v5" || !controller_nh->get_parameter("mapping_file", mapping_file) ||
+        !textMotionCtrl_.configure(joint_names, mapping_file, error))
+    {
+      RCLCPP_ERROR(controller_nh->get_logger(), "Text motion requires L0 v5 and its valid mapping_file: %s", error.c_str());
+      return false;
+    }
+  }
   armSwingCtrl_.configure(arm_swing_params, controller_nh->get_logger());
 
   headCtrl_.setScriptEnabled(head_script_enabled);
@@ -380,6 +392,11 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   }
 
   fsm_ = std::make_unique<StateMachine>(controller_nh->get_logger());
+  if (!isSim_ && wbc_enabled_)
+  {
+    fsm_->emergencyStop();
+    RCLCPP_INFO(controller_nh->get_logger(), "[WBC startup] Starting in EmergencyStop");
+  }
 
   ModeSubscribe(controller_nh);
   ModePublish(controller_nh);

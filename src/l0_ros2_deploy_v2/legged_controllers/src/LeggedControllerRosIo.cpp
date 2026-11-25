@@ -25,6 +25,18 @@ void LeggedController::ModeSubscribe(rclcpp::Node::SharedPtr /* controller_nh */
 
   subJoy_ = nh_->create_subscription<sensor_msgs::msg::Joy>(
       "/joy", rclcpp::QoS(10), std::bind(&LeggedController::JoyCallback, this, std::placeholders::_1));
+  if (text_motion_enabled_)
+  {
+    text_motion_callback_group_ = nh_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    rclcpp::SubscriptionOptions options;
+    options.callback_group = text_motion_callback_group_;
+    subTextMotion_ = nh_->create_subscription<std_msgs::msg::String>(
+        "/text_motion/trajectory", rclcpp::QoS(1).reliable().durability_volatile(),
+        std::bind(&LeggedController::textMotionCallback, this, std::placeholders::_1), options);
+    subTextMotionCancel_ = nh_->create_subscription<std_msgs::msg::String>(
+        "/text_motion/cancel", rclcpp::QoS(10).reliable().durability_volatile(),
+        std::bind(&LeggedController::textMotionCancelCallback, this, std::placeholders::_1));
+  }
   subEmgstop_ = nh_->create_subscription<std_msgs::msg::Bool>(
       "emergency_stop", rclcpp::QoS(1),
       std::bind(&LeggedController::EmergencyStopCallback, this, std::placeholders::_1));
@@ -46,10 +58,6 @@ void LeggedController::ModeSubscribe(rclcpp::Node::SharedPtr /* controller_nh */
   subWbcActionCommand_ = nh_->create_subscription<std_msgs::msg::String>(
       "/algorithm/brain/wbc_action_cmd", rclcpp::QoS(10).reliable().durability_volatile(),
       std::bind(&LeggedController::wbcActionCommandCallback, this, std::placeholders::_1), wbc_options);
-  if (wbc_enabled_)
-    subTextWbcCancel_ = nh_->create_subscription<std_msgs::msg::String>(
-        "/text_motion/cancel", rclcpp::QoS(10).reliable().durability_volatile(),
-        std::bind(&LeggedController::textWbcCancelCallback, this, std::placeholders::_1), wbc_options);
   if (radarControlEnabled_)
   {
     plannerCommandSub_ = nh_->create_subscription<geometry_msgs::msg::TwistStamped>(
@@ -74,6 +82,13 @@ void LeggedController::ModePublish(rclcpp::Node::SharedPtr controller_nh) {
 
   joyFeedbackPub_ = nh_->create_publisher<sensor_msgs::msg::JoyFeedbackArray>("/joy/set_feedback", rclcpp::QoS(1));
   policyMux_.createRosInterfaces();
+  if (text_motion_enabled_)
+  {
+    textMotionStatusPub_ = nh_->create_publisher<std_msgs::msg::String>(
+        "/text_motion/playback_status", rclcpp::QoS(20).reliable().durability_volatile());
+    textMotionStatusTimer_ = nh_->create_wall_timer(
+        std::chrono::milliseconds(20), std::bind(&LeggedController::flushTextMotionEvents, this));
+  }
   wbcActionFeedbackPub_ = nh_->create_publisher<std_msgs::msg::String>(
       "/system/state_machine/wbc_action_fdb", rclcpp::QoS(10).reliable().durability_volatile());
 

@@ -13,7 +13,6 @@
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
-#include <std_msgs/msg/string.hpp>
 #include <string>
 #include <thread>
 #include <vector>
@@ -22,7 +21,6 @@
 #include "luvbot_control_interfaces/srv/control_wbc_motion.hpp"
 #include "rknn_model.h"
 #include "wbc_lora_assets.h"
-#include "wbc_json_reference.h"
 
 class RLWbc : public BaseRLController {
  public:
@@ -46,9 +44,6 @@ class RLWbc : public BaseRLController {
     int reference_num_frames_{0};
     int reference_root_body_index_{-1};
     std::string motion_id_;
-    std::string adapter_id_;
-    std::shared_ptr<const WbcJsonReference> json_reference_;
-    bool json_consumed_{false};
 
     std::unique_ptr<RknnModel> model_;
     RknnModel* policy_{nullptr};
@@ -79,7 +74,6 @@ class RLWbc : public BaseRLController {
   bool captureFrame(RobotFrame& frame, std::array<double, 4>* orientation_wxyz, std::string& error,
                     int64_t* observation_stamp = nullptr);
   ReferenceFrame inferReferenceFrame(int index);
-  ReferenceFrame inferReferenceFrame(const Motion& motion, int index);
   std::vector<float> makePolicyInput() const;
   std::vector<float> makeCommandInput(const std::array<double, 4>& robot_orientation, int reference_index,
                                     bool reset_anchor);
@@ -89,16 +83,13 @@ class RLWbc : public BaseRLController {
   void prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Request> request,
                        std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response);
   void activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);
-  void initializeJsonReference();
-  void jsonReferenceCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  void jsonCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  void publishJsonStatus(const std::string& id, const char* state, const std::string& detail);
   void stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) override;
 
   rclcpp::Node::SharedPtr node_;
   std::map<std::string, std::unique_ptr<Motion>> motions_;
   Motion* current_{nullptr};
   std::unique_ptr<WbcLoraAssets> lora_assets_;
+  std::unique_ptr<WbcBaseAssets> base_assets_;
   std::unique_ptr<RknnModel> shared_policy_;
   std::array<WbcLoraAssets::Buffer, 2> adapter_buffers_;
   int active_buffer_{0};
@@ -147,11 +138,4 @@ class RLWbc : public BaseRLController {
   rclcpp::Service<luvbot_control_interfaces::srv::ControlWbcMotion>::SharedPtr prepare_service_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr active_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr done_pub_;
-  std::string json_base_action_;
-  ReferenceFrame json_base_reference_;
-  std::vector<std::pair<double, double>> json_joint_limits_;
-  std::deque<std::string> json_recent_ids_, json_cancelled_ids_;
-  rclcpp::CallbackGroup::SharedPtr json_callback_group_, json_cancel_group_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr json_sub_, json_cancel_sub_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr json_status_pub_;
 };

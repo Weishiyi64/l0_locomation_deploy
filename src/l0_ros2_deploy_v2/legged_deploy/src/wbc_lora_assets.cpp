@@ -110,6 +110,48 @@ float halfToFloat(std::uint16_t bits) {
 }
 }  // namespace
 
+WbcBaseAssets::WbcBaseAssets(const std::string& manifest, const std::vector<std::string>& selected) {
+  const auto graph = readManifest(manifest);
+  const auto root = fs::canonical(fs::path(manifest).parent_path()).string();
+  require(graph["format"].as<std::string>() == "wbc_base_graph_v1" &&
+          graph["kind"].as<std::string>() == "policy" &&
+          graph["target_precision"].as<std::string>() == "float16", "unsupported base-only graph contract");
+  model_path_ = checkedRknn(root, graph["model"]["rknn"].as<std::string>(),
+                           graph["model"]["sha256"].as<std::string>());
+  require(!selected.empty() && std::set<std::string>(selected.begin(), selected.end()).size() == selected.size(),
+          "empty/duplicate base action selection");
+  const auto actions = graph["actions"];
+  require(actions.IsSequence(), "missing base action catalog");
+  std::set<std::string> ids;
+  YAML::Node first_robot, first_wbc;
+  for (const auto& item : actions) {
+    const auto id = item["action_id"].as<std::string>();
+    require(validId(id) && ids.insert(id).second, "invalid/duplicate base action ID");
+    if (std::find(selected.begin(), selected.end(), id) == selected.end()) continue;
+    Action action;
+    action.config = asset(root, item["config"].as<std::string>());
+    require(fileHash(action.config) == item["config_sha256"].as<std::string>(), "base config hash mismatch: " + id);
+    action.reference = checkedRknn(root, item["reference_rknn"].as<std::string>(),
+                                   item["reference_onnx_sha256"].as<std::string>());
+    const auto config = readManifest(action.config);
+    require(config["WbcCfg"]["motion_id"].as<std::string>() == id, "base action binding mismatch: " + id);
+    // One fixed actor must use the same actuation and input encoding for every clip.
+    if (actions_.empty()) {
+      first_robot = config["RobotCfg"];
+      first_wbc = config["WbcCfg"];
+    } else {
+      for (const char* key : {"joint_order_mj", "default_joint_angles", "action_scale", "kps", "kds"})
+        require(YAML::Dump(first_robot[key]) == YAML::Dump(config["RobotCfg"][key]),
+                std::string("base action RobotCfg mismatch: ") + key);
+      for (const char* key : {"control_dt", "history_steps", "future_steps", "previous_action_steps"})
+        require(YAML::Dump(first_wbc[key]) == YAML::Dump(config["WbcCfg"][key]),
+                std::string("base action WbcCfg mismatch: ") + key);
+    }
+    actions_.emplace(id, std::move(action));
+  }
+  require(actions_.size() == selected.size(), "selected base action absent from manifest");
+}
+
 WbcLoraAssets::WbcLoraAssets(const std::string& manifest, const std::vector<std::string>& selected)
     : graph_(readManifest(manifest)), root_(fs::canonical(fs::path(manifest).parent_path()).string()) {
   require(graph_["format"].as<std::string>() == "wbc_lora_graph_v1" &&
@@ -175,16 +217,12 @@ WbcLoraAssets::WbcLoraAssets(const std::string& manifest, const std::vector<std:
     if (std::find(selected.begin(), selected.end(), id) == selected.end()) continue;
     Action action;
     action.id = id;
-    action.parameter_source = item["parameter_source"].as<std::string>("lora");
-    require(action.parameter_source == "base" || action.parameter_source == "lora", "invalid parameter source");
     action.config = asset(root_, item["config"].as<std::string>());
     require(fileHash(action.config) == item["config_sha256"].as<std::string>(), "config hash mismatch: " + id);
     action.reference = checkedRknn(root_, item["reference_rknn"].as<std::string>(),
                                    item["reference_onnx_sha256"].as<std::string>());
     action.adapter = asset(root_, item["adapter_manifest"].as<std::string>());
     action.adapter_hash = fileHash(action.adapter);
-    require(readManifest(action.adapter)["parameter_source"].as<std::string>("lora") == action.parameter_source,
-            "graph/adapter parameter source mismatch");
     require(readManifest(action.adapter)["action_id"].as<std::string>() == id &&
             readManifest(action.config)["WbcCfg"]["motion_id"].as<std::string>() == id, "action binding mismatch: " + id);
     actions_.emplace(id, std::move(action));

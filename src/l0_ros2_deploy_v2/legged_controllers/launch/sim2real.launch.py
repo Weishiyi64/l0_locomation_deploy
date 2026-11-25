@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from pathlib import Path
+import sys
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable, LogInfo
 from launch.conditions import IfCondition
@@ -6,6 +9,11 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+_launch_dir = str(Path(__file__).resolve().parent)
+if _launch_dir not in sys.path:
+    sys.path.insert(0, _launch_dir)
+from deployment_config import apply_settings, prepare_deployment
 
 
 def _configure_environment(context):
@@ -79,7 +87,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cloud_host', default_value='mqtt.luvbotics.com'),
         DeclareLaunchArgument('cloud_cert_dir', default_value=''),
         DeclareLaunchArgument('wbc_enabled', default_value='true'),
-        DeclareLaunchArgument('wbc_json_base_action', default_value=''),
+        DeclareLaunchArgument('text_motion_enabled', default_value='false'),
         DeclareLaunchArgument('wbc_mode', default_value='static'),
         DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora'),
         DeclareLaunchArgument('hpm_mode', default_value='real'),
@@ -171,10 +179,11 @@ def generate_launch_description():
             LaunchConfiguration('wbc_mode'),
             LaunchConfiguration('wbc_lora_bundle'),
             LaunchConfiguration('hpm_mode'),
-            LaunchConfiguration('wbc_json_base_action'),
+            LaunchConfiguration('text_motion_enabled'),
         ],
         output='screen',
-        sigterm_timeout='15',
+        # Allow the sequential launcher to retire all owned groups in reverse order.
+        sigterm_timeout='35',
         sigkill_timeout='5',
     )
 
@@ -196,4 +205,5 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription(args + [OpaqueFunction(function=_configure_environment), sequential_launch, cloud_voltage_test])
+    return LaunchDescription(apply_settings(args) + [OpaqueFunction(function=_configure_environment),
+        OpaqueFunction(function=prepare_deployment), sequential_launch, cloud_voltage_test])

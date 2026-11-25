@@ -60,6 +60,11 @@ bool LeggedController::startWbcMotion(
     response->message = "WBC is disabled; launch with wbc_enabled:=true";
     return false;
   }
+  if (textMotionCtrl_.busy())
+  {
+    response->message = "text motion is preparing/playing/releasing";
+    return false;
+  }
   // Keep the preparation slot until cancellation is acknowledged, even after a timeout.
   const auto cancel_preparation = [this, &motion_id]() {
     const auto cancelled = policyMux_.prepareWbcMotion(
@@ -339,18 +344,6 @@ void LeggedController::wbcMotionDoneCallback(const std_msgs::msg::Bool::ConstSha
   const bool returned_to_amp = finishWbcMotion("[WBC] Motion completed", message);
   if (!returned_to_amp) RCLCPP_WARN(nh_->get_logger(), "[WBC Action] %s", message.c_str());
   publishActiveWbcActionTerminal(returned_to_amp ? "completed" : "failed");
-}
-
-void LeggedController::textWbcCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
-  if (msg->data.compare(0, 2, "T_") != 0 || msg->data.size() > 32) return;
-  std::lock_guard<std::mutex> lock(auxiliary_action_trigger_mutex_);
-  {
-    std::lock_guard<std::mutex> state_lock(wbc_action_state_mutex_);
-    if (!wbc_action_active_ || wbc_action_id_ != msg->data) return;
-  }
-  std::string message;
-  const bool returning = finishWbcMotion("[Text WBC] Cancelled", message);
-  publishActiveWbcActionTerminal(returning ? "cancelled" : "failed");
 }
 
 void LeggedController::updateWbcControlState() {

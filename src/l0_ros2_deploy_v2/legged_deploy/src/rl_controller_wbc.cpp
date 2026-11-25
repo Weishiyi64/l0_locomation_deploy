@@ -95,7 +95,15 @@ RLWbc::RLWbc(rclcpp::Node::SharedPtr node) : BaseRLController(node), node_(std::
   std::string mode = "static", manifest;
   node_->get_parameter("wbc_mode", mode);
   node_->get_parameter("wbc_lora_manifest", manifest);
-  if (mode != "static" && mode != "lora") throw std::runtime_error("wbc_mode must be static or lora");
+  if (mode != "static" && mode != "lora" && mode != "base")
+    throw std::runtime_error("wbc_mode must be static, lora or base");
+  if (mode == "base") {
+    if (manifest.empty()) throw std::runtime_error("Base mode requires a WBC manifest");
+    base_assets_ = std::make_unique<WbcBaseAssets>(manifest, policies);
+    shared_policy_ = std::make_unique<RknnModel>(base_assets_->modelPath());
+    RCLCPP_INFO(node_->get_logger(), "WBC fixed Base initialized once (2 inputs, no adapters): %s; %s",
+                base_assets_->modelPath().c_str(), shared_policy_->runtimeVersion().c_str());
+  }
   if (mode == "lora") {
     if (manifest.empty()) throw std::runtime_error("LoRA requires a WBC manifest, never an AMP subpolicy");
     lora_assets_ = std::make_unique<WbcLoraAssets>(manifest, policies);
@@ -116,10 +124,12 @@ RLWbc::RLWbc(rclcpp::Node::SharedPtr node) : BaseRLController(node), node_(std::
     auto motion = std::make_unique<Motion>();
     motion->config_dir_ = joinPath(joinPath(policy_root, robot_type), policy);
     motion->robot_cfg_path_ = lora_assets_ ? lora_assets_->action(policy).config : joinPath(motion->config_dir_, "rl_config.yaml");
+    if (base_assets_) motion->robot_cfg_path_ = base_assets_->action(policy).config;
     try
     {
       loadConfig(*motion, motion->robot_cfg_path_);
-      if (lora_assets_ && motion->motion_id_ != policy) throw std::runtime_error("WBC action/config identity mismatch");
+      if ((lora_assets_ || base_assets_) && motion->motion_id_ != policy)
+        throw std::runtime_error("WBC action/config identity mismatch");
       initializeModel(*motion);
       const std::string id = motion->motion_id_;
       if (!motions_.emplace(id, std::move(motion)).second)
@@ -132,7 +142,6 @@ RLWbc::RLWbc(rclcpp::Node::SharedPtr node) : BaseRLController(node), node_(std::
     }
   }
   if (!readDeployParams(deploy_params_)) throw std::runtime_error("Failed to read WBC deployment parameters");
-  initializeJsonReference();
   if (!node_->has_parameter("sensor_timeout")) node_->declare_parameter("sensor_timeout", 0.1);
   node_->get_parameter("sensor_timeout", sensor_timeout_sec_);
   if (!std::isfinite(sensor_timeout_sec_) || sensor_timeout_sec_ <= 0.0)
@@ -188,7 +197,7 @@ void RLWbc::loadConfig(Motion& motion, const std::string& path) {
   const auto joints = asStringList(robot["joint_order_mj"], "RobotCfg.joint_order_mj");
   if (!joint_names_.empty() && joints != joint_names_)
     throw std::runtime_error("All WBC motions must have identical observation joint names/order");
-  if (joint_names_.empty()) joint_names_ = joints;
+  joint_names_ = joints;
   for (const char* key : {"kps", "kds"})
   {
     const auto gains = asDoubleList(robot[key], std::string("RobotCfg.") + key);
@@ -234,7 +243,6 @@ void RLWbc::loadConfig(Motion& motion, const std::string& path) {
       }))
     throw std::runtime_error("Invalid WBC motion id");
   motion.reference_num_frames_ = wbc["reference_num_frames"].as<int>();
-  motion.adapter_id_ = motion.motion_id_;
   motion.reference_root_body_index_ = wbc["reference_root_body_index"].as<int>();
   if (motion.reference_num_frames_ <= 0 || motion.reference_num_frames_ > 100000 || motion.reference_root_body_index_ < 0 ||
       motion.reference_root_body_index_ >= static_cast<int>(kReferenceBodyCount))
@@ -242,7 +250,7 @@ void RLWbc::loadConfig(Motion& motion, const std::string& path) {
 }
 
 void RLWbc::initializeModel(Motion& motion) {
-  if (lora_assets_) motion.policy_ = shared_policy_.get();
+  if (shared_policy_) motion.policy_ = shared_policy_.get();
   else {
     motion.model_ = std::make_unique<RknnModel>(rknnModelPath(joinPath(motion.config_dir_, "policy.onnx")));
     motion.policy_ = motion.model_.get();
@@ -262,10 +270,21 @@ void RLWbc::initializeModel(Motion& motion) {
       motion.policy_->inputElements(motion.command_input_index_) != kCommandInputSize ||
       motion.policy_->outputElements(motion.output_index_) != kJointCount)
     throw std::runtime_error("WBC RKNN tensor sizes do not match policy[399], command_short[240], action[21]");
+  if (base_assets_) {
+    for (const int index : {motion.policy_input_index_, motion.command_input_index_}) {
+      const auto dims = motion.policy_->inputShape(index);
+      const auto width = motion.policy_->inputElements(index);
+      const auto type = motion.policy_->inputType(index);
+      if ((dims != std::vector<std::size_t>{width} && dims != std::vector<std::size_t>{1, width}) ||
+          (type != RKNN_TENSOR_FLOAT16 && type != RKNN_TENSOR_FLOAT32))
+        throw std::runtime_error("WBC fixed Base requires static FP16/FP32 single-batch inputs");
+    }
+  }
 
-  if (motion.json_reference_) return;
-  motion.reference_model_ = std::make_unique<RknnModel>(lora_assets_ ? lora_assets_->action(motion.adapter_id_).reference :
-      rknnModelPath(joinPath(motion.config_dir_, "reference_motion.onnx")));
+  const auto reference_path = base_assets_ ? base_assets_->action(motion.motion_id_).reference :
+      (lora_assets_ ? lora_assets_->action(motion.motion_id_).reference :
+       rknnModelPath(joinPath(motion.config_dir_, "reference_motion.onnx")));
+  motion.reference_model_ = std::make_unique<RknnModel>(reference_path);
   if (motion.reference_model_->inputCount() != 1 || motion.reference_model_->inputIndex("time_step") != 0 ||
       motion.reference_model_->inputElements() != 1 || motion.reference_model_->outputCount() != kReferenceOutputs.size())
     throw std::runtime_error("WBC reference RKNN must have time_step[1,1] and six reference outputs");
@@ -329,38 +348,22 @@ bool RLWbc::captureFrame(RobotFrame& frame, std::array<double, 4>* orientation_w
 }
 
 RLWbc::ReferenceFrame RLWbc::inferReferenceFrame(int index) {
-  return inferReferenceFrame(*current_, index);
-}
-
-RLWbc::ReferenceFrame RLWbc::inferReferenceFrame(const Motion& motion, int index) {
-  if (motion.json_reference_) {
-    const auto started = std::chrono::steady_clock::now();
-    const auto& reference = *motion.json_reference_;
-    ReferenceFrame frame;
-    const auto& joints = reference.frame(index);
-    frame.joint_position.assign(joints.begin(), joints.end());
-    frame.root_position = reference.rootPosition();
-    frame.root_orientation = reference.rootOrientation();
-    ++reference_queries_;
-    reference_sec_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    return frame;
-  }
-  const float time_step = static_cast<float>(std::max(0, std::min(index, motion.reference_num_frames_ - 1)));
+  const float time_step = static_cast<float>(std::max(0, std::min(index, current_->reference_num_frames_ - 1)));
   const auto started = std::chrono::steady_clock::now();
   ++reference_queries_;
-  const bool inferred = motion.reference_model_->run(&time_step, 1);
+  const bool inferred = current_->reference_model_->run(&time_step, 1);
   reference_sec_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
   if (!inferred)
-    throw std::runtime_error("WBC reference RKNN inference failed: " + motion.reference_model_->lastError());
+    throw std::runtime_error("WBC reference RKNN inference failed: " + current_->reference_model_->lastError());
   ReferenceFrame frame;
-  frame.joint_position = motion.reference_model_->output(motion.reference_output_indices_[0]);
-  const auto& positions = motion.reference_model_->output(motion.reference_output_indices_[2]);
-  const auto& orientations = motion.reference_model_->output(motion.reference_output_indices_[3]);
-  for (std::size_t i = 0; i < 3; ++i) frame.root_position[i] = positions[motion.reference_root_body_index_ * 3 + i];
+  frame.joint_position = current_->reference_model_->output(current_->reference_output_indices_[0]);
+  const auto& positions = current_->reference_model_->output(current_->reference_output_indices_[2]);
+  const auto& orientations = current_->reference_model_->output(current_->reference_output_indices_[3]);
+  for (std::size_t i = 0; i < 3; ++i) frame.root_position[i] = positions[current_->reference_root_body_index_ * 3 + i];
   double norm_squared = 0.0;
   for (std::size_t i = 0; i < 4; ++i)
   {
-    frame.root_orientation[i] = orientations[motion.reference_root_body_index_ * 4 + i];
+    frame.root_orientation[i] = orientations[current_->reference_root_body_index_ * 4 + i];
     norm_squared += frame.root_orientation[i] * frame.root_orientation[i];
   }
   if (!std::isfinite(norm_squared) || std::abs(norm_squared - 1.0) > 0.1)
@@ -577,13 +580,6 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
       return;
     }
     next = motion->second.get();
-    if (next->json_reference_) {
-      if (next->json_consumed_ || next->json_reference_->expired()) {
-        response->message = "JSON reference already consumed/cancelled or expired";
-        return;
-      }
-      next->json_consumed_ = true;  // A failed preparation cannot later replay this request.
-    }
     slot = 1 - active_buffer_;
     generation = ++prepare_generation_;
     preparing_ = true;
@@ -592,7 +588,7 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
   const auto load_started = std::chrono::steady_clock::now();
   try {
     if (lora_assets_) {
-      lora_assets_->loadAdapter(lora_assets_->action(next->adapter_id_), adapter_buffers_[slot]);
+      lora_assets_->loadAdapter(lora_assets_->action(request->motion_id), adapter_buffers_[slot]);
       shared_policy_->stageResidentParameters(slot, lora_assets_->parameterInputs(adapter_buffers_[slot]));
     }
   } catch (const std::exception& exception) {
@@ -600,8 +596,6 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
   }
   const double load_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - load_started).count();
   std::lock_guard<std::mutex> lock(mutex_);
-  if (next->json_reference_ && std::find(json_cancelled_ids_.begin(), json_cancelled_ids_.end(), request->motion_id) !=
-      json_cancelled_ids_.end() && generation == prepare_generation_) preparing_ = false;
   if (generation != prepare_generation_ || !preparing_) {
     response->message = "WBC preparation was cancelled";
     return;
@@ -616,10 +610,10 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
   // No inference is in flight while mutex_ is held. Never mutate the active adapter buffer.
   Motion* previous = current_;
   const int previous_slot = active_buffer_;
-  const int previous_resident_slot = shared_policy_ ? shared_policy_->residentSlot() : -1;
+  const int previous_resident_slot = lora_assets_ ? shared_policy_->residentSlot() : -1;
   // Do allocating snapshots before committing the new device bindings.
   const auto previous_command = posCmd_;
-  if (shared_policy_ && !shared_policy_->commitResidentParameters(slot)) {
+  if (lora_assets_ && !shared_policy_->commitResidentParameters(slot)) {
     response->message = shared_policy_->lastError();
     RCLCPP_ERROR(node_->get_logger(), "WBC prepare %s rejected: %s", request->motion_id.c_str(), response->message.c_str());
     return;
@@ -637,16 +631,6 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
   RobotFrame initial_frame;
   try {
     if (elapsed() < prepare_timeout_sec_ && captureFrame(initial_frame, nullptr, error)) {
-      // Sensor/start validity is decided by the same captureFrame path for
-      // ordinary and JSON motions. Only stale JSON payload matching is extra.
-      if (current_->json_reference_) {
-        const auto& initial = current_->json_reference_->start();
-        for (std::size_t j = 0; j < kJointCount; ++j) {
-          const float observed = initial_frame.joint_position[j] + current_->default_joint_positions_[j];
-          if (std::abs(observed - initial[j]) > 0.15)
-            throw std::runtime_error("robot pose changed since JSON generation");
-        }
-      }
       state_history_.assign(17, initial_frame);
       action_history_.assign(static_cast<std::size_t>(current_->previous_action_steps_), std::vector<float>(kJointCount, 0.0f));
       done_published_ = false;
@@ -661,7 +645,7 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
           response->success = true;
           RCLCPP_INFO(node_->get_logger(), "WBC prepared action=%s generation=%llu slot=%d shared_context=%s %.2f ms load_pack=%.2f ms",
                       request->motion_id.c_str(), static_cast<unsigned long long>(generation), slot,
-                      lora_assets_ ? "reused" : "static", elapsed() * 1000.0, load_ms);
+                      shared_policy_ ? "reused" : "static", elapsed() * 1000.0, load_ms);
           return;
         }
         error = "preparation deadline after diagnostics";
@@ -671,7 +655,7 @@ void RLWbc::prepareCallback(const std::shared_ptr<luvbot_control_interfaces::srv
     error = exception.what();
   }
   logTiming("prepare_failed");
-  if (shared_policy_ && !shared_policy_->restoreResidentParameters(previous_resident_slot))
+  if (lora_assets_ && !shared_policy_->restoreResidentParameters(previous_resident_slot))
     error += "; " + shared_policy_->lastError();
   current_ = previous;
   active_buffer_ = previous_slot;
@@ -709,7 +693,7 @@ void RLWbc::activeCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {
 }
 
 void RLWbc::logTiming(const char* phase) {
-  if (shared_policy_) {
+  if (lora_assets_) {
     const auto stats = shared_policy_->residentStats();
     const double runs = static_cast<double>(std::max<std::uint64_t>(1, stats.runs));
     RCLCPP_INFO(node_->get_logger(),

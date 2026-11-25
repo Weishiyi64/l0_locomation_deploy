@@ -87,9 +87,12 @@ class LeggedController {
   void lowCmdWbcCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg);
   void wbcMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);
   void wbcActionCommandCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  void textWbcCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   void plannerCommandCallback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr msg);
   void followFaceCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void textMotionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void textMotionCancelCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void publishTextMotionEvent(const TextMotionController::Event& event);
+  void flushTextMotionEvents();
   void imitationMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);
   std::array<double, 3> readCurrentHeadRpyRad();
   bool faceFollowAllowed() const;
@@ -154,7 +157,6 @@ class LeggedController {
   rclcpp::Subscription<luvbot_control_interfaces::msg::PolicyCommand>::SharedPtr subCmdWbc_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subWbcMotionDone_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subWbcActionCommand_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subTextWbcCancel_;
   rclcpp::Publisher<std_msgs::msg::Int64>::SharedPtr shotIdPub_;
   rclcpp::CallbackGroup::SharedPtr sequence_trigger_callback_group_;
 
@@ -164,6 +166,12 @@ class LeggedController {
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subEmgstop_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr plannerCommandSub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subFollowFace_;
+  rclcpp::CallbackGroup::SharedPtr text_motion_callback_group_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subTextMotion_, subTextMotionCancel_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr textMotionStatusPub_;
+  rclcpp::TimerBase::SharedPtr textMotionStatusTimer_;
+  std::mutex text_motion_events_mutex_;
+  std::deque<TextMotionController::Event> text_motion_events_;
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subImitationMotionDone_;
 
@@ -185,6 +193,9 @@ class LeggedController {
   PolicyMux policyMux_;
   SequenceRuntime sequenceRuntime_;
   JointCommandComposer jointCommandComposer_;
+  TextMotionController textMotionCtrl_;
+  bool text_motion_enabled_{false};
+  std::atomic<bool> text_motion_start_allowed_{false};
 
   rclcpp::Time startingTime_;
   rclcpp::Time lastVizTick_;

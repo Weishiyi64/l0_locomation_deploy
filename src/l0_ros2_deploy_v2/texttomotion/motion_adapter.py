@@ -1,6 +1,5 @@
 """Robot boundary for the unmodified text_to_motion_onnx.zip delivery."""
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import re
@@ -56,9 +55,6 @@ def open_pipeline(manifest, backend):
     if info["motion_metadata"]["joint_names"] != JOINTS or info.get("fps") != 50:
         raise ValueError("Unknown model joint metadata/FPS")
     # Always run the host implementation shipped in the current source zip.
-    if backend == "lite2":
-        from board_runtime import rknn_lite_class
-        rknn_lite_class()
     sys.path.insert(0, str(BASELINE / "onnx"))
     from deploy_rknn.pipeline import RknnMotionPipeline
     return RknnMotionPipeline(manifest, backend)
@@ -104,34 +100,6 @@ def mirror_arms(value):
     return result
 
 
-def configure_generation_limits(pipeline, limits):
-    """Use mapping limits in every original composer operation, per pipeline.
-
-    The frozen composer keeps its limits in module globals. Give this pipeline
-    a private module instance so another pipeline's mapping cannot change them.
-    Source files, model tensors and the original module remain untouched.
-    """
-    limits = np.asarray(limits, dtype=np.float64)
-    if limits.shape != (9, 2) or not np.isfinite(limits).all() or np.any(limits[:, 0] >= limits[:, 1]):
-        raise ValueError("Generation needs nine finite ordered robot joint limits")
-    if np.array_equal(getattr(pipeline, "_robot_generation_limits", None), limits):
-        return
-    lower, upper = mirror_arms(limits[:, 0]), mirror_arms(limits[:, 1])
-    model_limits = np.stack([np.minimum(lower, upper), np.maximum(lower, upper)], axis=1)
-    spec = importlib.util.spec_from_file_location("_l0_robot_motion", BASELINE / "onnx/deploy_rknn/motion.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    # The source composer uses head/left/right parts; trajectory columns use
-    # right/left/head. mirror_arms already handles anatomical sides and signs.
-    module.LIMITS = np.stack([model_limits[6:9], model_limits[3:6], model_limits[:3]])
-    module.FULL_LIMITS = model_limits
-    module.LIMITS.setflags(write=False)
-    module.FULL_LIMITS.setflags(write=False)
-    previous = pipeline.composer
-    pipeline.composer = module.MotionComposer(previous.metadata, previous.atoms, previous.lengths, previous.a_pose)
-    pipeline._robot_generation_limits = limits.copy()
-
-
 def validate_request(request):
     allowed = {"command", "request_id", "mode", "text", "token_ids", "speed", "seed",
                "return_home", "return_frames", "end_pose", "limit_policy"}
@@ -167,7 +135,6 @@ def validate_request(request):
 
 def generate(pipeline, request, initial, limits):
     validate_request(request)
-    configure_generation_limits(pipeline, limits)
     initial = check_pose(initial, limits)
     end = check_pose(request.get("end_pose", initial), limits)
     output = pipeline.generate(
@@ -207,10 +174,9 @@ def generate(pipeline, request, initial, limits):
         "backend": pipeline.backend, "inference_ms": output["inference_ms"],
         "generation_request": request, "start_pose": initial.tolist(), "end_pose": end.tolist(),
         "model_diagnostics": {
-            "generation_joint_limits_rad": {name: list(map(float, bound)) for name, bound in zip(JOINTS, limits)},
-            **{key: np.asarray(output[key]).tolist()
+            key: np.asarray(output[key]).tolist()
             for key in ("part_transition_frames", "action_frame_count_before_speed", "frame_count_before_speed",
-                        "return_home_start_frame", "selector")}},
+                        "return_home_start_frame", "selector")},
         "limit_policy": request.get("limit_policy", "reject"),
         "limit_adjustments": {name: {"count": int(np.count_nonzero(adjustments[:, j] > 1e-6)),
                                       "max_rad": float(adjustments[:, j].max())}

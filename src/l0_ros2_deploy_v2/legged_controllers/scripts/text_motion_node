@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+package_share="$(ros2 pkg prefix --share legged_controllers)"
+exec "${TEXT_MOTION_PYTHON:-/usr/bin/python3}" -B "$package_share/texttomotion/text_motion_node.py" "$@"

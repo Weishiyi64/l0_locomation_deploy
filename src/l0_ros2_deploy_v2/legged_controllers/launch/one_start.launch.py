@@ -39,8 +39,8 @@ def _launch_setup(context, *args, **kwargs):
     wbc_policies = []
     wbc_mode = cfg.get('wbc_mode', 'static')
     wbc_manifest = ''
-    if wbc_mode not in ('static', 'lora'):
-        raise RuntimeError('wbc_mode must be static or lora')
+    if wbc_mode not in ('static', 'lora', 'base'):
+        raise RuntimeError('wbc_mode must be static, lora or base')
     if wbc_enabled:
         try:
             wbc_policies = yaml.safe_load(cfg['wbc_policies'])
@@ -78,18 +78,20 @@ def _launch_setup(context, *args, **kwargs):
             wbc_manifest = asset('base_manifest.json')
             with open(wbc_manifest, encoding='utf-8') as stream:
                 graph = json.load(stream)
-            if graph.get('format') != 'wbc_lora_graph_v1' or graph.get('kind') != 'policy':
-                raise RuntimeError('Expected a WBC LoRA policy manifest; AMP is configured separately')
+            expected_format = 'wbc_base_graph_v1' if wbc_mode == 'base' else 'wbc_lora_graph_v1'
+            if graph.get('format') != expected_format or graph.get('kind') != 'policy':
+                raise RuntimeError(f'Expected {expected_format}; AMP is configured separately')
             asset(graph['model']['rknn'])
             asset(graph['model']['rknn'] + '.json')
             catalog = {item['action_id']: item for item in graph['actions']}
             if len(catalog) != len(graph['actions']):
-                raise RuntimeError('Duplicate LoRA action IDs')
+                raise RuntimeError('Duplicate WBC action IDs')
             for action in wbc_policies:
                 if action not in catalog:
-                    raise RuntimeError(f'WBC LoRA action is not in manifest: {action}')
+                    raise RuntimeError(f'WBC action is not in manifest: {action}')
                 item = catalog[action]
-                for key in ('config', 'reference_rknn', 'adapter_manifest'):
+                keys = ('config', 'reference_rknn') if wbc_mode == 'base' else ('config', 'reference_rknn', 'adapter_manifest')
+                for key in keys:
                     asset(item[key])
                 asset(item['reference_rknn'] + '.json')
             wbc_robot_cfg = asset(catalog[wbc_policies[0]]['config'])
@@ -186,9 +188,6 @@ def _launch_setup(context, *args, **kwargs):
                         {'robot_cfg_path': wbc_robot_cfg},
                         {'wbc_mode': wbc_mode},
                         {'wbc_lora_manifest': wbc_manifest},
-                        {'wbc_json_base_action': cfg.get('wbc_json_base_action', '')},
-                        {'mapping_file': os.path.join(get_package_share_directory('system_command_arbiter'),
-                                                     'config', cfg['robot_type'] + '.yaml')},
                         {'subpolicy': ''},
                         {'policy_root_path': policy_root_path},
                         {'available_wbc_policies': wbc_policies},
@@ -364,7 +363,6 @@ def generate_launch_description():
         DeclareLaunchArgument('wbc_policies', default_value='[]'),
         DeclareLaunchArgument('wbc_mode', default_value='static'),
         DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora'),
-        DeclareLaunchArgument('wbc_json_base_action', default_value=''),
         DeclareLaunchArgument('radar_control_enabled', default_value='false'),
         DeclareLaunchArgument('planner_depth_input_enabled', default_value='false'),
         DeclareLaunchArgument('raw_depth_preview_enabled', default_value='false'),

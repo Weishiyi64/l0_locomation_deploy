@@ -3,7 +3,8 @@ set -eo pipefail
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
   echo '用法：bash scripts/wbc_action_console.sh [--workspace 工作空间] [--dry-run]'
   echo '输入编号或完整动作 ID 发布一次请求；list 显示列表，q 退出。'
-  echo '读取当前运行快照；--dry-run 仅显示动作，不创建 ROS 节点或发布消息。'
+  echo '读取 sim2real 的实际运行快照；支持直接 ros2 launch 和 start_sim2real.sh。'
+  echo '--dry-run 仅显示动作，不创建 ROS 节点或发布消息。'
   exit 0
 fi
 source "$(dirname -- "${BASH_SOURCE[0]}")/wbc_runtime_common.bash"

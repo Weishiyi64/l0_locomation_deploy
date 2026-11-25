@@ -6,6 +6,7 @@
 #include <legged_controllers/IHardwareLayer.h>
 #include <legged_controllers/JointCSV.h>
 #include <legged_controllers/JointCommandTransition.h>
+#include <legged_controllers/TextMotionController.h>
 
 #include <vector>
 
@@ -19,6 +20,7 @@ class JointCommandComposer {
     JointCsvController* joint_csv{nullptr};
     const ArmSwingController* arm_swing_ctrl{nullptr};
     JointCommandTransition* release_handoff{nullptr};
+    const TextMotionController* text_motion{nullptr};
 
     PolicyInputs policy_inputs;
     JointGainProfile rl_gains;

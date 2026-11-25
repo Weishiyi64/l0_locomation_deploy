@@ -10,6 +10,7 @@ function showHelp(){
     echo
     echo "This script runs legged_mujoco_sim, then main controller, then mujoco in sequence"
     echo "Each step waits for the previous one to complete"
+    echo "Optional final positional argument after wbc_policies: text_motion_enabled (default false)."
     echo
     echo "Usage: sequential_launch_sim.sh [robot_type] [bag_enabled] [subpolicy] [bag_name] [rviz] [head_script_enabled] [head_script_config] [joystick_imitation_enabled] [joystick_imitation_config_path] [arm_swing_enabled] [arm_swing_stop_vx_threshold] [arm_swing_high_vx_threshold] [arm_swing_vx_hysteresis] [arm_swing_blend_sec] [joystick_sequence_enabled] [joystick_sequence_config_path] [joystick_back_emergency_sequence_enabled] [joystick_back_emergency_sequence_path] [emergency_damping_kd] [wbc_enabled] [wbc_policies]"
     echo "Example: sequential_launch_sim.sh l0_v4 false l0_v3_amp_07090 l0_v4_mujoco false false /path/head.yaml true /path/to/joystick_imitation_actions.yaml true 0.05 0.8 0.03 0.35 false /path/to/joystick_sequence_actions.yaml true /path/to/walking_back_emergency.yaml 5.0"
@@ -119,8 +120,8 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${SCRIPT_ARGS[@]}"
 
-if [[ $# -gt 21 ]]; then
-    echo "ERROR: sequential_launch_sim.sh accepts at most 21 positional arguments (got $#)."
+if [[ $# -gt 22 ]]; then
+    echo "ERROR: sequential_launch_sim.sh accepts at most 22 positional arguments (got $#)."
     echo "Launch via: ros2 launch legged_controllers sim2mujoco.launch.py"
     echo "Or run: $0 -h"
     exit 1
@@ -147,6 +148,7 @@ JOYSTICK_BACK_EMERGENCY_SEQUENCE_PATH=${18:-"action_sequences/walking_back_emerg
 EMERGENCY_DAMPING_KD=${19:-"5.0"}
 WBC_ENABLED=${20:-"false"}
 WBC_POLICIES=${21:-"[]"}
+TEXT_MOTION_ENABLED=${22:-"false"}
 
 # Avoid AddressSanitizer new-delete-type-mismatch with rclcpp/rcutils (ROS2 Humble)
 # when legged_mujoco or mujoco_simulate are built with -fsanitize=address
@@ -184,6 +186,7 @@ start_managed_process "legged mujoco simulation bridge" ros2 launch legged_mujoc
     robot_type:=$ROBOT_TYPE \
     subpolicy:=$SUBPOLICY \
     wbc_enabled:=$WBC_ENABLED \
+    text_motion_enabled:=$TEXT_MOTION_ENABLED \
     rviz:=$RVIZ \
     head_script_enabled:=$HEAD_SCRIPT_ENABLED \
     head_script_config:=$HEAD_SCRIPT_CONFIG \
