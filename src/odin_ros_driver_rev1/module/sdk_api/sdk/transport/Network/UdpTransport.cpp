@@ -1,5 +1,7 @@
 #include "UdpTransport.hpp"
 #include "logger.h"
+#include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <vector>
 
@@ -46,35 +48,30 @@ bool UdpTransport::Open(const ITransportAddress& local_address) {
     return false;
   }
 
-  // Linux silently caps SO_RCVBUF at net.core.rmem_max even on success.
-  const int requested = 8 * 1024 * 1024;
+  // Set receive buffer size to 8MB to reduce packet loss on high-speed data transfer.
+  // On Linux the kernel doubles the value internally (for sk_buff bookkeeping),
+  // so getsockopt returns 2× the value we set. This requires
+  // net.core.rmem_max >= 8388608 on Linux.
+  const int rcvbuf_requested = 8 * 1024 * 1024;  // 8MB
   if (setsockopt(socket_, SOL_SOCKET, SO_RCVBUF,
-                 reinterpret_cast<const char*>(&requested), sizeof(requested)) != 0) {
-    LOG_WARN("UDP SO_RCVBUF request failed; continuing with existing buffer\n");
-  }
-  int actual = 0;
-#ifdef _WIN32
-  int option_size = sizeof(actual);
-#else
-  socklen_t option_size = sizeof(actual);
-#endif
-  if (getsockopt(socket_, SOL_SOCKET, SO_RCVBUF,
-                 reinterpret_cast<char*>(&actual), &option_size) == 0) {
-#ifdef __linux__
-    // Linux reports twice the requested amount for socket bookkeeping.
-    const int expected = requested * 2;
-#else
-    const int expected = requested;
-#endif
-    LOG_INFO("UDP receive buffer %s:%u: requested=%d reported=%d bytes\n",
-             net_addr->ip.c_str(), static_cast<unsigned>(net_addr->port), requested, actual);
-    if (actual < expected) {
-      LOG_WARN("UDP receive buffer capped: requested=%d reported=%d expected=%d; "
-               "on Linux set net.core.rmem_max >= 8388608 before starting driver\n",
-               requested, actual, expected);
-    }
+                 reinterpret_cast<const char*>(&rcvbuf_requested), sizeof(rcvbuf_requested)) != 0) {
+    // Failed to set buffer size, continue anyway with default
   } else {
-    LOG_WARN("Cannot verify UDP receive buffer size\n");
+#ifndef _WIN32
+    // Verify actual buffer size (Linux returns 2× the setsockopt value)
+    int actual_size = 0;
+    socklen_t optlen = sizeof(actual_size);
+    if (getsockopt(socket_, SOL_SOCKET, SO_RCVBUF,
+                   reinterpret_cast<char*>(&actual_size), &optlen) == 0) {
+      if (actual_size < 2 * rcvbuf_requested) {
+        LOG_WARN("UDP SO_RCVBUF clamped: requested 8MB, actual %dKB. "
+                 "To avoid packet loss under high data rate, consider:\n"
+                 "  sudo sysctl -w net.core.rmem_max=%d   # 16MB\n"
+                 "  sudo sysctl -w net.core.rmem_default=%d  # 8MB\n",
+                 actual_size / 1024, 16 * 1024 * 1024, 8 * 1024 * 1024);
+      }
+    }
+#endif
   }
 
   local_address_ = *net_addr;
@@ -184,6 +181,17 @@ void UdpTransport::ReceiveLoop() {
     int ready = select(static_cast<int>(socket_ + 1), &read_fds, nullptr, nullptr, &tv);
 #endif
 
+    if (ready < 0 && running_.load()) {
+      // select() failure: a persistent error (e.g. bad fd) would spin here
+      // silently dropping every datagram. Throttled to avoid log floods.
+      static std::atomic<uint64_t> select_errors{0};
+      const uint64_t n = select_errors.fetch_add(1) + 1;
+      if (n == 1 || n % 100 == 0) {
+        LOG_WARN("UdpTransport: select failed: %s (total %llu)\n",
+                 std::strerror(errno), static_cast<unsigned long long>(n));
+      }
+    }
+
     if (ready > 0 && FD_ISSET(socket_, &read_fds)) {
       sockaddr_in from_addr;
       socklen_t addr_len = sizeof(from_addr);
@@ -205,6 +213,15 @@ void UdpTransport::ReceiveLoop() {
         }
         if (cb) {
           cb(buffer.data(), static_cast<size_t>(len), from);
+        }
+      } else if (len < 0 && running_.load()) {
+        // recvfrom failure: a persistent socket error would otherwise drop
+        // datagrams silently. Throttled so an error storm can't flood the log.
+        static std::atomic<uint64_t> recv_errors{0};
+        const uint64_t n = recv_errors.fetch_add(1) + 1;
+        if (n == 1 || n % 100 == 0) {
+          LOG_WARN("UdpTransport: recvfrom failed: %s (total %llu)\n",
+                   std::strerror(errno), static_cast<unsigned long long>(n));
         }
       }
     }

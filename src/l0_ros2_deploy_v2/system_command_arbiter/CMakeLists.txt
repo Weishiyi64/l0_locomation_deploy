@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.8)
 project(system_command_arbiter)
 
+# Optimize deployment builds while retaining symbols and explicit build-type choices.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -9,6 +14,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AppVersion.cmake")
 find_package(rclcpp REQUIRED)
 find_package(luvbot_hardware_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)

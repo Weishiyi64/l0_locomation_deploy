@@ -32,7 +32,7 @@ class CompositeHotplugListener : public IHotplugListener {
   bool IsRunning() const override;
   void SetPollingInterval(uint32_t interval_ms) override;
   void SetOfflineTimeout(uint32_t timeout_ms) override;
-  void MarkDeviceOffline(const DiscoveredDevice& device) override;
+  void RefreshDeviceAlive(const DiscoveredDevice& device) override;
 
  private:
   std::vector<std::unique_ptr<IHotplugListener>> listeners_;

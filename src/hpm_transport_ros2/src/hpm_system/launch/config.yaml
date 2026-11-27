@@ -1,0 +1,5 @@
+hpm_system:
+  ros__parameters:
+    set_realtime_priority: true
+    thread_scheduling_method: "SCHED_FIFO"
+    thread_priority: 99

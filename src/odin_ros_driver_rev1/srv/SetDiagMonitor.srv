@@ -1,0 +1,23 @@
+# Request
+bool enable   # true=enable 1Hz diagnostic print, false=disable
+---
+# Response
+bool success
+string message
+bool monitor_enabled      # current enabled state after this call
+float64 raw_point_fps     # frames per second (0 if no data)
+float64 slam_point_fps
+float64 image0_fps
+float64 image1_fps
+float64 imu_fps
+float64 odom_lf_fps
+float64 odom_hf_fps
+float64 tf_fps
+int64 raw_point_latency_ns     # average (host_time - data_timestamp) over last 50 frames in ns
+int64 slam_point_latency_ns
+int64 image0_latency_ns
+int64 image1_latency_ns
+int64 imu_latency_ns
+int64 odom_lf_latency_ns
+int64 odom_hf_latency_ns
+int64 tf_latency_ns

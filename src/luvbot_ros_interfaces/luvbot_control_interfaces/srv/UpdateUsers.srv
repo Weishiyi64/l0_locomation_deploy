@@ -1,0 +1,13 @@
+# users.json 底库更新: 下发方 (client) 携带新 users.json 文件路径,
+# face 节点 (server) 校验并暂存, 感知线程在帧间全量替换加载。
+string path
+---
+# success=true 仅表示"文件已收到并已安排加载"(异步确认);
+# 加载结果见节点日志。
+# message 恒为数字错误码, 共 4 个:
+#   0    = 已接收, 已安排帧间加载
+#   1001 = path 为空
+#   1002 = 下发文件读不到/为空/读取失败 (下发方的问题)
+#   1003 = 本端暂存失败: 磁盘/权限 (face 节点的问题)
+bool success
+string message

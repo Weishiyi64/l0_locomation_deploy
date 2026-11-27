@@ -15,8 +15,8 @@ descendants. They do not apply to sibling repositories such as
   `l0_deploy_v2_ws` workspace, not from this package directory. Keep matching
   `luvbot_ros_interfaces` sources in that workspace and build dependencies with
   `--packages-up-to`.
-- Deployment usage is documented in `docs/wbc-lora-production-deployment.md`
-  and `docs/text-motion-deployment.md`. Inspect the relevant source for architecture.
+- Read `docs/agent-context.md` only when a task touches package ownership,
+  controller composition, launch wiring, or related architecture.
 
 ## Working Style
 

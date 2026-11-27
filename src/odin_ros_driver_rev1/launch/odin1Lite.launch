@@ -1,0 +1,223 @@
+<launch>
+  <!-- =====================================================================
+       Odin ROS1 driver launch
+       All driver / post-process / reprojector / pointcloud-to-depth /
+       depth-to-pointcloud parameters are exposed as <arg> here so they can
+       be overridden from the command line:
+           roslaunch <packageName> odin1Lite.launch key:=value
+       Ports / device SN are auto-handled by SDK discovery and are not
+       configurable.
+
+       Naming policy: launch arg names are kept identical to the node
+       parameter names. Nearly all parameters are unique to a single node;
+       the only cross-node sharing is `sync_queue_size` (reprojector +
+       pointcloud_to_depth), which is declared once and feeds both nodes.
+       For per-node overrides use the full node path, e.g.
+           rosparam set /pointcloud_to_depth/sync_queue_size 20
+
+       本 launch 文件把所有可调参数全部暴露为 <arg>，arg 名与节点参数名保持
+       一致。绝大多数参数只属于一个节点，无歧义；唯一跨节点同名的参数是
+       `sync_queue_size`（重投影 + 点云转深度图），声明一次同时下发两个节点。
+       如需分别设置，请走全路径：rosparam set /<完整节点名>/<参数> <值>。
+       端口、SN 等由 SDK 自动处理，不作为 launch 参数。
+       ================================================================== -->
+
+  <!-- ===================== General / 通用 ============================= -->
+  <arg name="packageName" default="odin_ros_driver_rev1"/>
+  <arg name="start_rviz"   default="true"/>
+  <arg name="rviz_config"  default="$(eval find(arg('packageName')) + '/rviz/odin1lite_driver_view_ros1.rviz')"/>
+  <!-- Final topic format: /{topic_prefix}/device{index}/ -->
+  <arg name="topic_prefix" default="manifold"/>
+
+  <!-- =============== Main driver: device / 主驱动设备 ================= -->
+  <arg name="device_mode"       default="normal"/>   <!-- normal | standby -->
+  <arg name="discovery_timeout_ms" default="2000"/>
+
+  <!-- =============== Main driver: image stream / 图像流 =============== -->
+  <!-- 0 = use first capability from device -->
+  <arg name="image_width"  default="0"/>
+  <arg name="image_height" default="0"/>
+  <arg name="image_fps"    default="0"/>
+  <arg name="image_format" default="mjpeg"/>            <!-- mjpeg|h264|nv12 -->
+
+  <!-- =============== Main driver: device-side filter / 设备端滤波器参数 = -->
+  <!-- -1 = device default, skip override -->
+  <arg name="filter_confidence_threshold"    default="-1"/>  <!-- [0..255] -1=device default -->
+  <arg name="filter_adaptive_cdf_percentile" default="-1"/>  <!-- [1..10000] 0.01%, -1=device default -->
+  <arg name="filter_adaptive_outdoor_thr"    default="-1"/>  <!-- mm, -1=device default -->
+  <arg name="filter_range_min_depth"         default="-1"/>  <!-- mm, -1=device default -->
+
+  <!-- =============== Main driver: frame ids / 坐标系名 ================ -->
+  <arg name="raw_frame_id"        default="lidar"/>
+  <arg name="slam_frame_id"       default="odom"/>
+  <arg name="image_frame_id"      default="camera0"/>
+  <arg name="imu_frame_id"        default="imu"/>
+  <arg name="odom_frame_id"       default="odom"/>
+
+  <!-- =============== Main driver: runtime knobs / 运行期初值 =========== -->
+  <arg name="confidence_threshold" default="7"/>        <!-- 0..255 -->
+  <arg name="enable_row_filter"   default="false"/>     <!-- Enable row filter: zero out points below min_row / 启用行滤波 -->
+  <arg name="min_row"             default="0"/>          <!-- Min row index (0..191), points with row < min_row are zeroed / 最小行号 -->
+  <arg name="sensor_mode"          default="-1"/>        <!-- Lidar Mode: -1=Ignore 0=HDR 1=HighPeak 2=LowPeak 3=Adaptive -->
+  <arg name="log_level"            default="1"/>        <!-- 0=ERROR 1=INFO 2=WARN 3=DEBUG -->
+
+  <!-- =============== Main driver: channel enable (hot-switch) ======== -->
+  <arg name="enable_raw_point"  default="true"/>   <!-- Enable raw point cloud channel (hot-switch) / 启用原始点云通道 -->
+  <arg name="enable_slam_point" default="true"/>   <!-- Enable SLAM point cloud channel (hot-switch) / 启用 SLAM 点云通道 -->
+  <arg name="enable_image0"     default="true"/>   <!-- Enable camera0 image channel (hot-switch) / 启用相机0图像通道 -->
+  <arg name="enable_image1"     default="false"/>  <!-- Unsupported on the single-camera L0 driver -->
+  <arg name="enable_imu"        default="true"/>   <!-- Enable IMU data channel (hot-switch) / 启用 IMU 数据通道 -->
+  <arg name="enable_odom_lf"    default="true"/>   <!-- Enable low-frequency odometry channel (hot-switch) / 启用低频里程计通道 -->
+  <arg name="enable_odom_hf"    default="true"/>   <!-- Enable high-frequency odometry channel (hot-switch) / 启用高频里程计通道 -->
+  <arg name="enable_tf"         default="true"/>   <!-- Enable TF transform channel (hot-switch) / 启用 TF 变换通道 -->
+
+  <!-- =============== post_process_node: post-processing flags ========= -->
+  <arg name="post_process"       default="true"/>   <!-- Enable post-processing node (static) / 启用后处理节点 -->
+  <arg name="send_image_raw"    default="true"/>   <!-- Publish raw camera0 image (hot-switch) / 发布原始相机0图像 -->
+  <arg name="send_image2_raw"   default="false"/>  <!-- Unsupported on the single-camera L0 driver -->
+  <arg name="send_cloud_render" default="false"/>  <!-- Publish cloud-rendered image (hot-switch) / 发布点云渲染图像 -->
+  <arg name="send_undistort"    default="false"/>  <!-- Publish undistorted images (hot-switch) / 发布去畸变图像 -->
+  <arg name="send_rectify"      default="false"/>  <!-- Unsupported on the single-camera L0 driver -->
+
+  <!-- =============== opencv_undistort_node ============================ -->
+  <arg name="send_opencv_undistort" default="false"/>  <!-- Enable opencv_undistort_node (hot-switch, managed by post_process_node) / 启用 OpenCV 去畸变节点（热切换，由 post_process_node 管理） -->
+
+  <!-- =============== pointcloud_reprojector_node ====================== -->
+  <arg name="enable_reprojection" default="false"/>  <!-- Enable reprojector node (static) / 启用重投影节点 -->
+  <arg name="mode"            default="raw"/>            <!-- raw | slam -->
+  <arg name="min_depth"       default="0.1"/>
+  <arg name="max_depth"       default="50.0"/>
+  <arg name="point_size"      default="2"/>
+  <arg name="use_depth_color" default="true"/>
+  <arg name="sync_slop"       default="0.1"/>
+
+  <!-- =============== pointcloud_to_depth_node ========================= -->
+  <arg name="enable_pointcloud_to_depth" default="false"/>  <!-- Enable pointcloud_to_depth node (static) / 启用点云转深度图节点 -->
+  <arg name="scale"               default="7.0"/>
+  <arg name="z_min"               default="0.1"/>
+  <arg name="z_max"               default="50.0"/>
+  <arg name="dilate_radius"       default="1"/>
+  <arg name="use_z_buffer"        default="false"/>
+  <arg name="edge_grad_threshold" default="0.75"/>
+  <arg name="vis_depth_min"       default="0.1"/>
+  <arg name="vis_depth_max"       default="5.0"/>
+  <arg name="sync_slop_sec"       default="0.1"/>
+
+  <!-- Shared by reprojector + pointcloud_to_depth. Override per-node via
+       rosparam set /<node>/sync_queue_size <v> if needed.
+       重投影 + 点云转深度图共用，如需分别设置请走全路径。 -->
+  <arg name="sync_queue_size" default="10"/>
+
+  <!-- =============== depth_to_pointcloud_node ========================= -->
+  <arg name="enable_depth_to_pointcloud" default="false"/>  <!-- Enable depth_to_pointcloud node (static) / 启用深度图转点云节点 -->
+  <arg name="step"  default="4"/>
+  <arg name="d_min" default="0.1"/>
+  <arg name="d_max" default="100.0"/>
+
+  <!-- ===================================================================
+       Nodes / 节点
+       =================================================================== -->
+
+  <node pkg="$(arg packageName)" type="odin_ros_driver_node" name="odin_ros_driver" output="screen">
+    <param name="topic_prefix"                value="$(arg topic_prefix)"                type="str"/>
+    <param name="device_mode"              value="$(arg device_mode)"              type="str"/>
+    <param name="discovery_timeout_ms"        value="$(arg discovery_timeout_ms)"        type="int"/>
+
+    <param name="image_width"                 value="$(arg image_width)"                 type="int"/>
+    <param name="image_height"                value="$(arg image_height)"                type="int"/>
+    <param name="image_fps"                   value="$(arg image_fps)"                   type="int"/>
+    <param name="image_format"                value="$(arg image_format)"                type="str"/>
+
+    <param name="filter_confidence_threshold"    value="$(arg filter_confidence_threshold)"    type="int"/>
+    <param name="filter_adaptive_cdf_percentile" value="$(arg filter_adaptive_cdf_percentile)" type="int"/>
+    <param name="filter_adaptive_outdoor_thr"    value="$(arg filter_adaptive_outdoor_thr)"    type="int"/>
+    <param name="filter_range_min_depth"         value="$(arg filter_range_min_depth)"         type="int"/>
+
+    <param name="raw_frame_id"                value="$(arg raw_frame_id)"                type="str"/>
+    <param name="slam_frame_id"               value="$(arg slam_frame_id)"               type="str"/>
+    <param name="image_frame_id"              value="$(arg image_frame_id)"              type="str"/>
+    <param name="imu_frame_id"                value="$(arg imu_frame_id)"                type="str"/>
+    <param name="odom_frame_id"               value="$(arg odom_frame_id)"               type="str"/>
+
+    <param name="confidence_threshold"        value="$(arg confidence_threshold)"        type="int"/>
+    <param name="enable_row_filter"           value="$(arg enable_row_filter)"           type="bool"/>
+    <param name="min_row"                     value="$(arg min_row)"                     type="int"/>
+    <param name="sensor_mode"                 value="$(arg sensor_mode)"                 type="int"/>
+    <param name="log_level"                   value="$(arg log_level)"                   type="int"/>
+
+    <param name="enable_raw_point"             value="$(arg enable_raw_point)"             type="bool"/>
+    <param name="enable_slam_point"            value="$(arg enable_slam_point)"            type="bool"/>
+    <param name="enable_image0"                value="$(arg enable_image0)"                type="bool"/>
+    <param name="enable_image1"                value="$(arg enable_image1)"                type="bool"/>
+    <param name="enable_imu"                   value="$(arg enable_imu)"                   type="bool"/>
+    <param name="enable_odom_lf"               value="$(arg enable_odom_lf)"               type="bool"/>
+    <param name="enable_odom_hf"               value="$(arg enable_odom_hf)"               type="bool"/>
+    <param name="enable_tf"                    value="$(arg enable_tf)"                    type="bool"/>
+  </node>
+
+  <node pkg="$(arg packageName)" type="post_process_node" name="postprocess" output="screen">
+    <param name="topic_prefix"      value="$(arg topic_prefix)"      type="str"/>
+    <param name="post_process"      value="$(arg post_process)"      type="bool"/>
+    <param name="send_image_raw"    value="$(arg send_image_raw)"    type="bool"/>
+    <param name="send_image2_raw"   value="$(arg send_image2_raw)"   type="bool"/>
+    <param name="send_cloud_render" value="$(arg send_cloud_render)" type="bool"/>
+    <param name="send_undistort"    value="$(arg send_undistort)"    type="bool"/>
+    <param name="send_rectify"      value="$(arg send_rectify)"      type="bool"/>
+    <param name="send_opencv_undistort" value="$(arg send_opencv_undistort)" type="bool"/>
+  </node>
+
+  <!-- OpenCV undistortion node (always launched, hot-switch via send_opencv_undistort param). -->
+  <node pkg="$(arg packageName)" type="opencv_undistort_node"
+        name="opencv_undistort" output="screen">
+    <param name="topic_prefix"              value="$(arg topic_prefix)"              type="str"/>
+    <param name="send_opencv_undistort"     value="$(arg send_opencv_undistort)"     type="bool"/>
+  </node>
+
+  <!-- Point cloud reprojection node. -->
+  <node pkg="$(arg packageName)" type="pointcloud_reprojector_node"
+        name="pointcloud_reprojector" output="screen">
+    <param name="topic_prefix"          value="$(arg topic_prefix)"          type="str"/>
+    <param name="enable_reprojection"   value="$(arg enable_reprojection)"   type="bool"/>
+    <param name="mode"                  value="$(arg mode)"                  type="str"/>
+    <param name="min_depth"        value="$(arg min_depth)"        type="double"/>
+    <param name="max_depth"        value="$(arg max_depth)"        type="double"/>
+    <param name="point_size"       value="$(arg point_size)"       type="int"/>
+    <param name="use_depth_color"  value="$(arg use_depth_color)"  type="bool"/>
+    <param name="sync_queue_size"  value="$(arg sync_queue_size)"  type="int"/>
+    <param name="sync_slop"        value="$(arg sync_slop)"        type="double"/>
+  </node>
+
+  <!-- PointCloud -> depth map verification node. -->
+  <!-- Publishes /{prefix}/device{N}/pointcloud2depth/{depth,depth_color,depth_overlay}. -->
+  <node pkg="$(arg packageName)" type="pointcloud_to_depth_node"
+        name="pointcloud_to_depth" output="screen">
+    <param name="topic_prefix"                  value="$(arg topic_prefix)"                  type="str"/>
+    <param name="enable_pointcloud_to_depth"     value="$(arg enable_pointcloud_to_depth)"     type="bool"/>
+    <param name="scale"                          value="$(arg scale)"                          type="double"/>
+    <param name="z_min"               value="$(arg z_min)"               type="double"/>
+    <param name="z_max"               value="$(arg z_max)"               type="double"/>
+    <param name="dilate_radius"       value="$(arg dilate_radius)"       type="int"/>
+    <param name="use_z_buffer"        value="$(arg use_z_buffer)"        type="bool"/>
+    <param name="edge_grad_threshold" value="$(arg edge_grad_threshold)" type="double"/>
+    <param name="vis_depth_min"       value="$(arg vis_depth_min)"       type="double"/>
+    <param name="vis_depth_max"       value="$(arg vis_depth_max)"       type="double"/>
+    <param name="sync_queue_size"     value="$(arg sync_queue_size)"     type="int"/>
+    <param name="sync_slop_sec"       value="$(arg sync_slop_sec)"       type="double"/>
+  </node>
+
+  <!-- Depth -> dense XYZRGB cloud back-projection node. -->
+  <!-- Publishes /{prefix}/device{N}/depth2cloud/cloud_color. -->
+  <node pkg="$(arg packageName)" type="depth_to_pointcloud_node"
+        name="depth_to_pointcloud" output="screen">
+    <param name="topic_prefix"                value="$(arg topic_prefix)"                type="str"/>
+    <param name="enable_depth_to_pointcloud"   value="$(arg enable_depth_to_pointcloud)"   type="bool"/>
+    <param name="step"                         value="$(arg step)"                         type="int"/>
+    <param name="d_min"        value="$(arg d_min)"        type="double"/>
+    <param name="d_max"        value="$(arg d_max)"        type="double"/>
+  </node>
+
+  <group if="$(arg start_rviz)">
+    <node pkg="rviz" type="rviz" name="odin_rviz"
+          args="-d $(arg rviz_config)" output="screen"/>
+  </group>
+</launch>

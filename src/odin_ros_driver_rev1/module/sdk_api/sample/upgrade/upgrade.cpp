@@ -14,9 +14,12 @@
 #include "logger.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,12 +37,19 @@ static void signal_handler(int /*sig*/) {
 }
 
 static void install_signal_handlers() {
+#ifdef _WIN32
+  // No sigaction on Windows; signal() is enough for a sample tool (SIGTERM is
+  // defined but never raised by the OS, keeping the call is harmless).
+  signal(SIGINT, signal_handler);
+  signal(SIGTERM, signal_handler);
+#else
   struct sigaction sa {};
   sa.sa_handler = signal_handler;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   sigaction(SIGINT, &sa, nullptr);
   sigaction(SIGTERM, &sa, nullptr);
+#endif
 }
 
 // =============================================================================
@@ -102,7 +112,9 @@ void progress_callback(OdinDeviceHandle /*device*/, float progress, void* /*clie
 // =============================================================================
 
 int main(int argc, char **argv) {
+#ifndef _WIN32
   setvbuf(stdout, NULL, _IOLBF, 0);
+#endif
   log_config(LOG_LEVEL_INFO, printf);
   install_signal_handlers();
 
@@ -147,13 +159,33 @@ int main(int argc, char **argv) {
     target_device.network.ip_address = device_ip_arg;
     std::cout << "Using specified device IP: " << device_ip_arg << "\n";
   } else {
-    // Device discovery
-    std::cout << "Discovering devices (timeout: " << discovery_timeout_ms << "ms)...\n";
+    // Device discovery via hotplug listener
+    std::cout << "Discovering devices via hotplug listener (timeout: "
+              << discovery_timeout_ms << "ms)...\n";
+
     std::vector<DiscoveredDevice> devices;
-    if (!DiscoverDevices(devices, static_cast<uint32_t>(discovery_timeout_ms))) {
-      std::cerr << "Device discovery failed.\n";
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    HotplugCallbacks cbs;
+    cbs.on_attach = [&](const DiscoveredDevice& d) {
+      std::lock_guard<std::mutex> lock(mtx);
+      devices.push_back(d);
+      cv.notify_one();
+    };
+
+    if (!StartHotplugListener(cbs, true)) {
+      std::cerr << "Failed to start hotplug listener.\n";
       return 1;
     }
+
+    // Wait for at least one device or timeout
+    {
+      std::unique_lock<std::mutex> lock(mtx);
+      cv.wait_for(lock, std::chrono::milliseconds(discovery_timeout_ms),
+                  [&] { return !devices.empty(); });
+    }
+    StopHotplugListener();
 
     if (devices.empty()) {
       std::cerr << "No devices found.\n";
@@ -162,16 +194,19 @@ int main(int argc, char **argv) {
 
     std::cout << "Found " << devices.size() << " device(s):\n";
     for (size_t i = 0; i < devices.size(); ++i) {
-      std::cout << "  [" << i << "] " << devices[i].network.ip_address << " (SN: " << devices[i].sn << ")\n";
+      std::cout << "  [" << i << "] " << devices[i].network.ip_address
+                << " (SN: " << devices[i].sn << ")\n";
     }
 
     // Select target device
     if (devices.size() == 1) {
       target_device = devices[0];
     } else {
-      std::cout << "Multiple devices found. Enter index [0-" << devices.size() - 1 << "]: ";
+      std::cout << "Multiple devices found. Enter index [0-"
+                << devices.size() - 1 << "]: ";
       int idx = 0;
-      if (!(std::cin >> idx) || idx < 0 || idx >= static_cast<int>(devices.size())) {
+      if (!(std::cin >> idx) || idx < 0 ||
+          idx >= static_cast<int>(devices.size())) {
         std::cerr << "Invalid selection.\n";
         return 1;
       }
@@ -211,8 +246,12 @@ int main(int argc, char **argv) {
   
   OdinResult result = SendFileToDevice(handle, progress_callback, OdinFileType::kFirmware, firmware_path);
 
+  LOG_INFO("[upgrade] SendFileToDevice returned, result=%d\n", static_cast<int>(result));
+
   // Cleanup
+  LOG_INFO("[upgrade] calling DisconnectDevice...\n");
   DisconnectDevice(handle);
+  LOG_INFO("[upgrade] DisconnectDevice done\n");
   g_active_handle = kInvalidDeviceHandle;
 
   // Result

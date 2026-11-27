@@ -46,7 +46,6 @@ struct LeggedDeployParams {
   bool set_realtime_priority = false;
   std::string thread_scheduling_method = "SCHED_OTHER";
   int thread_priority = 0;
-  bool skip_infer_on_overrun = true;
 };
 
 // Base robot state used by different versions
@@ -113,7 +112,6 @@ struct RobotOutputBase {
 template <int DefaultObs = 1, int DefaultStack = 1>
 struct ObservationsGeneric {
   Eigen::VectorXd observations;
-  Eigen::MatrixXd input;
   std::deque<Eigen::VectorXd> hist_obs;
   std::vector<int> frame_indices;
   int history_length = 0;
@@ -140,7 +138,6 @@ struct ObservationsGeneric {
  private:
   void initialize(int num_single_obs, const std::vector<int>& frame_stack_indices) {
     observations = Eigen::VectorXd();
-    input = Eigen::MatrixXd();
     hist_obs.clear();
     frame_indices = frame_stack_indices;
     history_length = 0;
@@ -168,7 +165,6 @@ struct ObservationsGeneric {
 
     if (!frame_indices.empty())
     {
-      input = Eigen::MatrixXd::Zero(1, num_single_obs * static_cast<int>(frame_indices.size()));
       input_flat.resize(num_single_obs * frame_indices.size());
     }
   }

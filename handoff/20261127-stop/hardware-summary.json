@@ -1,0 +1,14 @@
+{
+  "date": "2026-11-27",
+  "decoder_version": "l0-stop-decoder-v2000-20261127",
+  "wbc_bundle": "wbc_base_sonic800_73983_20261124",
+  "amp_policy": "l0_v5_amp_1124",
+  "soft_stop_requests": 36,
+  "accepted_references": 36,
+  "reference_last_frame_events": 36,
+  "planning_fallbacks": 0,
+  "accepted_frame_count_range": [46, 228],
+  "request_to_reference_admission_ms_range": [19.0, 19.36],
+  "operator_report": "所测动作全部回正，无摔倒",
+  "counter_scope": "板端 WBC 日志统计参考生成与执行，真机回正与稳定结果来自操作者实测"
+}

@@ -1,0 +1,1 @@
+../convert_onnx_to_rknn_rk3588_wbc_policy.py

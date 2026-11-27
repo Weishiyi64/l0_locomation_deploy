@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Copyright (c) 2026 HPMicro; SPDX-License-Identifier: BSD-3-Clause -->
+<package format="3">
+  <name>hpm_ultrasonic</name>
+  <version>1.1.0</version>
+  <description>FD07-3 raw UART frame parser and ROS2 Range publisher library.</description>
+  <maintainer email="user@todo.todo">user</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>hpm_transport</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

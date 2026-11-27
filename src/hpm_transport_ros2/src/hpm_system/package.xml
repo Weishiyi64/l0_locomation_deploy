@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>hpm_system</name>
+  <version>1.1.0</version>
+  <description>Unified ROS2 node for the HPM board transport and device libraries.</description>
+  <maintainer email="user@todo.todo">user</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>ament_index_cpp</depend>
+  <depend>hpm_transport</depend>
+  <depend>hpm_imu</depend>
+  <depend>hpm_ultrasonic</depend>
+  <depend>hpm_motor</depend>
+  <depend>hpm_tactile</depend>
+  <depend>hpm_battery</depend>
+  <depend>hpm_display</depend>
+  <depend>rclcpp</depend>
+  <depend>luvbot_hardware_interfaces</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>util-linux</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_cmake_test</test_depend>
+  <test_depend>rcl</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>std_msgs</test_depend>
+  <test_depend>std_srvs</test_depend>
+  <test_depend>ros2cli</test_depend>
+  <test_depend>ros2launch</test_depend>
+  <test_depend>ros2service</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

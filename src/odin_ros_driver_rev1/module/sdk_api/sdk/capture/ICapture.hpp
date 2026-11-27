@@ -3,10 +3,15 @@
 #include <cstdint>
 #include <functional>
 
-// Forward declaration
+// Forward declaration. Must use the same class-key (struct) as the definition
+// in transport/ITransport/ITransport.hpp: MSVC encodes the class-key of the
+// FIRST declaration into decorated names, so a mismatch here makes the same
+// virtual function resolve to two different symbols (LNK2001) at DLL link
+// time. GCC/Clang do not distinguish struct/class, which is why this only
+// shows up on Windows.
 namespace odin {
 namespace sdk {
-class ITransportAddress;
+struct ITransportAddress;
 }
 }  // namespace odin
 

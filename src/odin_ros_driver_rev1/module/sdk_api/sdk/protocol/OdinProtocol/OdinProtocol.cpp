@@ -1,4 +1,6 @@
 #include "OdinProtocol.hpp"
+#include "logger.h"
+#include <cstdio>
 #include <cstring>
 
 namespace odin {
@@ -11,10 +13,11 @@ bool OdinProtocolV1::Pack(const IPacket& packet, std::vector<uint8_t>& output) {
   output.resize(total_size);
   uint8_t* buf = output.data();
 
-  // Build header
+  // Build header. Version: explicit packet epoch wins; unset (0) speaks
+  // this instance's negotiated dialect (see CreateOdinProtocol).
   buf[0] = OdinConst::kSof;
   buf[1] = static_cast<uint8_t>(packet.GetAttribute(PacketAttr::kVersion));
-  if (buf[1] == 0) buf[1] = OdinConst::kVersion;
+  if (buf[1] == 0) buf[1] = version_;
 
   // Length = total frame size (header + payload), little-endian
   buf[2] = static_cast<uint8_t>(total_size & 0xFF);
@@ -115,8 +118,6 @@ int OdinProtocolV1::Parse(const uint8_t* buffer, size_t length, std::unique_ptr<
   odin_pkt->SetAttribute(PacketAttr::kVersion, version);
   odin_pkt->SetAttribute(PacketAttr::kCmdType, cmd_type);
   odin_pkt->SetAttribute(PacketAttr::kSendType, send_type);
-  odin_pkt->SetAttribute(PacketAttr::kCrc16, header_crc16);
-  odin_pkt->SetAttribute(PacketAttr::kCrc32, header_crc32);
 
   if (payload_len > 0) {
     odin_pkt->SetPayload(buffer + OdinConst::kHeaderSize, payload_len);

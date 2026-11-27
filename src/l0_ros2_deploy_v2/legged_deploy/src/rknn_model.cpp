@@ -101,7 +101,7 @@ RknnModel::RknnModel(const std::string& model_path, InputMode mode) : input_mode
   file.seekg(0, std::ios::beg);
   if (!file.read(data.data(), size)) throw std::runtime_error("Failed to read RKNN model: " + model_path);
 
-  // These flags belong only to the persistent context. Copy-mode AMP/static/reference
+  // These flags belong only to the persistent context. Copy-mode AMP/navigation/reference
   // contexts retain the SDK's original cache and inputs_set/outputs_get behavior.
   const std::uint32_t flags = mode == InputMode::ResidentWbc ?
       RKNN_FLAG_DISABLE_FLUSH_INPUT_MEM_CACHE | RKNN_FLAG_DISABLE_FLUSH_OUTPUT_MEM_CACHE : 0;
@@ -154,6 +154,10 @@ RknnModel::~RknnModel() {
   releaseResident();
   if (context_ != 0) rknn_destroy(context_);
 }
+
+const rknn_tensor_attr& RknnModel::inputAttribute(std::size_t index) const { return input_attrs_.at(index); }
+
+const rknn_tensor_attr& RknnModel::outputAttribute(std::size_t index) const { return output_attrs_.at(index); }
 
 std::size_t RknnModel::inputCount() const { return input_attrs_.size(); }
 
@@ -602,13 +606,4 @@ int RknnModel::residentSlot() const {
 RknnModel::ResidentStats RknnModel::residentStats() const {
   std::lock_guard<std::mutex> lock(resident_mutex_);
   return resident_stats_;
-}
-
-std::string RknnModel::residentLayout() const {
-  std::ostringstream out;
-  for (std::size_t i = 0; i < resident_inputs_.size(); ++i)
-    out << "input logical " << describe(input_attrs_[i]) << "\ninput native " << describe(resident_inputs_[i].attr) << '\n';
-  for (std::size_t i = 0; i < resident_outputs_.size(); ++i)
-    out << "output logical " << describe(output_attrs_[i]) << "\noutput native " << describe(resident_outputs_[i].attr) << '\n';
-  return out.str();
 }

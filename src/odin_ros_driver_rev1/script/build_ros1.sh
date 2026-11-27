@@ -54,7 +54,9 @@ build_sdk_module() {
     echo "Build type:     ${build_type}"
     echo "========================================"
 
-    local sdk_build_dir="${sdk_dir}/build"
+    # Keep SDK build artefacts inside the ROS workspace build area (next to the
+    # colcon/catkin outputs) instead of polluting the sdk_api source tree.
+    local sdk_build_dir="${WORKSPACE_DIR}/build/odin_sdk"
 
     cmake -S "${sdk_dir}" -B "${sdk_build_dir}" \
         -DCMAKE_BUILD_TYPE="${build_type}" \
@@ -81,6 +83,26 @@ detect_build_type() {
         esac
     done
     echo "${fallback}"
+}
+
+# Cap build parallelism so peak compiler memory stays bounded.
+# Several nodes in this package (post_process_node and the other PCL / OpenCV /
+# roscpp translation units) need more than 1.5 GB of compiler RSS each, so the
+# default "one job per core" can exhaust RAM on 8 GB boards such as Jetson and
+# push the whole desktop into swap. Budget ~2 GB per job, leave 2 GB for the
+# rest of the system, and never exceed the core count.
+default_build_jobs() {
+    local cpus mem_gb jobs
+    cpus="$(nproc)"
+    mem_gb=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / 1024 / 1024 ))
+    jobs=$(( (mem_gb - 2) / 2 ))
+    if (( jobs < 1 )); then
+        jobs=1
+    fi
+    if (( jobs > cpus )); then
+        jobs="${cpus}"
+    fi
+    echo "${jobs}"
 }
 
 ensure_sdk() {
@@ -149,6 +171,17 @@ if ! command -v catkin_make >/dev/null 2>&1; then
 fi
 
 export ROS_VERSION=1
+
+# catkin_make appends its own -j/-l only when neither the forwarded make args
+# nor MAKEFLAGS carry them (see handle_make_arguments in catkin/builder.py), so
+# exporting MAKEFLAGS here is enough to cap the driver build. Set
+# ODIN_BUILD_JOBS=<n> to choose the job count, or export MAKEFLAGS yourself to
+# take full control.
+if [[ -z "${MAKEFLAGS:-}" ]]; then
+    ODIN_BUILD_JOBS="${ODIN_BUILD_JOBS:-$(default_build_jobs)}"
+    export MAKEFLAGS="-j${ODIN_BUILD_JOBS} -l$(( ODIN_BUILD_JOBS + 1 ))"
+    echo "Build parallelism: MAKEFLAGS=${MAKEFLAGS} (override with ODIN_BUILD_JOBS=<n>)"
+fi
 
 # Build with all outputs inside WORKSPACE_DIR
 cd "${WORKSPACE_DIR}"

@@ -1,0 +1,32 @@
+RobotCfg:
+  policy_type: "rl"
+  policy_output_name: "actions"
+  policy_name: "policy"
+
+  joint_order_isaac: ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_elbow_roll_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_elbow_roll_joint', 'neck_yaw_joint', 'neck_pitch_joint', 'neck_roll_joint']
+  joint_order_mj: ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_elbow_roll_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_elbow_roll_joint', 'neck_yaw_joint', 'neck_pitch_joint', 'neck_roll_joint']
+  default_joint_angles: [-0.6000, 0.0000, 0.0000, 1.0000, -0.4000, 0.0000, -0.6000, 0.0000, 0.0000, 1.0000, -0.4000, 0.0000, 0.0000, -0.9250, 0.2980, 0.0000, 0.9250, -0.2980, 0.0000, 0.0000, 0.0000]
+  kps: [11.8435, 11.8435, 11.8435, 11.8435, 21.4763, 5.4490, 11.8435, 11.8435, 11.8435, 11.8435, 21.4763, 5.4490, 5.0000, 5.0000, 5.0000, 5.0000, 5.0000, 5.0000, 5.0000, 5.0000, 5.0000]
+  kds: [1.5080, 1.5080, 1.5080, 1.5080, 2.7344, 0.6938, 1.5080, 1.5080, 1.5080, 1.5080, 2.7344, 0.6938, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 0.0400, 1.0000, 1.0000, 1.0000]
+  action_scale: [0.7599, 0.5172, 0.2611, 0.7599, 0.2852, 1.0094, 0.7599, 0.5172, 0.2611, 0.7599, 0.2852, 1.0094, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000]
+  policy_frequency: 50
+  lowlevel_frequency: 500
+
+  num_actions: 21
+  num_single_obs: 72
+  frame_stack: 5
+
+  clip_obs: 25000.0
+  clip_actions: 10000.0
+
+  # Observation configuration for automatic assembly
+  observation_config:
+    items:
+      - {type: "base_ang_vel",    dim: 3,   scale: 1.0}
+      - {type: "gravity_proj",    dim: 3,   scale: 1.0}
+      - {type: "lin_vel_cmd",     dim: 1,   scale: 1.0}
+      - {type: "lat_vel_cmd",     dim: 1,   scale: 1.0}
+      - {type: "ang_vel_cmd",     dim: 1,   scale: 1.0}
+      - {type: "joint_pos",       dim: 21,  scale: 1.0}
+      - {type: "joint_vel",       dim: 21,  scale: 1.0}
+      - {type: "last_actions",    dim: 21,  scale: 1.0}

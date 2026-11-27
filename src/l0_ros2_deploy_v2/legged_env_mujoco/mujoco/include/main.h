@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
-#include <system_command_arbiter/motor_mapping.hpp>
+#include <motor_mapping.hpp>
 #include <vector>
 
 // Forward declarations
@@ -27,15 +27,24 @@ struct SimJointCommand {
   double kd{};
 };
 
+struct SimJointAddress {
+  int actuator{-1};
+  int qpos{-1};
+  int dof{-1};
+};
+
+// Indexed by deployment mapping; MuJoCo joint/actuator ordering may differ.
+extern std::vector<SimJointAddress> simJointAddresses;
 extern std::vector<SimJointCommand> recvCmd;
 extern std::vector<bool> motorEnabled;
+extern std::vector<bool> motorCommandFault;
 extern std::unique_ptr<system_command_arbiter::MotorMapping> motorMapping;
-extern int64_t commandValidUntilNs;
 extern int64_t commandReceivedSteadyNs;
 extern int64_t watchdogNs;
-extern uint64_t lastSequenceId;
+extern uint32_t lastSequenceId;
 extern bool commandReceived;
-extern uint64_t stateSequenceId;
+extern bool commandWatchdogArmed;
+extern uint32_t stateSequenceId;
 extern pthread_mutex_t recvMutex_;
 extern pthread_mutex_t sendMutex_;
 

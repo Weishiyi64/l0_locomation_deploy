@@ -21,95 +21,55 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 _launch_dir = os.path.dirname(os.path.abspath(__file__))
 if _launch_dir not in sys.path:
     sys.path.insert(0, _launch_dir)
 
-from action_sequence_policy import collect_action_sequence_manifest  # noqa: E402
+from imitation_assets import load_imitation_assets  # noqa: E402
+from motion_assets import load_motion_assets  # noqa: E402
 
 
 def _launch_setup(context, *args, **kwargs):
     cfg = context.launch_configurations
-    share_leg = get_package_share_directory('legged_controllers')
     legged_deploy_share = get_package_share_directory('legged_deploy')
     policy_root_path = os.path.join(legged_deploy_share, 'policy')
     wbc_enabled = cfg['wbc_enabled'].lower() == 'true'
+    fixed_frontend_enabled = cfg['wbc_frontend_enabled'].lower() == 'true'
+    text_frontend_enabled = cfg['txt2motion_enabled'].lower() == 'true'
+    if (fixed_frontend_enabled or text_frontend_enabled) and not wbc_enabled:
+        raise RuntimeError('Motion frontends require the shared backend')
     wbc_policies = []
-    wbc_mode = cfg.get('wbc_mode', 'static')
     wbc_manifest = ''
-    if wbc_mode not in ('static', 'lora', 'base'):
-        raise RuntimeError('wbc_mode must be static, lora or base')
+    motion_assets = None
     if wbc_enabled:
-        try:
-            wbc_policies = yaml.safe_load(cfg['wbc_policies'])
-        except yaml.YAMLError as error:
-            raise RuntimeError(f'Invalid wbc_policies YAML list: {error}') from error
-        if not isinstance(wbc_policies, list) or not wbc_policies:
-            raise RuntimeError('WBC requires a non-empty wbc_policies YAML list from sim2real/sim2mujoco.')
-        if any(not isinstance(policy, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', policy)
-               for policy in wbc_policies):
-            raise RuntimeError('wbc_policies must contain policy directory names, without path components.')
-        if len(set(wbc_policies)) != len(wbc_policies):
-            raise RuntimeError('wbc_policies contains duplicate policy directories.')
-        if wbc_mode == 'static':
-            for policy in wbc_policies:
-                for filename in ('policy.rknn', 'reference_motion.rknn', 'rl_config.yaml'):
-                    path = os.path.join(policy_root_path, cfg['robot_type'], policy, filename)
-                    if not os.path.isfile(path):
-                        raise RuntimeError(f'WBC deployment asset missing: {path}')
-            wbc_robot_cfg = os.path.join(policy_root_path, cfg['robot_type'], wbc_policies[0], 'rl_config.yaml')
-        else:
-            bundle_name = cfg['wbc_lora_bundle']
-            if not re.fullmatch(r'[A-Za-z0-9_-]+', bundle_name):
-                raise RuntimeError('wbc_lora_bundle must be a directory name under the robot policy root')
-            root = Path(policy_root_path) / cfg['robot_type'] / bundle_name
-            root = root.resolve(strict=True)
-
-            def asset(relative):
-                if not isinstance(relative, str) or Path(relative).is_absolute():
-                    raise RuntimeError('WBC manifest paths must be relative')
-                path = (root / relative).resolve(strict=True)
-                if not path.is_relative_to(root) or not path.is_file():
-                    raise RuntimeError(f'Invalid WBC bundle asset: {relative}')
-                return str(path)
-
-            wbc_manifest = asset('base_manifest.json')
-            with open(wbc_manifest, encoding='utf-8') as stream:
-                graph = json.load(stream)
-            expected_format = 'wbc_base_graph_v1' if wbc_mode == 'base' else 'wbc_lora_graph_v1'
-            if graph.get('format') != expected_format or graph.get('kind') != 'policy':
-                raise RuntimeError(f'Expected {expected_format}; AMP is configured separately')
-            asset(graph['model']['rknn'])
-            asset(graph['model']['rknn'] + '.json')
-            catalog = {item['action_id']: item for item in graph['actions']}
-            if len(catalog) != len(graph['actions']):
-                raise RuntimeError('Duplicate WBC action IDs')
-            for action in wbc_policies:
-                if action not in catalog:
-                    raise RuntimeError(f'WBC action is not in manifest: {action}')
-                item = catalog[action]
-                keys = ('config', 'reference_rknn') if wbc_mode == 'base' else ('config', 'reference_rknn', 'adapter_manifest')
-                for key in keys:
-                    asset(item[key])
-                asset(item['reference_rknn'] + '.json')
-            wbc_robot_cfg = asset(catalog[wbc_policies[0]]['config'])
+        bundle_name = cfg['wbc_lora_bundle'] or 'wbc_lora_fp16'
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', bundle_name):
+            raise RuntimeError('motion bundle must be a directory under the robot policy root')
+        bundle = Path(policy_root_path) / cfg['robot_type'] / bundle_name
+        wbc_manifest = str(bundle / ('deployment.json' if text_frontend_enabled else 'base_manifest.json'))
+        motion_assets = load_motion_assets(wbc_manifest)
+        if text_frontend_enabled and motion_assets['tracker'] is None:
+            raise RuntimeError('txt2motion_enabled requires a deployment.json with text tracking parameters')
+        wbc_robot_cfg = str((motion_assets['tracker'] or next(iter(motion_assets['actions'].values())))['config_path'])
+        wbc_policies = yaml.safe_load(cfg['wbc_policies'])
+        if not isinstance(wbc_policies, list) or any(not isinstance(p, str) or p not in motion_assets['actions'] for p in wbc_policies):
+            raise RuntimeError('wbc_policies must be a list of IDs from the motion catalog (empty means all)')
+        if len(wbc_policies) != len(set(wbc_policies)):
+            raise RuntimeError('Duplicate WBC policy selection')
     try:
-        action_manifest = collect_action_sequence_manifest(
-            package_share_legged_controllers=share_leg,
-            joystick_imitation_enabled=cfg.get('joystick_imitation_enabled', 'false').lower() == 'true',
-            joystick_imitation_config_path=cfg.get('joystick_imitation_config_path', ''),
-            joystick_sequence_enabled=cfg.get('joystick_sequence_enabled', 'false').lower() == 'true',
-            joystick_sequence_config_path=cfg.get('joystick_sequence_config_path', ''),
+        imitation_assets = load_imitation_assets(
+            imitation_policies=yaml.safe_load(cfg['imitation_policies']),
             robot_type=cfg.get('robot_type', ''),
             policy_root_path=policy_root_path,
         )
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, yaml.YAMLError) as e:
         raise RuntimeError(f'[one_start.launch.py] {e}') from e
-    imitation_policies = action_manifest.imitation_policies
-    preload_imitation_policies = action_manifest.preload_imitation_policies
-    skipped_imitation_policies = action_manifest.skipped_imitation_policies
+    imitation_policies = imitation_assets.imitation_policies
+    preload_imitation_policies = imitation_assets.preload_imitation_policies
+    skipped_imitation_policies = imitation_assets.skipped_imitation_policies
 
     robot_type_value = cfg.get('robot_type', '')
     radar_enabled = cfg.get('radar_control_enabled', 'false').lower() == 'true'
@@ -125,24 +85,10 @@ def _launch_setup(context, *args, **kwargs):
     rviz = LaunchConfiguration('rviz')
     bag_enabled = LaunchConfiguration('bag_enabled')
     bag_dir = LaunchConfiguration('bag_dir')
-    bag_name = LaunchConfiguration('bag_name')
     bag_prefix = LaunchConfiguration('bag_prefix')
     bag_topics = LaunchConfiguration('bag_topics')
     radar_control_enabled = LaunchConfiguration('radar_control_enabled')
     nav_planner_model_path = LaunchConfiguration('nav_planner_model_path')
-    planner_depth_input_enabled = LaunchConfiguration('planner_depth_input_enabled')
-    raw_depth_preview_enabled = LaunchConfiguration('raw_depth_preview_enabled')
-    depth_pipeline_enabled = (
-        cfg.get('planner_depth_input_enabled', 'false').lower() == 'true'
-        or cfg.get('raw_depth_preview_enabled', 'false').lower() == 'true'
-    )
-    odin_control_config = PathJoinSubstitution(
-        [
-            FindPackageShare('odin_ros_driver_rev1'),
-            'config',
-            'control_command.yaml' if depth_pipeline_enabled else 'control_command_odom_only.yaml',
-        ]
-    )
 
     rviz_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -177,7 +123,7 @@ def _launch_setup(context, *args, **kwargs):
     if wbc_enabled:
         wbc_actions.extend(
             [
-                LogInfo(msg=f"[one_start] WBC mode={wbc_mode}, actions={wbc_policies}, manifest={wbc_manifest}"),
+                LogInfo(msg=f"[one_start] Starting one shared motion Base; fixed selection: {wbc_policies or 'all'}"),
                 Node(
                     package='legged_deploy',
                     executable='rl_controller',
@@ -186,11 +132,14 @@ def _launch_setup(context, *args, **kwargs):
                     parameters=[
                         {'robot_type': cfg['robot_type']},
                         {'robot_cfg_path': wbc_robot_cfg},
-                        {'wbc_mode': wbc_mode},
                         {'wbc_lora_manifest': wbc_manifest},
+                        {'wbc_json_base_action': motion_assets['tracker']['action_id'] if motion_assets['tracker'] else ''},
+                        {'standing_config': str(motion_assets['standing_path']) if motion_assets['standing_path'] else ''},
+                        {'mapping_file': os.path.join(get_package_share_directory('system_command_arbiter'),
+                                                     'config', cfg['robot_type'] + '.yaml')},
                         {'subpolicy': ''},
                         {'policy_root_path': policy_root_path},
-                        {'available_wbc_policies': wbc_policies},
+                        {'available_wbc_policies': wbc_policies or list(motion_assets['actions'])},
                         {'policy_type': 'rl_wbc'},
                         {
                             'rl_controller_config_path': os.path.join(
@@ -202,19 +151,29 @@ def _launch_setup(context, *args, **kwargs):
             ]
         )
 
-    # radar_driver_launch = IncludeLaunchDescription(
-    #     PythonLaunchDescriptionSource(
-    #         PathJoinSubstitution([FindPackageShare('odin_ros_driver_rev1'), 'launch', 'driver.launch.py'])
-    #     ),
-    #     condition=IfCondition(radar_control_enabled),
-    #     launch_arguments={
-    #         'start_rviz': 'false',
-    #         'start_auxiliary_nodes': 'true' if depth_pipeline_enabled else 'false',
-    #         'control_config_path': odin_control_config,
-    #         'publish_tf_map': 'false',
-    #         'raw_depth_preview_enabled': raw_depth_preview_enabled,
-    #     }.items(),
-    # )
+    if wbc_enabled:
+        wbc_actions.append(Node(
+            package='legged_controllers', executable='motion_runtime', name='motion_backend',
+            arguments=['--role', 'backend'], output='screen',
+            parameters=[{'deployment': wbc_manifest},
+                        {'fixed_actions_json': ParameterValue(json.dumps(wbc_policies), value_type=str)},
+                        {'mapping': os.path.join(get_package_share_directory('system_command_arbiter'), 'config', cfg['robot_type'] + '.yaml')},
+                        {'generation_timeout_sec': 3.0}],
+        ))
+
+    for enabled, role in ((fixed_frontend_enabled, 'wbc'), (text_frontend_enabled, 'txt2motion')):
+        if enabled:
+            frontend_parameters = [{'deployment': wbc_manifest}]
+            if role == 'txt2motion':
+                frontend_parameters.extend([
+                    {'mapping': os.path.join(get_package_share_directory('system_command_arbiter'),
+                                             'config', cfg['robot_type'] + '.yaml')},
+                    {'model_root': os.path.join(policy_root_path, cfg['robot_type'], 'txt2motion')},
+                ])
+            wbc_actions.append(Node(
+                package='legged_controllers', executable='motion_runtime', name=role + '_frontend',
+                arguments=['--role', role], output='screen', parameters=frontend_parameters,
+            ))
 
     radar_planner_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -222,9 +181,10 @@ def _launch_setup(context, *args, **kwargs):
         ),
         condition=IfCondition(radar_control_enabled),
         launch_arguments={
+            'robot_type': robot_type,
             'planner_model_path': nav_planner_model_path,
-            'planner_depth_input_enabled': planner_depth_input_enabled,
-            'raw_depth_preview_enabled': raw_depth_preview_enabled,
+            'nav_check_sensor_timestamps': LaunchConfiguration('nav_check_sensor_timestamps'),
+            'nav_reference_receive_timeout': LaunchConfiguration('nav_reference_receive_timeout'),
         }.items(),
     )
 
@@ -270,14 +230,7 @@ def _launch_setup(context, *args, **kwargs):
             )
         )
     else:
-        dynamic_imitation_actions.append(
-            LogInfo(
-                msg=(
-                    '[one_start] No enabled joystick rl_imitation action '
-                    f'({len(action_manifest.sequence_paths)} action sequence file(s) validated).'
-                )
-            )
-        )
+        dynamic_imitation_actions.append(LogInfo(msg='[one_start] No imitation policies selected.'))
 
     bag_record = GroupAction(
         condition=IfCondition(bag_enabled),
@@ -292,7 +245,7 @@ def _launch_setup(context, *args, **kwargs):
                             bag_dir,
                             " && cd ",
                             bag_dir,
-                            " && ros2 bag record -o ",
+                            " && ros2 bag record --include-hidden-topics -o ",
                             bag_prefix,
                             " ",
                             bag_topics,
@@ -305,19 +258,9 @@ def _launch_setup(context, *args, **kwargs):
         ],
     )
 
-    manifest_log = LogInfo(
-        msg=(
-            '[one_start] Validated '
-            f'{len(action_manifest.sequence_paths)} action sequence file(s); '
-            f'{len(action_manifest.rl_imitation_sequences)} use rl_imitation.'
-        )
-    )
-
     return [
-        manifest_log,
         rviz_launch,
         joy_launch,
-    #    radar_driver_launch,
         radar_planner_launch,
         rl_launch,
         *wbc_actions,
@@ -345,27 +288,25 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'bag_topics',
             default_value=(
-                '/tf /tf_static /clock /joint_states /imu/data /actuator/motor/state '
+                '/tf /tf_static /clock /system/joint/jointstates /imu/data /actuator/motor/state '
                 '/system/motion_controller/imu_rpy control/policy/observation '
                 'control/policy/command/rl control/policy/command/imitation '
-                'control/policy/imitation/active /control/policy/command/wbc /control/policy/wbc/active /control/policy/wbc/done /algorithm/brain/wbc_action_cmd /system/state_machine/wbc_action_fdb '
+                'control/policy/imitation/active /control/policy/command/wbc /control/policy/wbc/active /control/policy/wbc/execution_active /control/policy/wbc/done /control/motion/status /algorithm/brain/wbc_action_cmd /algorithm/brain/txt2motion_cmd /system/state_machine/wbc_action_fdb '
                 '/audio_play_cmd /battery/status /imitationref_joint_states '
-                '/navigation_goal /goal_pose /planner_input control/cmd_vel'
+                '/control/navigation/follow_path/_action/feedback /control/navigation/follow_path/_action/status '
+                '/planner_input /local_planner/stop_reason control/cmd_vel'
             ),
         ),
-        DeclareLaunchArgument('head_script_enabled', default_value='false'),
-        DeclareLaunchArgument('head_script_config', default_value=''),
-        DeclareLaunchArgument('joystick_imitation_enabled', default_value='false'),
-        DeclareLaunchArgument('joystick_imitation_config_path', default_value=''),
-        DeclareLaunchArgument('joystick_sequence_enabled', default_value='false'),
-        DeclareLaunchArgument('joystick_sequence_config_path', default_value=''),
+        DeclareLaunchArgument('imitation_policies', default_value='[]',
+                              description='Policies to preload; no joystick action trigger'),
         DeclareLaunchArgument('wbc_enabled', default_value='false'),
+        DeclareLaunchArgument('wbc_frontend_enabled', default_value='false'),
+        DeclareLaunchArgument('txt2motion_enabled', default_value='false'),
         DeclareLaunchArgument('wbc_policies', default_value='[]'),
-        DeclareLaunchArgument('wbc_mode', default_value='static'),
-        DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora'),
+        DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora_fp16'),
         DeclareLaunchArgument('radar_control_enabled', default_value='false'),
-        DeclareLaunchArgument('planner_depth_input_enabled', default_value='false'),
-        DeclareLaunchArgument('raw_depth_preview_enabled', default_value='false'),
+        DeclareLaunchArgument('nav_check_sensor_timestamps', default_value='true'),
+        DeclareLaunchArgument('nav_reference_receive_timeout', default_value='false'),
         DeclareLaunchArgument(
             'nav_planner_model_path',
             default_value=PathJoinSubstitution(
@@ -374,7 +315,7 @@ def generate_launch_description():
                     'policy',
                     robot_type,
                     'local_planner',
-                    'planner_09090.onnx',
+                    'model_1600_dense.onnx',
                 ]
             ),
         ),

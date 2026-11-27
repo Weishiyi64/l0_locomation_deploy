@@ -1,0 +1,5 @@
+string keyword
+---
+# 0 = success; nonzero = voice error code (meanings to be defined).
+uint8 result
+string evaluation

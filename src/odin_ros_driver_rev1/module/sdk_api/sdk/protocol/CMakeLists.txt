@@ -1,13 +1,16 @@
-# Protocol static library + OBJECT library
-# 协议静态库 - 同时生成 .a 文件供保留，以及 OBJECT 用于合并到 SDK
+# Protocol OBJECT library - merged into odin_sdk.
+#
+# Note: previous revisions also produced a duplicate `odin_protocol` STATIC
+# library built from the same sources, which doubled compile time without any
+# downstream consumer. Removed to keep the build minimal.
 
 set(PROTOCOL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/OdinProtocol/OdinProtocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/OdinProtocol/OdinFrameAssembler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/FastCRC/FastCRChw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/FastCRC/FastCRCsw.cpp
 )
 
-# OBJECT library: for merging into odin_sdk
 add_library(odin_protocol_obj OBJECT ${PROTOCOL_SOURCES})
 
 target_include_directories(odin_protocol_obj
@@ -15,18 +18,10 @@ target_include_directories(odin_protocol_obj
         ${CMAKE_CURRENT_SOURCE_DIR}/IProtocol
         ${CMAKE_CURRENT_SOURCE_DIR}/OdinProtocol
         ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../include/logger
 )
 
 set_target_properties(odin_protocol_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-)
-
-# Static library: for internal use/archival (可保留的独立库)
-add_library(odin_protocol STATIC $<TARGET_OBJECTS:odin_protocol_obj>)
-
-target_include_directories(odin_protocol
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/IProtocol
-        ${CMAKE_CURRENT_SOURCE_DIR}/OdinProtocol
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty
 )

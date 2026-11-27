@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include "logger.h"
 
-unsigned int logger_level = LOG_LEVEL_WARN;
-log_func g_logPrint;
+ODIN_LOGGER_EXPORT unsigned int logger_level = LOG_LEVEL_WARN;
+ODIN_LOGGER_EXPORT log_func g_logPrint;
 
 int log_config(unsigned int level, log_func func) {
   char *envLogLevel = NULL;
@@ -30,11 +30,11 @@ int log_config(unsigned int level, log_func func) {
   return 0;
 }
 
-void cost_start(cost_handle_t *h) { clock_gettime(CLOCK_MONOTONIC, &h->start); }
+void cost_start(cost_handle_t *h) { ODIN_CLOCK_MONOTONIC(&h->start); }
 
 void cost_end(cost_handle_t *h) {
   struct timespec end;
-  clock_gettime(CLOCK_MONOTONIC, &end);
+  ODIN_CLOCK_MONOTONIC(&end);
 
   uint64_t duration_ns =
       (end.tv_sec - h->start.tv_sec) * 1000000000ULL + (end.tv_nsec - h->start.tv_nsec);

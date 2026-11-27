@@ -98,7 +98,7 @@ int runWbcIoProbe(int argc, char** argv, const volatile sig_atomic_t& stop_reque
     for (auto& buffer : buffers) assets.allocate(buffer);
     report["initialization_ms"] = elapsedMs(initialized);
     report["model_path"] = assets.modelPath();
-    report["base_checkpoint_sha256"] = assets.baseHash();
+    report["base_checkpoint_sha256"] = YAML::LoadFile(argv[2])["base_checkpoint_sha256"].as<std::string>();
     report["sdk_version"] = model.runtimeVersion();
     report["execution_path"] = "WbcLoraAssets + RknnModel::ResidentWbc (same as RLWbc)";
     report["scope"] = "policy inference only; fixed policy/command_short; no reference queries, ROS or motor output";
@@ -107,7 +107,10 @@ int runWbcIoProbe(int argc, char** argv, const volatile sig_atomic_t& stop_reque
     writeYaml(output / "runtime.yaml", report);
     saveRuntimeMaps(output);
     std::ofstream layout(output / "resident_layout.txt");
-    layout << model.residentLayout() << '\n';
+    for (std::size_t i = 0; i < model.inputCount(); ++i) {
+      const auto& attr = model.inputAttribute(i);
+      layout << attr.name << " elements=" << attr.n_elems << " bytes=" << attr.size << '\n';
+    }
     layout.close();
     if (!layout) throw std::runtime_error("Cannot save resident layout");
     std::cout << "WBC IO probe: " << model.runtimeVersion() << "; samples=" << cases.size() << std::endl;
@@ -136,7 +139,7 @@ int runWbcIoProbe(int argc, char** argv, const volatile sig_atomic_t& stop_reque
         change["generation"] = generation;
         change["slot"] = slot;
         change["load_pack_commit_ms"] = elapsedMs(load_started);
-        change["adapter_manifest_sha256"] = assets.action(id).adapter_hash;
+        change["adapter_manifest_sha256"] = wbcFileHash(assets.action(id).adapter);
         report["switches"].push_back(change);
         std::cout << "prepare action=" << id << " generation=" << generation << " slot=" << slot << std::endl;
       }

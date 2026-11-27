@@ -21,6 +21,8 @@ class RknnModel {
   RknnModel(const RknnModel&) = delete;
   RknnModel& operator=(const RknnModel&) = delete;
 
+  const rknn_tensor_attr& inputAttribute(std::size_t index) const;
+  const rknn_tensor_attr& outputAttribute(std::size_t index) const;
   std::size_t inputCount() const;
   std::size_t inputElements() const;
   std::size_t inputElements(std::size_t index) const;
@@ -64,7 +66,6 @@ class RknnModel {
                    const float* command, std::size_t command_size);
   int residentSlot() const;
   ResidentStats residentStats() const;
-  std::string residentLayout() const;
 
  private:
   struct ResidentTensor {

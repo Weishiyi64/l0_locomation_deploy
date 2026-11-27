@@ -1,4 +1,5 @@
-#include "legged_real/LeggedReal.h"
+#include "LeggedReal.h"
+#include "SafetyChecker.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -7,7 +8,6 @@
 #include <cmath>
 #include <functional>
 #include <iterator>
-#include <luvbot_hardware_interfaces/msg/motor_state.hpp>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -71,6 +71,10 @@ bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&)
     motor_mapping_ = std::make_unique<system_command_arbiter::MotorMapping>(mapping_file);
     if (motor_mapping_->enabledSize() == 0U) throw std::runtime_error("motor mapping has no enabled motors");
     const YAML::Node robot_cfg = YAML::LoadFile(robot_cfg_path)["RobotCfg"];
+    const double frequency = robot_cfg["lowlevel_frequency"].as<double>();
+    if (!std::isfinite(frequency) || frequency <= 0 || motor_mapping_->size() > 256)
+      throw std::runtime_error("invalid control frequency or motor count");
+    feedback_timeout_ms_ = 1000.0 * max_consecutive_missing_ / frequency;
     if (!robot_cfg || !robot_cfg["joint_order_mj"] || !robot_cfg["joint_order_mj"].IsSequence() ||
         !robot_cfg["default_joint_angles"] || !robot_cfg["default_joint_angles"].IsSequence())
       throw std::runtime_error("RobotCfg.joint_order_mj and default_joint_angles are required");
@@ -104,14 +108,14 @@ bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&)
       "imu/data", rclcpp::SensorDataQoS(), std::bind(&LeggedReal::imuCallback, this, std::placeholders::_1));
   odom_subscription_ = nh_->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(), std::bind(&LeggedReal::odomCallback, this, std::placeholders::_1));
-  motor_state_subscription_ = nh_->create_subscription<robot_interfaces::msg::MotorStateArray>(
+  motor_state_subscription_ = nh_->create_subscription<luvbot_hardware_interfaces::msg::MotorStateArray>(
       "actuator/motor/state", rclcpp::SensorDataQoS(),
       std::bind(&LeggedReal::motorStateCallback, this, std::placeholders::_1));
   command_publisher_ =
-      nh_->create_publisher<robot_interfaces::msg::MotorCommand>("actuator/motor/command", motor_command_qos);
+      nh_->create_publisher<luvbot_hardware_interfaces::msg::MotorCommand>("actuator/motor/command", motor_command_qos);
   enable_publisher_ =
-      nh_->create_publisher<robot_interfaces::msg::MotorEnableCommand>("actuator/motor/enable", motor_command_qos);
-  zero_client_ = nh_->create_client<robot_interfaces::srv::MotorSetZero>("actuator/motor/set_zero");
+      nh_->create_publisher<luvbot_hardware_interfaces::msg::MotorEnableCommand>("actuator/motor/enable", motor_command_qos);
+  zero_client_ = nh_->create_client<luvbot_hardware_interfaces::srv::MotorSetZero>("actuator/motor/set_zero");
   emergency_pub_ = nh_->create_publisher<std_msgs::msg::Bool>("emergency_stop", safety_qos);
   hardware_fault_pub_ = nh_->create_publisher<std_msgs::msg::Bool>("hardware_fault", safety_qos);
   motors_ready_pub_ = nh_->create_publisher<std_msgs::msg::Bool>("motors_ready", safety_qos);
@@ -119,8 +123,12 @@ bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&)
   const std::size_t count = motor_mapping_->size();
   latest_feedback_.resize(count);
   feedback_updated_.assign(count, false);
+  consecutive_missing_mask_frames_.assign(count, 0);
   feedback_wrap_.resize(count);
+  control_feedback_.resize(count);
+  control_feedback_updated_.assign(count, false);
   control_wrap_offsets_.assign(count, 0.0);
+  motor_command_.commands.resize(motor_mapping_->enabledSize());
   consecutive_missing_feedback_.assign(count, 0);
   feedback_fault_.assign(count, false);
   joint_data_.resize(count);
@@ -133,6 +141,9 @@ bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&)
     joint_motor_states_[i].q = default_joint_positions_[i];
   }
 
+  fault_detail_pub_ = nh_->create_publisher<std_msgs::msg::String>(
+      "/hardware_status/fault_detail", rclcpp::QoS(1).reliable().durability_volatile());
+  fault_detail_timer_ = nh_->create_wall_timer(std::chrono::seconds(1), [this] { publishHardwareStatus(); });
   imu_startup_time_ = nh_->now();
   lifecycle_timer_ = nh_->create_wall_timer(std::chrono::milliseconds(motor_lifecycle_period_ms),
                                             std::bind(&LeggedReal::lifecycleTick, this));
@@ -142,7 +153,7 @@ bool LeggedReal::robot_configure(rclcpp::Node::SharedPtr nh, const std::string&)
          setupImuSensorInterface() && setupHardwareCommandInterface();
 }
 
-void LeggedReal::motorStateCallback(const robot_interfaces::msg::MotorStateArray::SharedPtr msg) {
+void LeggedReal::motorStateCallback(const luvbot_hardware_interfaces::msg::MotorStateArray::SharedPtr msg) {
   verifyZeroFeedback(*msg);
   std::lock_guard<std::mutex> lock(feedback_mutex_);
   for (const auto& state : msg->states)
@@ -157,18 +168,10 @@ void LeggedReal::motorStateCallback(const robot_interfaces::msg::MotorStateArray
     }
     if (!motor_mapping_->entries()[i].enabled) continue;
     const auto& mapping = motor_mapping_->entries()[i];
-    luvbot_hardware_interfaces::msg::MotorState mapped_state;
-    mapped_state.route = mapping.route;
-    mapped_state.valid = state.valid;
-    mapped_state.error_code = state.error_code;
-    mapped_state.operating_mode = state.operating_mode;
-    mapped_state.q = state.q;
-    mapped_state.dq = state.dq;
-    mapped_state.tau = state.tau;
     const double previous_offset = feedback_wrap_[i].offset;
     const bool was_ready = feedback_wrap_[i].ready();
     const bool was_faulted = feedback_wrap_[i].fault;
-    latest_feedback_[i] = motor_mapping_->updateFeedback(mapping, mapped_state, feedback_wrap_[i]);
+    latest_feedback_[i] = motor_mapping_->updateFeedback(mapping, state, feedback_wrap_[i]);
     if (latest_feedback_[i].error_pending)
       RCLCPP_WARN_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
                            "Motor %s transient error_code=%u: %u/%u consecutive feedback frames; "
@@ -197,49 +200,42 @@ void LeggedReal::motorStateCallback(const robot_interfaces::msg::MotorStateArray
                    static_cast<unsigned>(state.error_code), feedback_wrap_[i].error_samples);
     feedback_updated_[i] = true;
   }
-  // unsigned int feedback_mask =  msg->feedback_mask & 0x001F_FFFF;
-  constexpr unsigned int ALL_FEEDBACK_MASK = 0x001FFFFFu;
-
-  const uint32_t feedback_mask = static_cast<uint32_t>(msg->feedback_mask) & ALL_FEEDBACK_MASK;
-
-  if (feedback_mask != ALL_FEEDBACK_MASK)
+  const uint32_t feedback_mask = static_cast<uint32_t>(msg->feedback_mask);
+  constexpr int kMissingFeedbackWarningFrames = 20;
+  std::string missing_motors;
+  for (std::size_t i = 0; i < motor_mapping_->size(); ++i)
   {
-    std::string missing_motors;
-    for (unsigned int i = 0; i < 21; ++i)
+    if (!motor_mapping_->entries()[i].enabled) continue;
+    if (i < 32U && (feedback_mask & (uint32_t{1} << i)) != 0U)
     {
-      if ((feedback_mask & (1u << i)) == 0u)
-      {
-        if (!missing_motors.empty())
-        {
-          missing_motors += ", ";
-        }
-        missing_motors += std::to_string(i + 1);
-      }
+      consecutive_missing_mask_frames_[i] = 0;
+      continue;
     }
-    /*
-    RCLCPP_WARN(
-        this->get_logger(),
-        "电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X",
-        missing_motors.c_str(),
-        static_cast<unsigned int>(feedback_mask));
-    */
+    auto& missing_frames = consecutive_missing_mask_frames_[i];
+    missing_frames = std::min(missing_frames + 1, kMissingFeedbackWarningFrames);
+    if (missing_frames < kMissingFeedbackWarningFrames) continue;
+    if (!missing_motors.empty()) missing_motors += ", ";
+    missing_motors += std::to_string(i + 1);
+  }
+  if (!missing_motors.empty())
+  {
     RCLCPP_WARN_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 5000,
-                         "电机反馈异常，缺少反馈的电机号: [%s]，feedback_mask=0x%08X", missing_motors.c_str(),
+                         "电机反馈异常，连续缺少反馈至少20帧的电机号: [%s]，feedback_mask=0x%08X", missing_motors.c_str(),
                          static_cast<unsigned int>(feedback_mask));
   }
 }
 
 bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {
-  std::vector<system_command_arbiter::JointFeedback> feedback;
-  std::vector<bool> updated;
+  auto& feedback = control_feedback_;
+  auto& updated = control_feedback_updated_;
   bool reset_feedback_watchdogs = false;
   bool motors_enabled_at_snapshot = false;
   {
     std::lock_guard<std::mutex> lock(feedback_mutex_);
     reset_feedback_watchdogs = reset_feedback_watchdogs_.exchange(false);
     motors_enabled_at_snapshot = motors_enabled_.load();
-    feedback = latest_feedback_;
-    updated = feedback_updated_;
+    std::copy(latest_feedback_.begin(), latest_feedback_.end(), feedback.begin());
+    std::copy(feedback_updated_.begin(), feedback_updated_.end(), updated.begin());
     control_feedback_ready_ = true;
     for (std::size_t i = 0; i < feedback_wrap_.size(); ++i)
     {
@@ -255,6 +251,7 @@ bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {
   }
 
   bool motor_fault = false;
+  bool all_feedback_received = true;
   for (std::size_t i = 0; i < feedback.size(); ++i)
   {
     const auto& mapping = motor_mapping_->entries()[i];
@@ -266,6 +263,9 @@ bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {
       continue;
     }
 
+    // Raw feedback can be online before calibration confirms the joint position/turn.
+    all_feedback_received = all_feedback_received && feedback[i].error == 0U &&
+                            (feedback[i].valid || feedback[i].initializing);
     if (updated[i] && feedback[i].valid && feedback[i].error == 0U)
     {
       const bool recovered = feedback_fault_[i];
@@ -338,7 +338,7 @@ bool LeggedReal::read(rclcpp::Time time, rclcpp::Duration) {
   motor_fault = std::any_of(feedback_fault_.begin(), feedback_fault_.end(), [](bool value) { return value; });
   motor_fault_.store(motor_fault);
   emergency_stop_triggered_.store(motor_fault);
-  publishMotorsReady(motors_enabled_.load() && !motor_fault);
+  publishMotorsReady(motors_enabled_at_snapshot && motors_enabled_.load() && all_feedback_received && !motor_fault);
   publishHardwareFault();
 
   {
@@ -386,6 +386,8 @@ void LeggedReal::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
   }
   const double inverse_norm = 1.0 / std::sqrt(quaternion_norm_squared);
   std::lock_guard<std::mutex> lock(sensor_mutex_);
+  imu_accepted_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
   imu_connection_status_ = true;
   last_imu_received_time_ = nh_->now();
   for (int i = 0; i < 3; ++i)
@@ -400,6 +402,8 @@ void LeggedReal::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
   imu_data_.ori[1] = msg->orientation.y * inverse_norm;
   imu_data_.ori[2] = msg->orientation.z * inverse_norm;
   imu_data_.ori[3] = msg->orientation.w * inverse_norm;
+  if (imu_safety_checker_)
+    imu_safety_checker_->observeImuOrientation(imu_data_.ori[0], imu_data_.ori[1], imu_data_.ori[2], imu_data_.ori[3]);
 }
 
 void LeggedReal::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -431,8 +435,7 @@ bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {
   const bool motors_enabled = motors_enabled_.load();
   {
     std::lock_guard<std::mutex> lock(sensor_mutex_);
-    // No actuator command is published before lifecycle enable completes, so
-    // the IMU startup watchdog must not expire while its backend is still absent.
+    // Zero-gain MIT continues during enable; arm the IMU watchdog after enable publication completes.
     if (imu_enabled_ && motors_enabled && !imu_connection_status_)
       imu_failed = (current - imu_startup_time_).seconds() >= imu_startup_timeout_;
     else if (imu_enabled_ && motors_enabled && (current - last_imu_received_time_).seconds() > imu_connection_timeout_)
@@ -468,11 +471,13 @@ bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {
                            lifecycle_fault_.load();
   bool active_command = false;
   bool damping_command = stop || zero_gain_command;
+  bool protection_applied = stop;
   bool feedback_ready = control_feedback_ready_;
   for (std::size_t i = 0; i < feedback_wrap_.size(); ++i)
   {
     if (!motor_mapping_->entries()[i].enabled) continue;
     damping_command = damping_command || feedback_wrap_[i].fault;
+    protection_applied = protection_applied || feedback_wrap_[i].fault;
     const auto& command = joint_motor_commands_[i];
     active_command = active_command || command.kp != 0.0 || command.dq_des != 0.0 || command.tau_ff != 0.0;
     feedback_ready =
@@ -484,14 +489,15 @@ bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {
                          "Publishing zero-gain MIT until all feedback turns are confirmed in the control snapshot");
     zero_gain_command = true;
     damping_command = true;
+    protection_applied = true;
   }
-  robot_interfaces::msg::MotorCommand output;
+  auto& output = motor_command_;
   output.stamp = current;
   output.sequence_id = ++command_sequence_;
-  output.control_mode = robot_interfaces::msg::MotorCommand::CONTROL_MODE_MIT;
-  output.commands.reserve(motor_mapping_->enabledSize());
+  output.control_mode = luvbot_hardware_interfaces::msg::MotorCommand::CONTROL_MODE_MIT;
   try
   {
+    std::size_t command_index = 0;
     for (std::size_t i = 0; i < joint_motor_commands_.size(); ++i)
     {
       const auto& mapping = motor_mapping_->entries()[i];
@@ -504,18 +510,12 @@ bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {
           damping_command ? 0.0 : command.kp,
           zero_gain_command ? 0.0 : (damping_command ? emergency_damping_kd_ : command.kd),
           feedback_wrap_[i].offset);
-      robot_interfaces::msg::MotorTarget target;
-      target.route.motor_type = static_cast<uint8_t>(i);
-      target.q = mapped.q;
-      target.dq = mapped.dq;
-      target.tau = mapped.tau;
-      target.kp = mapped.kp;
-      target.kd = mapped.kd;
-      output.commands.push_back(target);
+      output.commands[command_index++] = mapped;
     }
   } catch (const std::exception& error)
   {
     emergency_stop_triggered_.store(true);
+    captureHardwareStatus(true, true);
     RCLCPP_ERROR_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000, "\033[1;31mRejected motor command: %s\033[0m",
                           error.what());
     return false;
@@ -526,6 +526,7 @@ bool LeggedReal::write(rclcpp::Time, rclcpp::Duration) {
   if (!damping_command && active_command)
     for (auto& wrap : feedback_wrap_) wrap.locked = true;
   command_publisher_->publish(output);
+  captureHardwareStatus(protection_applied, false);
   return true;
 }
 
@@ -548,7 +549,7 @@ void LeggedReal::publishMotorsReady(bool ready) {
   motors_ready_state_ = ready;
   if (ready)
     RCLCPP_INFO(nh_->get_logger(),
-                "Motor command path ready for %zu enabled motors after publishing the HPM enable command",
+                "Motor feedback path ready for %zu enabled motors after enable publication (enable has no ACK)",
                 motor_mapping_->enabledSize());
   else if (motors_enabled_.load())
     RCLCPP_ERROR(nh_->get_logger(), "\033[1;31mMotor readiness lost; inspect preceding per-motor errors\033[0m");
@@ -568,22 +569,24 @@ bool LeggedReal::requestAllMotorsEnabled(bool enabled) {
     RCLCPP_ERROR(nh_->get_logger(), "Motor enable blocked by active or failed calibration");
     return false;
   }
+  if (lifecycle_active_ && lifecycle_target_enabled_ == enabled) return true;
   lifecycle_target_enabled_ = enabled;
   lifecycle_active_ = true;
   lifecycle_started_ = nh_->now();
+  lifecycle_next_motor_ = 0U;
+  lifecycle_round_ = 1U;
   lifecycle_fault_.store(false);
-  if (!enabled)
-  {
-    motors_enabled_.store(false);
-    publishMotorsReady(false);
-  }
+  motors_enabled_.store(false);
+  publishMotorsReady(false);
   publishHardwareFault();
   return true;
 }
 
 void LeggedReal::lifecycleTick() {
+  zeroTick();
   std::lock_guard<std::mutex> lock(lifecycle_mutex_);
   if (!lifecycle_active_) return;
+  if (std::chrono::steady_clock::now() < lifecycle_next_send_) return;
   const rclcpp::Time current = nh_->now();
   if (enable_publisher_->get_subscription_count() == 0U)
   {
@@ -603,23 +606,24 @@ void LeggedReal::lifecycleTick() {
     return;
   }
 
-  robot_interfaces::msg::MotorEnableCommand command;
+  luvbot_hardware_interfaces::msg::MotorEnableCommand command;
   command.stamp = current;
   command.sequence_id = ++enable_sequence_;
-  command.motor_types.reserve(motor_mapping_->enabledSize());
-  command.enabled.reserve(motor_mapping_->enabledSize());
-  for (std::size_t i = 0; i < motor_mapping_->size(); ++i)
+  while (lifecycle_next_motor_ < motor_mapping_->size() &&
+         !motor_mapping_->entries()[lifecycle_next_motor_].enabled)
+    ++lifecycle_next_motor_;
+  const std::size_t i = lifecycle_next_motor_;
+  std::size_t next = i + 1U;
+  while (next < motor_mapping_->size() && !motor_mapping_->entries()[next].enabled) ++next;
+  const bool round_complete = next == motor_mapping_->size();
+  const unsigned rounds = lifecycle_target_enabled_ ? 3U : 1U;
+  const bool complete = round_complete && lifecycle_round_ == rounds;
+  command.motor_types.push_back(static_cast<uint8_t>(i));
+  command.enabled.push_back(lifecycle_target_enabled_);
   {
-    if (!motor_mapping_->entries()[i].enabled) continue;
-    command.motor_types.push_back(static_cast<uint8_t>(i));
-    command.enabled.push_back(lifecycle_target_enabled_);
-  }
-  lifecycle_active_ = false;
-  {
-    // Do not count feedback received before this enable publication toward the
-    // first complete post-enable feedback round.
+    // Require a fresh feedback round after the final enable publication.
     std::lock_guard<std::mutex> feedback_lock(feedback_mutex_);
-    if (lifecycle_target_enabled_)
+    if (complete && lifecycle_target_enabled_)
     {
       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);
       for (auto& wrap : feedback_wrap_)
@@ -628,18 +632,35 @@ void LeggedReal::lifecycleTick() {
         wrap.error_code = 0U;
         wrap.error_samples = 0U;
       }
-      for (auto& feedback : latest_feedback_) feedback.valid = false;
+      for (auto& feedback : latest_feedback_) feedback = system_command_arbiter::JointFeedback{};
       reset_feedback_watchdogs_.store(true);
     }
-    else
+    else if (complete)
     {
       for (auto& wrap : feedback_wrap_) wrap = system_command_arbiter::FeedbackWrapState{};
       for (auto& feedback : latest_feedback_) feedback.valid = false;
       std::fill(feedback_updated_.begin(), feedback_updated_.end(), false);
     }
     enable_publisher_->publish(command);
-    motors_enabled_.store(lifecycle_target_enabled_);
+    if (complete) motors_enabled_.store(lifecycle_target_enabled_);
   }
+  // Keep the spacing across requests too, including enable interrupted by disable.
+  lifecycle_next_send_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  lifecycle_next_motor_ = next;
+  if (round_complete)
+    RCLCPP_INFO(nh_->get_logger(), "Published HPM %s for %zu motors (round %u/%u)",
+                lifecycle_target_enabled_ ? "enable" : "disable", motor_mapping_->enabledSize(),
+                lifecycle_round_, rounds);
+  if (!complete)
+  {
+    if (round_complete)
+    {
+      lifecycle_next_motor_ = 0U;
+      ++lifecycle_round_;
+    }
+    return;
+  }
+  lifecycle_active_ = false;
   if (lifecycle_target_enabled_)
   {
     std::lock_guard<std::mutex> sensor_lock(sensor_mutex_);
@@ -647,8 +668,6 @@ void LeggedReal::lifecycleTick() {
   }
   lifecycle_fault_.store(false);
   publishHardwareFault();
-  RCLCPP_INFO(nh_->get_logger(), "Published HPM %s command for %zu motors",
-              lifecycle_target_enabled_ ? "enable" : "disable", motor_mapping_->enabledSize());
 }
 
 }  // namespace legged

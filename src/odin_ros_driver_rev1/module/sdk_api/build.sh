@@ -22,10 +22,15 @@ mkdir -p "$INSTALL_PREFIX"
 # Clean build directory
 rm -rf "$BUILD_DIR"
 
+# Default build type is Release (-O3, NDEBUG, stripped).
+# Override with: BUILD_TYPE=Debug ./build.sh
+BUILD_TYPE="${BUILD_TYPE:-Release}"
+echo "Build type: ${BUILD_TYPE}"
+
 # Configure with custom install prefix
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX"
 
 # Build
@@ -52,4 +57,3 @@ echo "To use a custom install directory:"
 echo "  ./build.sh /your/custom/path"
 echo "  or"
 echo "  INSTALL_PREFIX=/your/custom/path ./build.sh"
-echo ""

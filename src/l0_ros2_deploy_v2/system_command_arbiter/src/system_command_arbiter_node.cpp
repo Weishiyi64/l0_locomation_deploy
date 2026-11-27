@@ -16,7 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "system_command_arbiter/motor_mapping.hpp"
+#include "motor_mapping.hpp"
+#include "AppVersion.h"
 
 namespace {
 
@@ -33,10 +34,6 @@ int64_t nanoseconds(const builtin_interfaces::msg::Time& stamp) {
 
 bool same_route(const MotorRoute& lhs, const MotorRoute& rhs) {
   return lhs.motor_type == rhs.motor_type && lhs.bus_index == rhs.bus_index && lhs.motor_id == rhs.motor_id;
-}
-
-bool route_is_valid(const MotorRoute& route) {
-  return route.motor_type >= MotorRoute::MOTOR_TYPE_DM && route.motor_type <= MotorRoute::MOTOR_TYPE_LS;
 }
 
 }  // namespace
@@ -59,7 +56,9 @@ class SystemCommandArbiter : public rclcpp::Node {
     pilot_hold_kd_ = declare_parameter<double>("pilot_hold_kd", 0.5);
     pilot_hold_seconds_ = declare_parameter<double>("pilot_hold_seconds", 2.0);
     pilot_feedback_timeout_ms_ = declare_parameter<int>("pilot_feedback_timeout_ms", 500);
-    pilot_route_.motor_type = static_cast<uint8_t>(declare_parameter<int>("pilot_motor_type", 4));
+    const int pilot_motor_type = declare_parameter<int>("pilot_motor_type", 4);
+    if (pilot_motor_type < 0 || pilot_motor_type > 255) throw std::runtime_error("pilot_motor_type must be in 0..255");
+    pilot_route_.motor_type = static_cast<uint8_t>(pilot_motor_type);
     const int pilot_bus_index = declare_parameter<int>("pilot_bus_index", 4);
     if (pilot_bus_index < 0 || pilot_bus_index > 255) throw std::runtime_error("pilot_bus_index must be in 0..255");
     pilot_route_.bus_index = static_cast<uint8_t>(pilot_bus_index);
@@ -104,9 +103,9 @@ class SystemCommandArbiter : public rclcpp::Node {
     }
     else if (pilot_mode_)
     {
-      if (!route_is_valid(pilot_route_))
+      if (mapping_->indexOfRoute(pilot_route_) < 0)
       {
-        throw std::runtime_error("pilot route is invalid");
+        throw std::runtime_error("pilot route must match an enabled motor index, bus, and CAN ID in the mapping");
       }
       pilot_state_ = PilotState::WAIT_SERVICE;
       state_entered_ = now();
@@ -132,9 +131,8 @@ class SystemCommandArbiter : public rclcpp::Node {
     if (pilot_mode_) return;
     if (emergency_stop_ || hardware_fault_) return reject("safety stop active");
     if (!source_allowed(message->source_id)) return reject("source is not allowed");
-    if (message->control_mode < MotorCommandCandidate::CONTROL_MODE_POSITION ||
-        message->control_mode > MotorCommandCandidate::CONTROL_MODE_HYBRID)
-      return reject("invalid control mode");
+    if (message->control_mode != MotorCommandCandidate::CONTROL_MODE_HYBRID)
+      return reject("the shared motor command requires MIT-compatible hybrid targets");
 
     const int64_t now_ns = now().nanoseconds();
     if (nanoseconds(message->stamp) > now_ns + 100000000LL) return reject("timestamp is in the future");
@@ -155,10 +153,7 @@ class SystemCommandArbiter : public rclcpp::Node {
 
     MotorCommand output;
     output.stamp = message->stamp;
-    output.sequence_id = message->sequence_id;
-    output.source_id = message->source_id;
-    output.valid_until = message->valid_until;
-    output.control_mode = message->control_mode;
+    output.control_mode = MotorCommand::CONTROL_MODE_MIT;
     output.commands.reserve(message->commands.size());
     std::unordered_set<std::string> joints;
 
@@ -184,6 +179,7 @@ class SystemCommandArbiter : public rclcpp::Node {
     });
     if (active_command)
       for (auto& wrap : feedback_wrap_) wrap.locked = true;
+    output.sequence_id = ++command_sequence_;
     command_pub_->publish(output);
   }
 
@@ -216,10 +212,7 @@ class SystemCommandArbiter : public rclcpp::Node {
     MotorCommand output;
     const auto current = now();
     output.stamp = current;
-    output.sequence_id = ++pilot_sequence_;
-    output.source_id = "system_command_arbiter_pilot";
-    output.valid_until = current + rclcpp::Duration::from_nanoseconds(command_validity_ms_ * 1000000LL);
-    output.control_mode = MotorCommand::CONTROL_MODE_HYBRID;
+    output.control_mode = MotorCommand::CONTROL_MODE_MIT;
     output.commands.resize(1);
     output.commands[0].route = pilot_route_;
     output.commands[0].q = static_cast<float>(q);
@@ -227,6 +220,7 @@ class SystemCommandArbiter : public rclcpp::Node {
     output.commands[0].tau = 0.0F;
     output.commands[0].kp = static_cast<float>(kp);
     output.commands[0].kd = static_cast<float>(kd);
+    output.sequence_id = ++command_sequence_;
     command_pub_->publish(output);
   }
 
@@ -388,10 +382,11 @@ class SystemCommandArbiter : public rclcpp::Node {
   bool pilot_feedback_valid_{false};
   double pilot_feedback_q_{0.0};
   double pilot_hold_q_{0.0};
-  uint64_t pilot_sequence_{0};
+  uint32_t command_sequence_{0};
 };
 
 int main(int argc, char** argv) {
+  l0::printAppVersion("system_command_arbiter_node");
   rclcpp::init(argc, argv);
   try
   { rclcpp::spin(std::make_shared<SystemCommandArbiter>()); } catch (const std::exception& error)

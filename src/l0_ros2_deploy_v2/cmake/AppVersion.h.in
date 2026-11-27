@@ -1,0 +1,10 @@
+#pragma once
+
+#include <cstdio>
+
+namespace l0 {
+inline void printAppVersion(const char* program) {
+  std::printf("[VERSION] %s version=%s\n", program, "@APP_VERSION@");
+  std::fflush(stdout);
+}
+}  // namespace l0

@@ -1,3 +1,5 @@
 builtin_interfaces/Time stamp
-uint64 sequence_id
-MotorState[<=64] states
+uint32 sequence_id
+luvbot_hardware_interfaces/MotorState[] states
+# Bit i reports feedback for configured motor index i.
+uint32 feedback_mask

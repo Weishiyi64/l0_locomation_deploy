@@ -2,15 +2,18 @@
 #define BASE_CONTROLLER_H
 
 #include <atomic>
+#include <chrono>
 #include <fstream>
+#include <pthread.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sched.h>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "base/rl_controller_registrar.h"
-#include "luvbot_control_interfaces/msg/policy_command.hpp"
-#include "luvbot_control_interfaces/msg/policy_observation.hpp"
+#include "robot_interfaces/msg/policy_command.hpp"
+#include "robot_interfaces/msg/policy_observation.hpp"
 #include "rl_data.h"
 
 void requireNode(const YAML::Node& n, const std::string& key_path);
@@ -19,22 +22,21 @@ std::vector<std::string> asStringList(const YAML::Node& n, const std::string& pa
 
 class BaseRLController : public ControllerType {
  public:
-  // explicit BaseRLController(ros::NodeHandle& nh) : nh(nh), quit(false) {}
-  explicit BaseRLController(rclcpp::Node::SharedPtr nh) : nh(nh), quit(false) {}
-  virtual ~BaseRLController();
+  explicit BaseRLController(rclcpp::Node::SharedPtr nh) : nh(nh) {}
+  virtual ~BaseRLController() = default;
 
   // Blocks until shutdown using global flag
   void spinUntilShutdown() override;
 
  protected:
   rclcpp::Node::SharedPtr nh;
-  // ros::NodeHandle nh;
-  std::atomic<bool> quit;
+  using SteadyClock = std::chrono::steady_clock;
 
-  luvbot_control_interfaces::msg::PolicyObservation policy_observation_;
-  luvbot_control_interfaces::msg::PolicyCommand posCmd_;
-  rclcpp::Subscription<luvbot_control_interfaces::msg::PolicyObservation>::SharedPtr subState_;
-  rclcpp::Publisher<luvbot_control_interfaces::msg::PolicyCommand>::SharedPtr pubCmd_ov;
+  robot_interfaces::msg::PolicyObservation policy_observation_;
+  SteadyClock::time_point policy_observation_received_at_{};
+  robot_interfaces::msg::PolicyCommand posCmd_;
+  rclcpp::Subscription<robot_interfaces::msg::PolicyObservation>::SharedPtr subState_;
+  rclcpp::Publisher<robot_interfaces::msg::PolicyCommand>::SharedPtr pubCmd_ov;
   uint64_t command_sequence_id_{0};
   double command_validity_ms_{100.0};
 
@@ -42,13 +44,17 @@ class BaseRLController : public ControllerType {
   std::atomic<bool> rl_inference_enabled_{false};
 
   void initBaseTopic(rclcpp::Node::SharedPtr nh_);
-  void publishPolicyCommand();
-  bool validatePolicyObservation(const luvbot_control_interfaces::msg::PolicyObservation& message,
+  bool publishPolicyCommand(const rclcpp::Time& input_time);
+  void finishPolicyCycle(SteadyClock::time_point started, int frequency);
+  bool isPolicyInputFresh(const robot_interfaces::msg::PolicyObservation& observation,
+                          SteadyClock::time_point received_at) const;
+  bool isPolicyResultTimely(SteadyClock::time_point started, int frequency) const;
+  bool validatePolicyObservation(const robot_interfaces::msg::PolicyObservation& message,
                                  const std::vector<std::string>& expected_joint_names, const char* consumer_name) const;
 
   /// PolicyCommand publisher topic. Each concrete policy must implement.
   virtual std::string rlCmdPublishTopic() const = 0;
-  virtual void stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) = 0;
+  virtual void stateCallback(const robot_interfaces::msg::PolicyObservation::ConstSharedPtr msg) = 0;
 
   // Read common RobotCfg params into RLBaseModelParams and observation items.
   // Returns true if parameters loaded successfully.
@@ -57,6 +63,8 @@ class BaseRLController : public ControllerType {
   // Read deployment configuration parameters from RLController section.
   // Returns true if parameters loaded successfully.
   bool readDeployParams(LeggedDeployParams& out_params);
+
+  void configureThreadScheduler(pthread_t thread, const LeggedDeployParams& params, const char* thread_name);
 
   // 从yaml文件中读取RL参数
   bool loadRobotCfgFromYaml(const std::string& yaml_path, RLBaseModelParams& out_params,
@@ -105,25 +113,19 @@ class BaseRLController : public ControllerType {
     {
       RCLCPP_INFO(nh->get_logger(), "\033[34m%s current scheduler: %s, priority: %d\033[0m", threadName.c_str(),
                   getSchedulerPolicyName(policy).c_str(), param.sched_priority);
-      // ("\033[34m%s current scheduler: %s, priority: %d\033[0m",
-      // threadName.c_str(), getSchedulerPolicyName(policy).c_str(),
-      // param.sched_priority);
-
-      if (policy == SCHED_RR)
-      {
-        struct timespec ts;
-        if (sched_rr_get_interval(0, &ts) == 0)
-        {
-          RCLCPP_INFO(nh->get_logger(), "\033[34m%s RR time slice: %ld.%03ld ms\033[0m", threadName.c_str(),
-                      ts.tv_sec * 1000 + ts.tv_nsec / 1000000, (ts.tv_nsec % 1000000) / 1000);
-
-          // ("\033[34m%s RR time slice: %ld.%03ld ms\033[0m",
-          //          threadName.c_str(), ts.tv_sec * 1000 + ts.tv_nsec /
-          //          1000000, (ts.tv_nsec % 1000000) / 1000);
-        }
-      }
     }
   }
+
+ private:
+  struct CycleTiming {
+    SteadyClock::time_point window_start{};
+    SteadyClock::time_point previous_start{};
+    int frequency{0};
+    uint64_t samples{0};
+    uint64_t late{0};
+    double interval_max_ms{0.0};
+    double work_max_ms{0.0};
+  } cycle_timing_;
 };
 
 #endif

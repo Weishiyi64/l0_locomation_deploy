@@ -28,8 +28,8 @@ struct RL_IMITATION_ModelParams : public RLBaseModelParams {
   std::vector<ObservationItem> observation_items;
 
   // dimensions for command and anchor_ori
-  int command_dim;
-  int imitation_anchor_dim;
+  int command_dim = 0;
+  int imitation_anchor_dim = 0;
 
   // command configuration: specifies which motion.onnx outputs to use and in
   // what order
@@ -42,20 +42,17 @@ struct Robot_Imitation_State : public RobotBaseState {
   Eigen::VectorXd command;
   Eigen::Quaterniond command_quat;
   Eigen::VectorXd anchor_ori;
-  rclcpp::Logger logger_;
 
   // Default constructor for member initialization
   Robot_Imitation_State(rclcpp::Logger logger)
       : RobotBaseState(logger),
         imu_quat(Eigen::Quaterniond::Identity()),
-        command_quat(Eigen::Quaterniond::Identity()),
-        logger_(logger) {}
+        command_quat(Eigen::Quaterniond::Identity()) {}
 
   Robot_Imitation_State(rclcpp::Logger logger, int num_actions, int command_dim, int imitation_anchor_dim)
       : RobotBaseState(logger, num_actions),
         imu_quat(Eigen::Quaterniond::Identity()),
-        command_quat(Eigen::Quaterniond::Identity()),
-        logger_(logger) {
+        command_quat(Eigen::Quaterniond::Identity()) {
     if (num_actions <= 0)
     {
       RCLCPP_ERROR(logger_, "Robot_Imitation_State: num_actions input error");
@@ -79,7 +76,6 @@ struct Robot_Imitation_State : public RobotBaseState {
   }
 
   void clean() {
-    RobotBaseState::q.setZero();
     base_ang_vel.setZero();
     quat = Eigen::Quaterniond::Identity();
     quat_obs = Eigen::Quaterniond::Identity();
@@ -127,39 +123,27 @@ class ObservationManager_Imitation {
     {
       if (item.type == "base_ang_vel")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "base_ang_vel:
-        // " << state.base_ang_vel.transpose());
         RCLCPP_INFO_STREAM(logger_,
                            std::fixed << std::setprecision(6) << "base_ang_vel: " << state.base_ang_vel.transpose());
       }
       else if (item.type == "joint_pos")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "joint_pos: "
-        // << state.q.transpose());
         RCLCPP_INFO_STREAM(logger_, std::fixed << std::setprecision(6) << "joint_pos: " << state.q.transpose());
       }
       else if (item.type == "joint_vel")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "joint_vel: "
-        // << state.dq.transpose());
         RCLCPP_INFO_STREAM(logger_, std::fixed << std::setprecision(6) << "joint_vel: " << state.dq.transpose());
       }
       else if (item.type == "actions")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "actions: " <<
-        // output.action.transpose());
         RCLCPP_INFO_STREAM(logger_, std::fixed << std::setprecision(6) << "actions: " << output.action.transpose());
       }
       else if (item.type == "command")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "command: " <<
-        // state.command.transpose());
         RCLCPP_INFO_STREAM(logger_, std::fixed << std::setprecision(6) << "command: " << state.command.transpose());
       }
       else if (item.type == "anchor_ori")
       {
-        // ROS_INFO_STREAM(std::fixed << std::setprecision(6) << "anchor_ori: "
-        // << state.anchor_ori.transpose());
         RCLCPP_INFO_STREAM(logger_,
                            std::fixed << std::setprecision(6) << "anchor_ori: " << state.anchor_ori.transpose());
       }
@@ -228,15 +212,6 @@ class ObservationManager_Imitation {
 
   int getTotalDimension() const { return total_obs_dim_; }
 
- private:
-  Eigen::Vector3d qr_ty_i(const Eigen::Vector4d& q, const Eigen::Vector3d& v) const {
-    double q_w = q[3];
-    Eigen::Vector3d q_vec = q.head<3>();
-    Eigen::Vector3d a = v * (2.0 * q_w * q_w - 1.0);
-    Eigen::Vector3d b = q_vec.cross(v) * q_w * 2.0;
-    Eigen::Vector3d c = q_vec * (q_vec.dot(v) * 2.0);
-    return (a - b + c);
-  }
 };
 
 using Observations_Imitation = ObservationsGeneric<1, 1>;

@@ -385,10 +385,13 @@ inline std::string ResolveCamKey(const YAML::Node& root, int cam_id, int width, 
   for (auto it = root.begin(); it != root.end(); ++it) {
     std::string key = it->first.as<std::string>("");
     if (key.rfind(prefix, 0) == 0) {
-      std::cerr << "[ResolveCamKey] Warning: no calibration for cam_" << cam_id;
-      if (width > 0 && height > 0)
-        std::cerr << " at " << width << "x" << height;
-      std::cerr << ", using default key '" << key << "'" << std::endl;
+      // Only warn when a specific resolution was requested but not found;
+      // when width/height are 0, the caller expects a generic fallback.
+      if (width > 0 && height > 0) {
+        std::cerr << "[ResolveCamKey] Warning: no exact calibration for cam_" << cam_id
+                  << " at " << width << "x" << height
+                  << ", using fallback key '" << key << "'" << std::endl;
+      }
       return key;
     }
   }

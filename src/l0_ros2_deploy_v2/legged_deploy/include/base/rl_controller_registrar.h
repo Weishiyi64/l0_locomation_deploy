@@ -35,7 +35,6 @@ class RLControllerFactory {
   }
 
   void registerController(const std::string& name, Creator c) {
-    std::cout << " registerController  name: " << name << std::endl;
     creators_[name] = std::move(c);
   }
 

@@ -1,0 +1,19 @@
+uint8 START=1
+uint8 CANCEL=2
+# Read a fixed motion start reference without preparing/activating policy output.
+uint8 REFERENCE=3
+# Generate a STOP trajectory while retaining the current execution.
+uint8 STOP=4
+uint8 command
+string motion_id
+string request_id
+---
+bool success
+string message
+string motion_id
+string robot_cfg_path
+float64 duration_sec
+
+# Populated by REFERENCE, in the worker joint order (radians).
+string[] joint_names
+float64[] reference_positions

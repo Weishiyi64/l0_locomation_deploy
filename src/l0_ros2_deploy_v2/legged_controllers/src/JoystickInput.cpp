@@ -1,4 +1,4 @@
-#include "legged_controllers/JoystickInput.h"
+#include "JoystickInput.h"
 
 namespace legged {
 
@@ -21,6 +21,8 @@ constexpr int AxisLsLr = 0;
 constexpr int AxisLsUd = 1;
 constexpr int AxisRsLr = 2;
 constexpr int AxisLt = 5;
+// joy_node appends the first hat after this receiver's six analog axes.
+constexpr int AxisDpadHorizontal = 6;
 
 bool isPressed(const sensor_msgs::msg::Joy& joy, int index) {
   return index >= 0 && static_cast<size_t>(index) < joy.buttons.size() && joy.buttons[index] == 1;
@@ -45,6 +47,7 @@ JoystickButtons JoystickInput::decodeButtons(const sensor_msgs::msg::Joy& joy) c
   buttons.lb = isPressed(joy, ButtonLB);
   buttons.rb = isPressed(joy, ButtonRB);
   buttons.lt = isPressed(joy, ButtonLt);
+  buttons.dpad_left = axisValue(joy, AxisDpadHorizontal) > 0.5;
   buttons.rt = isPressed(joy, ButtonRt);
   buttons.back = isPressed(joy, ButtonBack);
   buttons.start = isPressed(joy, ButtonStart);
@@ -71,12 +74,27 @@ JoystickCommand JoystickInput::buildCommand(const JoystickButtons& buttons, cons
   const bool single_a = buttons.a && !buttons.x;
 
   command.emergency_stop_pressed = isButtonRisingEdge("emergency_stop_manual", buttons.rb);
+  command.wbc_soft_stop_pressed = isButtonRisingEdge("wbc_soft_stop", buttons.lt && buttons.dpad_left);
   command.set_walk_pressed = isButtonRisingEdge("set_walk", buttons.b && buttons.y);
   command.reset_pressed = isButtonRisingEdge("reset_controller", buttons.lb && buttons.rb);
   command.kp_add_pressed = isButtonRisingEdge("kp_add", buttons.b);
   command.kp_minus_pressed = isButtonRisingEdge("kp_minus", single_a);
-  command.back_emergency_sequence_pressed = isButtonRisingEdge("back_emergency_sequence", buttons.back);
-  command.toggle_calibration_pressed = isButtonRisingEdge("toggle_calibration_mode", buttons.ls && buttons.rs);
+  // Require a stable release of both sticks before another mode switch.
+  const auto now = std::chrono::steady_clock::now();
+  if (calibration_buttons_released_since_ != std::chrono::steady_clock::time_point{} &&
+      now - calibration_buttons_released_since_ >= std::chrono::milliseconds(200))
+    calibration_toggle_armed_ = true;
+  if (buttons.ls || buttons.rs)
+  {
+    calibration_buttons_released_since_ = std::chrono::steady_clock::time_point{};
+    if (buttons.ls && buttons.rs && calibration_toggle_armed_)
+    {
+      command.toggle_calibration_pressed = true;
+      calibration_toggle_armed_ = false;
+    }
+  }
+  else if (calibration_buttons_released_since_ == std::chrono::steady_clock::time_point{})
+    calibration_buttons_released_since_ = now;
   command.calibrate_left_arm_pressed = isButtonRisingEdge("calibrate_left_arm", buttons.lt && buttons.lb);
   command.calibrate_right_arm_pressed = isButtonRisingEdge("calibrate_right_arm", buttons.rt && buttons.rb);
   command.calibrate_left_leg_pressed = isButtonRisingEdge("calibrate_left_leg", buttons.a && buttons.x);

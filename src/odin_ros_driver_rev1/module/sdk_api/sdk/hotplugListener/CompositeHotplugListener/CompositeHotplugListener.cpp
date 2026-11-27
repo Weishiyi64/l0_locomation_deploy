@@ -57,10 +57,10 @@ void CompositeHotplugListener::SetOfflineTimeout(uint32_t timeout_ms) {
   }
 }
 
-void CompositeHotplugListener::MarkDeviceOffline(const DiscoveredDevice& device) {
+void CompositeHotplugListener::RefreshDeviceAlive(const DiscoveredDevice& device) {
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto& listener : listeners_) {
-    listener->MarkDeviceOffline(device);
+    listener->RefreshDeviceAlive(device);
   }
 }
 

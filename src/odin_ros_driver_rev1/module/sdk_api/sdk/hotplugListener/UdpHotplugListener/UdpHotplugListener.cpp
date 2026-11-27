@@ -5,7 +5,7 @@
 #include <arpa/inet.h>
 #endif
 
-#include "../../logger/logger.h"
+#include "logger.h"
 #include "../../utils/network_utils.h"
 
 namespace odin {
@@ -41,6 +41,8 @@ bool UdpHotplugListener::Start(const HotplugCallbacks& callbacks, bool enumerate
   enumerate_existing_ = enumerate_existing;
   first_probe_done_ = false;
   devices_.clear();
+  cross_subnet_warned_.clear();
+  probe_skipped_warned_.clear();
 
   running_.store(true);
   worker_thread_ = std::thread(&UdpHotplugListener::WorkerThread, this);
@@ -65,6 +67,8 @@ void UdpHotplugListener::Stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     callbacks_ = HotplugCallbacks{};
     devices_.clear();
+    cross_subnet_warned_.clear();
+    probe_skipped_warned_.clear();
   }
 
   network::ReleaseWinsock();
@@ -93,8 +97,7 @@ void UdpHotplugListener::WorkerThread() {
 
   while (running_.load()) {
     SendDiscoveryProbe();
-    // Note: Device offline detection is now handled by heartbeat mechanism in Odin2Device
-    // CheckOfflineDevices() is no longer called here
+    CheckOfflineDevices();
 
     // Sleep for polling interval (check running_ periodically for quick shutdown)
     uint32_t sleep_interval = 100;  // Check every 100ms
@@ -123,16 +126,66 @@ void UdpHotplugListener::SendDiscoveryProbe() {
     // Skip loopback
     if (host_ip.find("127.") == 0) continue;
 
-    // Create broadcast socket using shared utility
-    network::SocketHandle sock = network::CreateBroadcastSocket(host_ip);
+    // Send-side gate: once a device is known online, probe only from the
+    // exact host address the device was attached from. The module latches its
+    // data-plane destination from the last DeviceQuery it hears, so probing
+    // from any other local address (even one on the same subnet, e.g. a
+    // secondary IP on the same NIC) can re-point its stream target at an
+    // address the host data channels are not bound to. Trade-off: while a
+    // device is online, devices on other subnets are not discovered.
+    bool skip_probe = false;
+    bool warn_skipped = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      bool any_online = false;
+      bool host_matches = false;
+      for (const auto& kv : devices_) {
+        if (!kv.second.online) continue;
+        any_online = true;
+        if (kv.second.device.host_ip == host_ip) {
+          host_matches = true;
+          break;
+        }
+      }
+      skip_probe = any_online && !host_matches;
+      if (skip_probe) {
+        warn_skipped = probe_skipped_warned_.insert(host_ip).second;
+      }
+    }
+    if (skip_probe) {
+      if (warn_skipped) {
+        LOG_WARN(
+            "UdpHotplugListener: skipping probe from host IP %s - no known device is attached "
+            "from this address\n",
+            host_ip.c_str());
+      } else {
+        LOG_DEBUG("UdpHotplugListener: skipping probe from host IP %s (not a device attach "
+                  "address)\n",
+                  host_ip.c_str());
+      }
+      continue;
+    }
+
+    // Create broadcast socket bound to INADDR_ANY (to receive limited-broadcast
+    // replies with destination 255.255.255.255) while pinning the egress to the
+    // NIC that owns host_ip (Linux: SO_BINDTODEVICE; Windows: directed subnet
+    // broadcast in SendDiscoveryBroadcastForInterface). This is required
+    // because the device may be reachable only through a non-default-route
+    // interface. The reply targets this socket's source port, so we send and
+    // receive on the same socket.
+    network::SocketHandle sock = network::CreateBroadcastSocketForInterface(host_ip);
     if (sock == network::kInvalidSocket) continue;
 
     // Build context for discovery
     IDiscovery::Context context;
     context[kContextKeyHostIp] = host_ip;
 
-    // Send discovery broadcast
-    if (!network::SendDiscoveryBroadcast(sock, network::kDefaultCommandPort, context, discovery)) {
+    // Send discovery broadcasts: directed subnet broadcast first (egresses via
+    // the on-link NIC that owns host_ip, required on Windows where a
+    // 255.255.255.255 limited broadcast only leaves via the default route),
+    // then the limited broadcast fallback.
+    if (!network::SendDiscoveryBroadcastForInterface(sock, network::kDefaultCommandPort, context,
+                                                     discovery, host_ip)) {
       network::CloseSocket(sock);
       continue;
     }
@@ -177,6 +230,31 @@ void UdpHotplugListener::SendDiscoveryProbe() {
         inet_ntop(AF_INET, &from_addr.sin_addr, socket_ip, INET_ADDRSTRLEN);
         device.network.ip_address = socket_ip;
         device.host_ip = host_ip;
+
+        // Subnet gate: only replies whose device IP shares the subnet of this
+        // round's host IP may enter the attach lifecycle. A cross-subnet
+        // device could not reach the device->host data channels (they all
+        // bind host_ip), so attaching it would lock in a broken session.
+        // Probing itself still covers every local IP - the reply is just not
+        // promoted to an attach event.
+        if (!network::IsIpInSameSubnet(device.network.ip_address, host_ip)) {
+          bool first_occurrence = false;
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            first_occurrence = cross_subnet_warned_.insert(device.network.ip_address).second;
+          }
+          if (first_occurrence) {
+            LOG_WARN(
+                "UdpHotplugListener: Device %s (SN=%s) is not in the same subnet as host IP %s - "
+                "reply ignored, attach requires a same-subnet host address\n",
+                device.network.ip_address.c_str(), device.sn.c_str(), host_ip.c_str());
+          } else {
+            LOG_DEBUG("UdpHotplugListener: Ignoring cross-subnet reply from %s (host IP %s)\n",
+                      device.network.ip_address.c_str(), host_ip.c_str());
+          }
+          continue;
+        }
+
         HandleDiscoveredDevice(device);
       }
     }
@@ -239,23 +317,103 @@ void UdpHotplugListener::HandleDiscoveredDevice(const DiscoveredDevice& device) 
 
   // Call callback outside the lock to avoid deadlock/threading issues
   if (should_notify && callbacks_.on_attach) {
+    // Re-probe once from the device's own subnet right before attach: the
+    // module latches its data-plane destination from the last DeviceQuery it
+    // hears before the heartbeat channel (TCP 60002) is established, and the
+    // initial discovery round may have reached it from other host addresses
+    // first. The socket is bound to the subnet's local IP so the probe's
+    // source address matches, and the probe is sent to the subnet's directed
+    // broadcast address.
+    {
+      auto discovery = discovery_;
+      if (!discovery) discovery = DiscoveryFactory::GetDefault();
+      // Probe from the exact host address this device was discovered through,
+      // not an arbitrary same-subnet address, so the latched stream target
+      // matches the address the data channels will bind to.
+      const std::string& ip = notify_device.host_ip;
+      if (!ip.empty() && ip.find("127.") != 0) {
+        std::string subnet_bcast = network::GetDirectedBroadcastAddress(ip);
+        if (!subnet_bcast.empty()) {
+          network::SocketHandle sock = network::CreateBroadcastSocket(ip, 0);
+          if (sock != network::kInvalidSocket) {
+            IDiscovery::Context context;
+            context[kContextKeyHostIp] = ip;
+            bool sent = network::SendDiscoveryBroadcast(sock, network::kDefaultCommandPort,
+                                                        context, discovery, subnet_bcast);
+            LOG_INFO(
+                "UdpHotplugListener: attach-lock probe sent=%d src=%s dst=%s port=%d\n",
+                sent, ip.c_str(), subnet_bcast.c_str(), network::kDefaultCommandPort);
+            network::CloseSocket(sock);
+          }
+        }
+      }
+    }
     callbacks_.on_attach(notify_device);
   }
 }
 
-// Note: CheckOfflineDevices() has been removed.
-// Device offline detection is now handled by heartbeat mechanism in Odin2Device.
-// When heartbeat fails, Odin2Device notifies OdinSdkImpl, which triggers on_detach callback.
+// Note: MarkDeviceOffline() has been removed.
+// Device offline detection is unified here: a device is considered offline when
+// its last_seen timestamp has not been refreshed (by discovery probes or by
+// successful heartbeats) within offline_timeout_ms_. This prevents network
+// cameras from being incorrectly marked offline while they are streaming and
+// therefore not answering discovery probes.
 
-void UdpHotplugListener::MarkDeviceOffline(const DiscoveredDevice& device) {
+void UdpHotplugListener::CheckOfflineDevices() {
+  std::vector<DiscoveredDevice> offline_devices;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Skip until the first probe completed so startup does not misfire detach
+    // for devices that simply have not been seen yet.
+    if (!first_probe_done_) {
+      return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+
+    for (auto& kv : devices_) {
+      if (!kv.second.online) continue;
+
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - kv.second.last_seen)
+                         .count();
+      if (elapsed > static_cast<int64_t>(offline_timeout_ms_)) {
+        // online -> offline transition: claim it under the lock so heartbeat
+        // and timeout paths never both fire on_detach for the same device.
+        kv.second.online = false;
+        offline_devices.push_back(kv.second.device);
+        LOG_INFO("UdpHotplugListener: Device offline (discovery timeout) - IP=%s, SN=%s, elapsed=%lldms, threshold=%ums\n",
+                 kv.second.device.network.ip_address.c_str(), kv.second.device.sn.c_str(),
+                 static_cast<long long>(elapsed), offline_timeout_ms_);
+      }
+    }
+  }
+
+  // Fire callbacks outside the lock to avoid deadlock/re-entrancy issues.
+  for (auto& dev : offline_devices) {
+    if (callbacks_.on_detach) {
+      callbacks_.on_detach(dev);
+    }
+  }
+}
+
+void UdpHotplugListener::RefreshDeviceAlive(const DiscoveredDevice& device) {
+  // Network devices are identified by IP within this listener; ignore signals
+  // that do not carry one (e.g. USB devices routed through the composite).
+  const std::string& ip = device.network.ip_address;
+  if (ip.empty()) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mutex_);
-  std::string key = device.sn.empty() ? device.network.ip_address : device.sn;
-  
-  auto it = devices_.find(key);
-  if (it != devices_.end()) {
-    it->second.online = false;
-    LOG_INFO("UdpHotplugListener: Device marked offline - IP=%s, SN=%s\n", 
-             device.network.ip_address.c_str(), device.sn.c_str());
+  // Devices may be keyed by SN or by IP; match on the IP field of the stored
+  // descriptor to stay agnostic to the chosen key.
+  for (auto& kv : devices_) {
+    if (kv.second.device.network.ip_address == ip) {
+      kv.second.last_seen = std::chrono::steady_clock::now();
+      LOG_DEBUG("UdpHotplugListener: Refresh last_seen for IP=%s\n", ip.c_str());
+      return;
+    }
   }
 }
 

@@ -1,0 +1,10 @@
+#pragma once
+
+#include <cstdio>
+
+namespace odin {
+inline void print_app_version(const char* program) {
+  std::printf("[VERSION] %s version=%s\n", program, "@APP_VERSION@");
+  std::fflush(stdout);
+}
+}  // namespace odin

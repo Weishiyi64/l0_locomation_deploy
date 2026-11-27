@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>luvbot_control_interfaces</name>
-  <version>1.0.0</version>
-  <description>Stable Luvbot controller, policy, and navigation interfaces.</description>
+  <version>0.1.0</version>
+  <description>External Luvbot navigation, voice, and perception interfaces.</description>
   <maintainer email="188166614@qq.com">luvbot</maintainer>
   <license>MIT</license>
 
@@ -11,9 +11,9 @@
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
+  <depend>action_msgs</depend>
   <depend>builtin_interfaces</depend>
   <depend>geometry_msgs</depend>
-  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>

@@ -2,15 +2,16 @@
 // Copyright (c) 2026, yuan (Original author)
 // All rights reserved.
 
-#include "legged_controllers/LeggedControlloop.h"
+#include "LeggedControlloop.h"
 
 #include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 
+#include <cmath>
 #include <cstring>
 
-#include "legged_controllers/LeggedController.h"
+#include "LeggedController.h"
 
 namespace legged {
 
@@ -58,7 +59,7 @@ LeggedControlloop::LeggedControlloop(rclcpp::Node::SharedPtr nh, std::shared_ptr
   YAML::Node rc = root["RobotCfg"];
   requireNode(rc, "RobotCfg");
   lowlevel_frequency = rc["lowlevel_frequency"].as<double>(-1.0);
-  if (lowlevel_frequency < 0)
+  if (!std::isfinite(lowlevel_frequency) || lowlevel_frequency <= 0.0)
   {
     error += 1;
   }
@@ -77,7 +78,6 @@ LeggedControlloop::LeggedControlloop(rclcpp::Node::SharedPtr nh, std::shared_ptr
   {
     error += 1;
   }
-  skipControlOnOverrun_ = rc1["skip_control_on_overrun"].as<bool>(false);
   setRealtimePriority_ = rc1["set_realtime_priority"].as<bool>(false);
 
   if (error > 0)
@@ -87,14 +87,26 @@ LeggedControlloop::LeggedControlloop(rclcpp::Node::SharedPtr nh, std::shared_ptr
     throw std::runtime_error(error_message);
   }
 
+  const auto loop_period = std::chrono::duration_cast<Clock::duration>(Duration(1.0 / lowlevel_frequency));
+  if (loop_period <= Clock::duration::zero())
+  {
+    throw std::runtime_error("lowlevel_frequency exceeds clock resolution");
+  }
+
   // ---------- 一次性：仅「启动」控制循环线程 ----------
-  // 下面 lambda 内 while 循环才是每周期执行：update() -> rate.sleep()
-  loopThread_ = std::thread([&]() {
-    rclcpp::Rate rate(lowlevel_frequency);
+  loopThread_ = std::thread([this, loop_period]() {
+    auto next_tick = Clock::now();
     while (loopRunning_ && rclcpp::ok())
     {
       update();
-      rate.sleep();
+      next_tick += loop_period;
+      const auto finished = Clock::now();
+      if (next_tick <= finished)
+      {
+        // Preserve the periodic grid, but skip every elapsed tick instead of catching up.
+        next_tick += loop_period * ((finished - next_tick) / loop_period + 1);
+      }
+      std::this_thread::sleep_until(next_tick);
     }
   });
 
@@ -138,23 +150,15 @@ void LeggedControlloop::update() {
   const auto currentTime = rclcpp::Clock().now();
   rclcpp::Duration elapsedTime = currentTime - last_call_time;
   last_call_time = currentTime;
-  bool overrun = false;
 
   try
   {
     // --- 循环步骤 1：从硬件读取状态 ---
     hardwareInterface_->read(rclcpp::Clock().now(), elapsedTime);
 
-    // --- 循环步骤 2 & 3：控制律更新 + 写回硬件（超时时可按配置跳过） ---
-    if (!overrun || !skipControlOnOverrun_)
-    {
-      controller_->update(rclcpp::Clock().now(), elapsedTime);
-      hardwareInterface_->write(rclcpp::Clock().now(), elapsedTime);
-    }
-    else
-    {
-      RCLCPP_WARN(nh_->get_logger(), "Skipping update & write this cycle due to overrun by configuration");
-    }
+    // --- 循环步骤 2 & 3：完成本轮更新与写回，线程调度处跳过错过的后续节拍 ---
+    controller_->update(rclcpp::Clock().now(), elapsedTime);
+    hardwareInterface_->write(rclcpp::Clock().now(), elapsedTime);
   } catch (const std::exception& e)
   {
     RCLCPP_ERROR_STREAM_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,

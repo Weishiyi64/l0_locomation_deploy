@@ -11,3 +11,10 @@
 **/__pycache__/
 *.py[cod]
 .DS_Store
+
+# Board-local policy installation, generated runtime records and device settings.
+/deploy_config/wbc-production.env
+/runs/
+/deploy_records/
+/src/hpm_transport_ros2/ota/
+/src/odin_ros_driver_rev1/module/sdk_api/lib/

@@ -1,0 +1,30 @@
+================================================
+  Package  : ros_driver v3.7.0 (release)
+  Generated: 2026-10-16 19:34:12 +0800
+================================================
+
+[ros_driver]
+  Commit  : fb484e0c119a5986e049efad7099643f5beba671
+  Branch  : dev
+  Date    : 2026-10-16 19:09:01 +0800
+  Message : release 3.7.0_20261016
+
+[sdk_api]
+  Commit  : 211d2a617092df3e8cb1f37c50e1a83e9eb09ed9
+  Branch  : dev
+  Date    : 2026-10-16 17:47:28 +0800
+  Message : release 3.6.0_20261016
+
+[protocol (sdk_api)]
+  Commit  : 13783e55e1d77fc8c1770d381663cee91c125eb1
+  Branch  : HEAD
+  Date    : 2026-08-06 17:24:13 +0800
+  Message : protocol[feat]: add get default sync mode and renumber ptp sync status to 0x22
+
+[Odin2Special (plugin)]
+  Commit  : 2648807c50acec495fc795c9d99728cff8155737
+  Branch  : HEAD
+  Date    : 2026-09-24 08:54:15 +0800
+  Message : refactor<device> add Windows DLL export support and output directory configuration for Odin2Special plugin
+
+================================================

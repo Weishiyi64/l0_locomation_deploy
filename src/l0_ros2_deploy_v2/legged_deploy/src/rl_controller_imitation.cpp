@@ -15,8 +15,6 @@ static RLControllerRegistrar registrar_rl_imitation("rl_imitation", [](rclcpp::N
   return std::unique_ptr<ControllerType>(new RL_imitation(nh));
 });
 
-// RL_imitation::RL_imitation(ros::NodeHandle& node_handle) :
-// BaseRLController(node_handle), loopRunning_(true) {
 RL_imitation::RL_imitation(rclcpp::Node::SharedPtr node_handle)
     : BaseRLController(node_handle),
       loopRunning_(true),
@@ -26,7 +24,6 @@ RL_imitation::RL_imitation(rclcpp::Node::SharedPtr node_handle)
       order_mapper_(node_handle->get_logger()),
       nh_(node_handle) {
   imitation_start_time = rclcpp::Time(0, 0, node_handle->get_clock()->get_clock_type());
-  last_update_time_ = rclcpp::Time(0, 0, RCL_SYSTEM_TIME);
   node_handle->get_parameter_or("dynamic_policy_switch_enabled", dynamic_policy_switch_enabled_, false);
   node_handle->get_parameter_or("policy_root_path", policy_root_path_, std::string(LEGGED_POLICY_PATH));
   int idle_frequency = 100;
@@ -60,7 +57,6 @@ RL_imitation::RL_imitation(rclcpp::Node::SharedPtr node_handle)
         preloadPoliciesLocked(preload_imitation_policies_);
       }
       initTopic(nh);
-      quit.store(false);
       model_loaded_.store(false);
     }
     else
@@ -97,9 +93,6 @@ RL_imitation::RL_imitation(rclcpp::Node::SharedPtr node_handle)
       model_loaded_.store(true);
       loop_frequency_hz_.store(std::max(1, params.policy_frequency));
 
-      // Set quit flag
-      quit.store(false);
-
       RCLCPP_INFO(node_handle->get_logger(), "RL_imitation: policy '%s' loaded OK", params.subpolicy.c_str());
     }
   } catch (const std::exception& e)
@@ -108,39 +101,16 @@ RL_imitation::RL_imitation(rclcpp::Node::SharedPtr node_handle)
     throw;
   }
 
-  // Setup loop thread
   loopThread_ = std::thread([this]() {
-    int last_frequency = 0;
-    std::unique_ptr<rclcpp::Rate> rate;
     while (loopRunning_ && rclcpp::ok())
     {
-      const int frequency = std::max(1, loop_frequency_hz_.load());
-      if (!rate || frequency != last_frequency)
-      {
-        rate = std::make_unique<rclcpp::Rate>(frequency);
-        last_frequency = frequency;
-      }
+      const auto started = SteadyClock::now();
       update();
-      rate->sleep();
+      finishPolicyCycle(started, loop_frequency_hz_.load());
     }
   });
 
-  // Set realtime priority
-  if (deploy_params.set_realtime_priority)
-  {
-    sched_param sched{};
-    sched.sched_priority = deploy_params.thread_priority;
-    int policy = getSchedulerPolicy(deploy_params.thread_scheduling_method);
-    if (pthread_setschedparam(loopThread_.native_handle(), policy, &sched) != 0)
-    {
-      // ("RL_imitation: Failed to set realtime priority");
-      RCLCPP_WARN(node_handle->get_logger(), "RL_imitation: Failed to set realtime priority");
-    }
-    else
-    {
-      printThreadSchedulerInfo(loopThread_.native_handle(), "RL_imitation");
-    }
-  }
+  configureThreadScheduler(loopThread_.native_handle(), deploy_params, "RL_imitation");
 }
 
 std::string RL_imitation::rlCmdPublishTopic() const { return "control/policy/command/imitation"; }
@@ -163,163 +133,33 @@ RL_imitation::~RL_imitation() {
 
 void RL_imitation::releaseModelResourcesLocked() {
   model_loaded_.store(false);
+  policy_observation_received_at_ = SteadyClock::time_point{};
   rl_inference_enabled_.store(false);
   current_policy_name_.clear();
   current_robot_cfg_path_.clear();
   previous_rl_inference_enabled_ = false;
-  update_frequency_initialized_ = false;
   motion_done_sent_ = false;
   precomputed_motion_data_.clear();
   motion_data_size_ = 0;
   has_body_quat_output_ = false;
 
-#ifdef USE_TENSORRT
-  if (policy_input_device_)
-  {
-    cudaFree(policy_input_device_);
-    policy_input_device_ = nullptr;
-  }
-  if (policy_output_device_)
-  {
-    cudaFree(policy_output_device_);
-    policy_output_device_ = nullptr;
-  }
-  if (trt_context_policy_)
-  {
-    delete trt_context_policy_;
-    trt_context_policy_ = nullptr;
-  }
-  if (trt_engine_policy_)
-  {
-    delete trt_engine_policy_;
-    trt_engine_policy_ = nullptr;
-  }
-  if (trt_runtime_policy_)
-  {
-    delete trt_runtime_policy_;
-    trt_runtime_policy_ = nullptr;
-  }
-
-  if (imitation_input_device_)
-  {
-    cudaFree(imitation_input_device_);
-    imitation_input_device_ = nullptr;
-  }
-  for (auto& kv : imitation_outputs_)
-  {
-    if (kv.second.device_ptr)
-    {
-      cudaFree(kv.second.device_ptr);
-      kv.second.device_ptr = nullptr;
-    }
-  }
-  if (trt_context_imitation_)
-  {
-    delete trt_context_imitation_;
-    trt_context_imitation_ = nullptr;
-  }
-  if (trt_engine_imitation_)
-  {
-    delete trt_engine_imitation_;
-    trt_engine_imitation_ = nullptr;
-  }
-  if (trt_runtime_imitation_)
-  {
-    delete trt_runtime_imitation_;
-    trt_runtime_imitation_ = nullptr;
-  }
-#elif defined(USE_RKNN)
-  rknn_policy_.reset();
-  rknn_imitation_.reset();
-  rknn_policy_output_idx_ = 0;
-#elif defined(USE_OPENVINO)
-  ov_compiled_policy_ = ov::CompiledModel();
-  ov_infer_policy_ = ov::InferRequest();
-  ov_compiled_imitation_ = ov::CompiledModel();
-  ov_infer_imitation_ = ov::InferRequest();
-#endif
+  model_policy_.reset();
+  model_imitation_.reset();
+  model_policy_output_idx_ = 0;
 
   imitation_outputs_.clear();
   obs_manager_.reset();
-  fallback_obs_manager_.reset();
-#ifdef USE_TENSORRT
-  policy_output_host_.clear();
-#endif
   params = RL_IMITATION_ModelParams();
   params.robot_type = robot_type_;
 }
 
 void RL_imitation::releaseCachedRuntime(CachedPolicyRuntime& runtime) {
-#ifdef USE_TENSORRT
-  if (runtime.policy_input_device)
-  {
-    cudaFree(runtime.policy_input_device);
-    runtime.policy_input_device = nullptr;
-  }
-  if (runtime.policy_output_device)
-  {
-    cudaFree(runtime.policy_output_device);
-    runtime.policy_output_device = nullptr;
-  }
-  if (runtime.trt_context_policy)
-  {
-    delete runtime.trt_context_policy;
-    runtime.trt_context_policy = nullptr;
-  }
-  if (runtime.trt_engine_policy)
-  {
-    delete runtime.trt_engine_policy;
-    runtime.trt_engine_policy = nullptr;
-  }
-  if (runtime.trt_runtime_policy)
-  {
-    delete runtime.trt_runtime_policy;
-    runtime.trt_runtime_policy = nullptr;
-  }
-
-  if (runtime.imitation_input_device)
-  {
-    cudaFree(runtime.imitation_input_device);
-    runtime.imitation_input_device = nullptr;
-  }
-  for (auto& kv : runtime.imitation_outputs)
-  {
-    if (kv.second.device_ptr)
-    {
-      cudaFree(kv.second.device_ptr);
-      kv.second.device_ptr = nullptr;
-    }
-  }
-  if (runtime.trt_context_imitation)
-  {
-    delete runtime.trt_context_imitation;
-    runtime.trt_context_imitation = nullptr;
-  }
-  if (runtime.trt_engine_imitation)
-  {
-    delete runtime.trt_engine_imitation;
-    runtime.trt_engine_imitation = nullptr;
-  }
-  if (runtime.trt_runtime_imitation)
-  {
-    delete runtime.trt_runtime_imitation;
-    runtime.trt_runtime_imitation = nullptr;
-  }
-  runtime.policy_output_host.clear();
-#elif defined(USE_RKNN)
-  runtime.rknn_policy.reset();
-  runtime.rknn_imitation.reset();
-  runtime.rknn_policy_output_idx = 0;
-#elif defined(USE_OPENVINO)
-  runtime.ov_compiled_policy = ov::CompiledModel();
-  runtime.ov_infer_policy = ov::InferRequest();
-  runtime.ov_compiled_imitation = ov::CompiledModel();
-  runtime.ov_infer_imitation = ov::InferRequest();
-#endif
+  runtime.model_policy.reset();
+  runtime.model_imitation.reset();
+  runtime.model_policy_output_idx = 0;
 
   runtime.imitation_outputs.clear();
   runtime.obs_manager.reset();
-  runtime.fallback_obs_manager.reset();
   runtime.precomputed_motion_data.clear();
 }
 
@@ -333,69 +173,26 @@ RL_imitation::CachedPolicyRuntime RL_imitation::takeCurrentRuntimeLocked() {
   runtime.rbt_output = std::move(rbt_output);
   runtime.obs = std::move(obs);
   runtime.obs_manager = std::move(obs_manager_);
-  runtime.fallback_obs_manager = std::move(fallback_obs_manager_);
-  runtime.fallback_params = std::move(fallback_params_);
   runtime.imitation_start_time = imitation_start_time;
   runtime.previous_rl_inference_enabled = previous_rl_inference_enabled_;
   runtime.initial_quats_logged = initial_quats_logged_;
-  runtime.initial_yaw = initial_yaw_;
-  runtime.initial_yaw_valid = initial_yaw_valid_;
   runtime.robot_initial_quat = robot_initial_quat;
   runtime.imitation_initial_quat = imitation_initial_quat;
   runtime.time_step_counter = time_step_counter_;
-  runtime.imitation_model_enabled = imitation_model_enabled_;
   runtime.policy_output_name = policy_output_name_;
   runtime.motion_done_sent = motion_done_sent_;
   runtime.precomputed_motion_data = std::move(precomputed_motion_data_);
   runtime.motion_data_size = motion_data_size_;
   runtime.has_body_quat_output = has_body_quat_output_;
-  runtime.last_update_time = last_update_time_;
-  runtime.update_frequency_initialized = update_frequency_initialized_;
 
-#ifdef USE_TENSORRT
-  runtime.trt_runtime_policy = trt_runtime_policy_;
-  runtime.trt_engine_policy = trt_engine_policy_;
-  runtime.trt_context_policy = trt_context_policy_;
-  runtime.policy_input_device = policy_input_device_;
-  runtime.policy_output_device = policy_output_device_;
-  runtime.policy_output_host = std::move(policy_output_host_);
-  runtime.policy_input_binding_idx = policy_input_binding_idx_;
-  runtime.policy_output_binding_idx = policy_output_binding_idx_;
-  runtime.trt_runtime_imitation = trt_runtime_imitation_;
-  runtime.trt_engine_imitation = trt_engine_imitation_;
-  runtime.trt_context_imitation = trt_context_imitation_;
-  runtime.imitation_input_device = imitation_input_device_;
-  runtime.imitation_input_binding_idx = imitation_input_binding_idx_;
-  trt_runtime_policy_ = nullptr;
-  trt_engine_policy_ = nullptr;
-  trt_context_policy_ = nullptr;
-  policy_input_device_ = nullptr;
-  policy_output_device_ = nullptr;
-  policy_input_binding_idx_ = 0;
-  policy_output_binding_idx_ = 1;
-  trt_runtime_imitation_ = nullptr;
-  trt_engine_imitation_ = nullptr;
-  trt_context_imitation_ = nullptr;
-  imitation_input_device_ = nullptr;
-  imitation_input_binding_idx_ = 0;
-#elif defined(USE_RKNN)
-  runtime.rknn_policy = std::move(rknn_policy_);
-  runtime.rknn_imitation = std::move(rknn_imitation_);
-  runtime.rknn_policy_output_idx = rknn_policy_output_idx_;
-  rknn_policy_output_idx_ = 0;
-#elif defined(USE_OPENVINO)
-  runtime.ov_compiled_policy = std::move(ov_compiled_policy_);
-  runtime.ov_infer_policy = std::move(ov_infer_policy_);
-  runtime.ov_compiled_imitation = std::move(ov_compiled_imitation_);
-  runtime.ov_infer_imitation = std::move(ov_infer_imitation_);
-  ov_compiled_policy_ = ov::CompiledModel();
-  ov_infer_policy_ = ov::InferRequest();
-  ov_compiled_imitation_ = ov::CompiledModel();
-  ov_infer_imitation_ = ov::InferRequest();
-#endif
+  runtime.model_policy = std::move(model_policy_);
+  runtime.model_imitation = std::move(model_imitation_);
+  runtime.model_policy_output_idx = model_policy_output_idx_;
+  model_policy_output_idx_ = 0;
   runtime.imitation_outputs = std::move(imitation_outputs_);
 
   model_loaded_.store(false);
+  policy_observation_received_at_ = SteadyClock::time_point{};
   rl_inference_enabled_.store(false);
   current_policy_name_.clear();
   current_robot_cfg_path_.clear();
@@ -405,23 +202,17 @@ RL_imitation::CachedPolicyRuntime RL_imitation::takeCurrentRuntimeLocked() {
   rbt_state = Robot_Imitation_State(nh_->get_logger());
   rbt_output = Robot_Imitation_Output(nh_->get_logger());
   obs = Observations_Imitation(1, 1);
-  fallback_params_ = RL_ModelParams();
   imitation_start_time = rclcpp::Time(0, 0, nh_->get_clock()->get_clock_type());
   previous_rl_inference_enabled_ = false;
   initial_quats_logged_ = false;
-  initial_yaw_ = 0.0;
-  initial_yaw_valid_ = false;
   robot_initial_quat = Eigen::Quaterniond::Identity();
   imitation_initial_quat = Eigen::Quaterniond::Identity();
   order_mapper_ = order_mapping::OrderMapper(nh_->get_logger());
   time_step_counter_ = 0;
-  imitation_model_enabled_ = true;
   policy_output_name_.clear();
   motion_done_sent_ = false;
   motion_data_size_ = 0;
   has_body_quat_output_ = false;
-  last_update_time_ = rclcpp::Time(0, 0, RCL_SYSTEM_TIME);
-  update_frequency_initialized_ = false;
   return runtime;
 }
 
@@ -464,59 +255,22 @@ void RL_imitation::restoreRuntimeLocked(CachedPolicyRuntime&& runtime) {
   rbt_output = std::move(runtime.rbt_output);
   obs = std::move(runtime.obs);
   obs_manager_ = std::move(runtime.obs_manager);
-  fallback_obs_manager_ = std::move(runtime.fallback_obs_manager);
-  fallback_params_ = std::move(runtime.fallback_params);
   imitation_start_time = runtime.imitation_start_time;
   previous_rl_inference_enabled_ = runtime.previous_rl_inference_enabled;
   initial_quats_logged_ = runtime.initial_quats_logged;
-  initial_yaw_ = runtime.initial_yaw;
-  initial_yaw_valid_ = runtime.initial_yaw_valid;
   robot_initial_quat = runtime.robot_initial_quat;
   imitation_initial_quat = runtime.imitation_initial_quat;
   time_step_counter_ = runtime.time_step_counter;
-  imitation_model_enabled_ = runtime.imitation_model_enabled;
   policy_output_name_ = std::move(runtime.policy_output_name);
   motion_done_sent_ = runtime.motion_done_sent;
   precomputed_motion_data_ = std::move(runtime.precomputed_motion_data);
   motion_data_size_ = runtime.motion_data_size;
   has_body_quat_output_ = runtime.has_body_quat_output;
-  last_update_time_ = runtime.last_update_time;
-  update_frequency_initialized_ = runtime.update_frequency_initialized;
 
-#ifdef USE_TENSORRT
-  trt_runtime_policy_ = runtime.trt_runtime_policy;
-  trt_engine_policy_ = runtime.trt_engine_policy;
-  trt_context_policy_ = runtime.trt_context_policy;
-  policy_input_device_ = runtime.policy_input_device;
-  policy_output_device_ = runtime.policy_output_device;
-  policy_output_host_ = std::move(runtime.policy_output_host);
-  policy_input_binding_idx_ = runtime.policy_input_binding_idx;
-  policy_output_binding_idx_ = runtime.policy_output_binding_idx;
-  trt_runtime_imitation_ = runtime.trt_runtime_imitation;
-  trt_engine_imitation_ = runtime.trt_engine_imitation;
-  trt_context_imitation_ = runtime.trt_context_imitation;
-  imitation_input_device_ = runtime.imitation_input_device;
-  imitation_input_binding_idx_ = runtime.imitation_input_binding_idx;
-  runtime.trt_runtime_policy = nullptr;
-  runtime.trt_engine_policy = nullptr;
-  runtime.trt_context_policy = nullptr;
-  runtime.policy_input_device = nullptr;
-  runtime.policy_output_device = nullptr;
-  runtime.trt_runtime_imitation = nullptr;
-  runtime.trt_engine_imitation = nullptr;
-  runtime.trt_context_imitation = nullptr;
-  runtime.imitation_input_device = nullptr;
-#elif defined(USE_RKNN)
-  rknn_policy_ = std::move(runtime.rknn_policy);
-  rknn_imitation_ = std::move(runtime.rknn_imitation);
-  rknn_policy_output_idx_ = runtime.rknn_policy_output_idx;
-  runtime.rknn_policy_output_idx = 0;
-#elif defined(USE_OPENVINO)
-  ov_compiled_policy_ = std::move(runtime.ov_compiled_policy);
-  ov_infer_policy_ = std::move(runtime.ov_infer_policy);
-  ov_compiled_imitation_ = std::move(runtime.ov_compiled_imitation);
-  ov_infer_imitation_ = std::move(runtime.ov_infer_imitation);
-#endif
+  model_policy_ = std::move(runtime.model_policy);
+  model_imitation_ = std::move(runtime.model_imitation);
+  model_policy_output_idx_ = runtime.model_policy_output_idx;
+  runtime.model_policy_output_idx = 0;
   imitation_outputs_ = std::move(runtime.imitation_outputs);
 
   if (!params.robot_type.empty())
@@ -527,6 +281,7 @@ void RL_imitation::restoreRuntimeLocked(CachedPolicyRuntime&& runtime) {
   {
     params.robot_type = robot_type_;
   }
+  policy_observation_received_at_ = SteadyClock::time_point{};
   policy_observation_.joints.name = params.joint_order_mj;
   policy_observation_.joints.position.assign(params.num_actions, 0.0);
   policy_observation_.joints.velocity.assign(params.num_actions, 0.0);
@@ -539,86 +294,37 @@ void RL_imitation::restoreRuntimeLocked(CachedPolicyRuntime&& runtime) {
 }
 
 void RL_imitation::update() {
+  const auto started = SteadyClock::now();
   std::lock_guard<std::mutex> lock(model_mutex_);
-  if (!model_loaded_.load())
+  const bool enabled = model_loaded_.load() && rl_inference_enabled_.load();
+  if (!enabled)
   {
     previous_rl_inference_enabled_ = false;
-    update_frequency_initialized_ = false;
     return;
   }
+  if (!isPolicyInputFresh(policy_observation_, policy_observation_received_at_)) return;
+  if (!previous_rl_inference_enabled_) resetImitationState();
+  previous_rl_inference_enabled_ = true;
 
-  // const auto currentTime = ros::Time::now();
-  const auto currentTime = rclcpp::Clock().now();
-  bool overrun = false;
+  if (!updateObservation()) return;
+  auto next_output = rbt_output;
+  if (!updateAction(next_output) || !isPolicyInputFresh(policy_observation_, policy_observation_received_at_) ||
+      !isPolicyResultTimely(started, params.policy_frequency)) return;
+  if (!publishPolicyCommand(rclcpp::Time(policy_observation_.header.stamp, nh_->get_clock()->get_clock_type()))) return;
+  rbt_output = std::move(next_output);
 
-  if (!update_frequency_initialized_)
+  if (motion_data_size_ > 0 && pubImitationMotionDone_ &&
+      time_step_counter_ >= motion_data_size_ - 1 && !motion_done_sent_)
   {
-    last_update_time_ = currentTime;
-    update_frequency_initialized_ = true;
-  }
-  else
-  {
-    // ros::Duration elapsedTime = currentTime - last_call_time;
-    rclcpp::Duration elapsedTime = currentTime - last_update_time_;
-    last_update_time_ = currentTime;
-    // double actual_frequency = 1.0 / elapsedTime.toSec();
-    double actual_frequency = 1.0 / elapsedTime.seconds();
-    double frequency_diff = std::abs(actual_frequency - params.policy_frequency);
-    double frequency_threshold = params.policy_frequency * 0.2;
-
-    if (frequency_diff > frequency_threshold)
-    {
-      overrun = true;
-      // ("[RL Frequency] Expected: %.2f Hz, Actual: %.2f Hz,
-      // Difference: %.2f Hz",
-      RCLCPP_WARN(nh_->get_logger(),
-                  "[RL Frequency] Expected: %.2f Hz, Actual: %.2f Hz, "
-                  "Difference: %.2f Hz",
-                  static_cast<double>(params.policy_frequency), actual_frequency, frequency_diff);
-    }
-  }
-
-  // 检测rl_inference_enabled_从false到true的转换
-  bool current_rl_inference_enabled = rl_inference_enabled_.load();
-  if (current_rl_inference_enabled && !previous_rl_inference_enabled_)
-  {
-    // 从false转为true时，重置开始时间和时间步计数器
-    resetImitationState();
-  }
-  previous_rl_inference_enabled_ = current_rl_inference_enabled;
-
-  if (current_rl_inference_enabled)
-  {
-    if (!overrun || !deploy_params.skip_infer_on_overrun)
-    {
-      if (!updateObservation()) return;
-      if (updateAction())
-      {
-        publishPolicyCommand();
-      }
-    }
-    else
-    {
-      RCLCPP_WARN(nh_->get_logger(), "Skipping inference this cycle due to overrun by configuration");
-    }
-
-    if (motion_data_size_ > 0 && pubImitationMotionDone_)
-    {
-      const int last_idx = motion_data_size_ - 1;
-      if (time_step_counter_ >= last_idx && !motion_done_sent_)
-      {
-        std_msgs::msg::Bool done_msg;
-        done_msg.data = true;
-        pubImitationMotionDone_->publish(done_msg);
-        motion_done_sent_ = true;
-        RCLCPP_INFO(nh_->get_logger(), "RL_imitation: published /imitation_motion_done (reached frame %d / %d)",
-                    time_step_counter_, motion_data_size_);
-      }
-    }
+    std_msgs::msg::Bool done_msg;
+    done_msg.data = true;
+    pubImitationMotionDone_->publish(done_msg);
+    motion_done_sent_ = true;
+    RCLCPP_INFO(nh_->get_logger(), "RL_imitation: published /imitation_motion_done (reached frame %d / %d)",
+                time_step_counter_, motion_data_size_);
   }
 }
 
-// void RL_imitation::initTopic(ros::NodeHandle& nh_) {
 void RL_imitation::initTopic(rclcpp::Node::SharedPtr nh_, bool create_switch_service) {
   // Initialize the common PolicyObservation and PolicyCommand topics.
   initBaseTopic(nh_);
@@ -644,58 +350,10 @@ void RL_imitation::initTopic(rclcpp::Node::SharedPtr nh_, bool create_switch_ser
 }
 
 void RL_imitation::createSwitchPolicyService() {
-  switchPolicySrv_ = nh_->create_service<luvbot_control_interfaces::srv::SwitchPolicy>(
+  switchPolicySrv_ = nh_->create_service<robot_interfaces::srv::SwitchPolicy>(
       "control/policy/switch",
       std::bind(&RL_imitation::switchImitationPolicyCallback, this, std::placeholders::_1, std::placeholders::_2));
 }
-
-#ifdef USE_TENSORRT
-// Helper: compute total number of elements in a TRT binding tensor.
-static size_t trtBindingElements(nvinfer1::ICudaEngine* engine, int idx) {
-  auto dims = engine->getTensorShape(engine->getIOTensorName(idx));
-  size_t count = 1;
-  for (int d = 0; d < dims.nbDims; ++d)
-  {
-    count *= static_cast<size_t>(dims.d[d]);
-  }
-  return count;
-}
-// Helper: load a pre-built .trt engine file directly.
-// Derives the .trt path from onnx_path by replacing the .onnx extension.
-// Returns a deserialized ICudaEngine, or throws on failure.
-static nvinfer1::ICudaEngine* loadTrtEngine(const std::string& onnx_path, nvinfer1::IRuntime* runtime) {
-  // Derive .trt path
-  std::string trt_path = onnx_path;
-  const std::string ext = ".onnx";
-  if (trt_path.size() >= ext.size() && trt_path.compare(trt_path.size() - ext.size(), ext.size(), ext) == 0)
-  {
-    trt_path.replace(trt_path.size() - ext.size(), ext.size(), ".trt");
-  }
-  else
-  {
-    trt_path += ".trt";
-  }
-
-  std::ifstream trt_file(trt_path, std::ios::binary);
-  if (!trt_file.good())
-  {
-    throw std::runtime_error("TRT engine file not found: " + trt_path);
-  }
-  trt_file.seekg(0, std::ios::end);
-  size_t size = trt_file.tellg();
-  trt_file.seekg(0, std::ios::beg);
-  std::vector<char> data(size);
-  trt_file.read(data.data(), size);
-  trt_file.close();
-
-  auto* engine = runtime->deserializeCudaEngine(data.data(), size);
-  if (!engine)
-  {
-    throw std::runtime_error("TRT: deserializeCudaEngine failed for " + trt_path);
-  }
-  return engine;
-}
-#endif  // USE_TENSORRT
 
 void RL_imitation::initModel() {
   rbt_state =
@@ -703,146 +361,34 @@ void RL_imitation::initModel() {
   rbt_output = Robot_Imitation_Output(nh_->get_logger(), params.num_actions);
   obs = Observations_Imitation(params.num_single_obs, params.frame_stack_indices);
 
-#ifdef USE_TENSORRT
-  trt_logger_.ros_logger = nh_->get_logger();
-#endif
-
   try
   {
-#ifdef USE_TENSORRT
-    // ---- Policy model (TRT) ----
-    trt_runtime_policy_ = nvinfer1::createInferRuntime(trt_logger_);
-    if (!trt_runtime_policy_) throw std::runtime_error("TRT: createInferRuntime failed (policy)");
-
-    trt_engine_policy_ = loadTrtEngine(params.policy_path, trt_runtime_policy_);
-    trt_context_policy_ = trt_engine_policy_->createExecutionContext();
-    if (!trt_context_policy_) throw std::runtime_error("TRT: createExecutionContext failed (policy)");
-
-    {
-      const int nb_policy = static_cast<int>(trt_engine_policy_->getNbIOTensors());
-      policy_input_binding_idx_ = -1;
-      policy_output_binding_idx_ = -1;
-      for (int i = 0; i < nb_policy; ++i)
-      {
-        const char* tensor_name = trt_engine_policy_->getIOTensorName(i);
-        const bool is_input = trt_engine_policy_->getTensorIOMode(tensor_name) == nvinfer1::TensorIOMode::kINPUT;
-        if (is_input)
-        {
-          policy_input_binding_idx_ = i;
-        }
-        else
-        {
-          if (!policy_output_name_.empty())
-          {
-            std::string bname = tensor_name;
-            std::transform(bname.begin(), bname.end(), bname.begin(), ::tolower);
-            if (bname == policy_output_name_) policy_output_binding_idx_ = i;
-          }
-          if (policy_output_binding_idx_ == -1) policy_output_binding_idx_ = i;
-        }
-      }
-      if (policy_input_binding_idx_ < 0 || policy_output_binding_idx_ < 0)
-        throw std::runtime_error("TRT: failed to resolve policy bindings");
-    }
-    {
-      const size_t policy_in_sz = static_cast<size_t>(params.num_single_obs) * params.frame_stack;
-      const size_t policy_out_sz = static_cast<size_t>(params.num_actions);
-      cudaError_t err = cudaMalloc(&policy_input_device_, policy_in_sz * sizeof(float));
-      if (err != cudaSuccess)
-        throw std::runtime_error(std::string("cudaMalloc policy input: ") + cudaGetErrorString(err));
-      err = cudaMalloc(&policy_output_device_, policy_out_sz * sizeof(float));
-      if (err != cudaSuccess)
-        throw std::runtime_error(std::string("cudaMalloc policy output: ") + cudaGetErrorString(err));
-      policy_output_host_.resize(policy_out_sz, 0.0f);
-    }
-    // ---- Imitation model (TRT) ----
-    trt_runtime_imitation_ = nvinfer1::createInferRuntime(trt_logger_);
-    if (!trt_runtime_imitation_) throw std::runtime_error("TRT: createInferRuntime failed (imitation)");
-    trt_engine_imitation_ = loadTrtEngine(params.imitation_path, trt_runtime_imitation_);
-    trt_context_imitation_ = trt_engine_imitation_->createExecutionContext();
-    if (!trt_context_imitation_) throw std::runtime_error("TRT: createExecutionContext failed (imitation)");
-
-    {
-      const int nb_imit = static_cast<int>(trt_engine_imitation_->getNbIOTensors());
-      imitation_input_binding_idx_ = -1;
-      cudaError_t err = cudaSuccess;
-      for (int i = 0; i < nb_imit; ++i)
-      {
-        const char* tensor_name = trt_engine_imitation_->getIOTensorName(i);
-        const std::string bname = std::string(tensor_name);
-        const size_t num_elem = trtBindingElements(trt_engine_imitation_, i);
-        const bool is_input = trt_engine_imitation_->getTensorIOMode(tensor_name) == nvinfer1::TensorIOMode::kINPUT;
-        if (is_input)
-        {
-          imitation_input_binding_idx_ = i;
-          err = cudaMalloc(&imitation_input_device_, num_elem * sizeof(float));
-          if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMalloc imitation input: ") + cudaGetErrorString(err));
-        }
-        else
-        {
-          ImitationOutputBuffer buf;
-          buf.binding_idx = i;
-          buf.host_buf.assign(num_elem, 0.0f);
-          err = cudaMalloc(&buf.device_ptr, num_elem * sizeof(float));
-          if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMalloc imitation output '") + bname +
-                                     "': " + cudaGetErrorString(err));
-          imitation_outputs_[bname] = std::move(buf);
-        }
-      }
-      if (imitation_input_binding_idx_ < 0) throw std::runtime_error("TRT: no input binding in imitation engine");
-    }
-#elif defined(USE_RKNN)
-    // ---- Policy model (RKNN) ----
-    rknn_policy_ = std::make_unique<RknnModel>(rknnModelPath(params.policy_path));
+    // ---- Policy model (Inference) ----
+    model_policy_ = std::make_unique<InferenceModel>(inferenceModelPath(params.policy_path));
     const size_t policy_in_sz = static_cast<size_t>(params.num_single_obs) * params.frame_stack;
     const size_t policy_out_sz = static_cast<size_t>(params.num_actions);
-    if (rknn_policy_->inputElements() != policy_in_sz)
+    if (model_policy_->inputCount() != 1 || model_policy_->inputElements() != policy_in_sz)
       throw std::runtime_error(
-          "RKNN policy input size mismatch: model=" + std::to_string(rknn_policy_->inputElements()) +
+          "Inference policy input size mismatch: model=" + std::to_string(model_policy_->inputElements()) +
           ", config=" + std::to_string(policy_in_sz));
-    rknn_policy_output_idx_ = rknn_policy_->outputIndex(policy_output_name_);
-    if (rknn_policy_output_idx_ < 0) throw std::runtime_error("RKNN policy output not found: " + policy_output_name_);
-    if (rknn_policy_->outputElements(static_cast<size_t>(rknn_policy_output_idx_)) != policy_out_sz)
-      throw std::runtime_error("RKNN policy output size mismatch: model=" +
-                               std::to_string(rknn_policy_->outputElements(rknn_policy_output_idx_)) +
+    model_policy_output_idx_ = model_policy_->outputIndex(policy_output_name_);
+    if (model_policy_output_idx_ < 0) throw std::runtime_error("Inference policy output not found: " + policy_output_name_);
+    if (model_policy_->outputElements(static_cast<size_t>(model_policy_output_idx_)) != policy_out_sz)
+      throw std::runtime_error("Inference policy output size mismatch: model=" +
+                               std::to_string(model_policy_->outputElements(model_policy_output_idx_)) +
                                ", config=" + std::to_string(policy_out_sz));
 
-    // ---- Imitation model (RKNN) ----
-    rknn_imitation_ = std::make_unique<RknnModel>(rknnModelPath(params.imitation_path));
-    if (rknn_imitation_->inputElements() != 1)
-      throw std::runtime_error("RKNN imitation model input must contain exactly one timestep value");
-    for (size_t i = 0; i < rknn_imitation_->outputCount(); ++i)
+    // ---- Imitation model (Inference) ----
+    model_imitation_ = std::make_unique<InferenceModel>(inferenceModelPath(params.imitation_path));
+    if (model_imitation_->inputCount() != 1 || model_imitation_->inputElements() != 1)
+      throw std::runtime_error("Inference imitation model input must contain exactly one timestep value");
+    for (size_t i = 0; i < model_imitation_->outputCount(); ++i)
     {
       ImitationOutputBuffer buf;
-      buf.binding_idx = static_cast<int>(i);
-      buf.host_buf.assign(rknn_imitation_->outputElements(i), 0.0f);
-      imitation_outputs_[rknn_imitation_->outputName(i)] = std::move(buf);
+      buf.output_index = static_cast<int>(i);
+      buf.host_buf.assign(model_imitation_->outputElements(i), 0.0f);
+      imitation_outputs_[model_imitation_->outputName(i)] = std::move(buf);
     }
-#elif defined(USE_OPENVINO)
-    // ---- Policy model (OpenVINO) ----
-    ov_compiled_policy_ = ov_core_.compile_model(params.policy_path, "CPU");
-    ov_infer_policy_ = ov_compiled_policy_.create_infer_request();
-
-    // ---- Imitation model (OpenVINO) ----
-    ov_compiled_imitation_ = ov_core_.compile_model(params.imitation_path, "CPU");
-    ov_infer_imitation_ = ov_compiled_imitation_.create_infer_request();
-
-    // Warmup to resolve output shapes, then build imitation_outputs_ map
-    ov_infer_imitation_.get_input_tensor().data<float>()[0] = 0.0f;
-    ov_infer_imitation_.infer();
-    for (const auto& out : ov_compiled_imitation_.outputs())
-    {
-      const std::string name = out.get_any_name();
-      auto tensor = ov_infer_imitation_.get_tensor(name);
-      ImitationOutputBuffer buf;
-      buf.binding_idx = -1;
-      buf.host_buf.assign(tensor.get_size(), 0.0f);
-      buf.device_ptr = nullptr;
-      imitation_outputs_[name] = std::move(buf);
-    }
-#endif
 
     has_body_quat_output_ = imitation_outputs_.find("body_quat_w") != imitation_outputs_.end();
 
@@ -935,67 +481,17 @@ void RL_imitation::initModel() {
 }
 
 bool RL_imitation::runImitationInference(float timestep) {
-#ifdef USE_TENSORRT
-  cudaError_t err = cudaMemcpy(imitation_input_device_, &timestep, sizeof(float), cudaMemcpyHostToDevice);
-  if (err != cudaSuccess)
+  if (!model_imitation_->run(&timestep, 1))
   {
-    RCLCPP_ERROR(nh_->get_logger(), "TRT imitation: H2D failed: %s", cudaGetErrorString(err));
-    return false;
-  }
-  {
-    const char* input_name = trt_engine_imitation_->getIOTensorName(imitation_input_binding_idx_);
-    if (!trt_context_imitation_->setTensorAddress(input_name, imitation_input_device_))
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT imitation: setTensorAddress failed for input");
-      return false;
-    }
-    for (const auto& kv : imitation_outputs_)
-    {
-      if (!trt_context_imitation_->setTensorAddress(kv.first.c_str(), kv.second.device_ptr))
-      {
-        RCLCPP_ERROR(nh_->get_logger(), "TRT imitation: setTensorAddress failed for '%s'", kv.first.c_str());
-        return false;
-      }
-    }
-    if (!trt_context_imitation_->enqueueV3(0))
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT imitation: enqueueV3 failed");
-      return false;
-    }
-  }
-  for (auto& kv : imitation_outputs_)
-  {
-    err = cudaMemcpy(kv.second.host_buf.data(), kv.second.device_ptr, kv.second.host_buf.size() * sizeof(float),
-                     cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT imitation: D2H failed '%s': %s", kv.first.c_str(), cudaGetErrorString(err));
-      return false;
-    }
-  }
-
-#elif defined(USE_RKNN)
-  if (!rknn_imitation_->run(&timestep, 1))
-  {
-    RCLCPP_ERROR(nh_->get_logger(), "RKNN imitation inference failed: %s", rknn_imitation_->lastError().c_str());
+    RCLCPP_ERROR(nh_->get_logger(), "Inference imitation inference failed: %s", model_imitation_->lastError().c_str());
     return false;
   }
   for (auto& kv : imitation_outputs_)
   {
-    const auto& output = rknn_imitation_->output(static_cast<size_t>(kv.second.binding_idx));
+    const auto& output = model_imitation_->output(static_cast<size_t>(kv.second.output_index));
     std::copy(output.begin(), output.end(), kv.second.host_buf.begin());
   }
 
-#elif defined(USE_OPENVINO)
-  ov_infer_imitation_.get_input_tensor().data<float>()[0] = timestep;
-  ov_infer_imitation_.infer();
-  for (auto& kv : imitation_outputs_)
-  {
-    auto tensor = ov_infer_imitation_.get_tensor(kv.first);
-    const float* src = tensor.data<const float>();
-    std::copy(src, src + kv.second.host_buf.size(), kv.second.host_buf.begin());
-  }
-#endif
   return true;
 }
 
@@ -1155,6 +651,7 @@ int RL_imitation::detectMaxTimeSteps(const std::map<std::string, size_t>& output
 }
 
 void RL_imitation::initData() {
+  policy_observation_received_at_ = SteadyClock::time_point{};
   policy_observation_.joints.name = params.joint_order_mj;
   policy_observation_.joints.position.resize(params.num_actions);
   policy_observation_.joints.velocity.resize(params.num_actions);
@@ -1336,15 +833,24 @@ bool RL_imitation::getParam() {
 }
 
 void RL_imitation::refreshInferenceEnabledLocked() {
-  const bool enabled = policy_observation_.inference_enabled && imitation_active_ && model_loaded_.load();
+  const bool enabled = policy_observation_.inference_enabled && imitation_active_ && model_loaded_.load() &&
+                       policy_observation_received_at_ != SteadyClock::time_point{};
   rl_inference_enabled_.store(enabled);
+  if (!enabled) previous_rl_inference_enabled_ = false;
 }
 
-void RL_imitation::stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) {
+void RL_imitation::stateCallback(const robot_interfaces::msg::PolicyObservation::ConstSharedPtr msg) {
   std::lock_guard<std::mutex> lock(model_mutex_);
-  policy_observation_.inference_enabled = msg->inference_enabled;
   if (model_loaded_.load() && validatePolicyObservation(*msg, params.joint_order_mj, "RL_imitation"))
+  {
     policy_observation_ = *msg;
+    policy_observation_received_at_ = SteadyClock::now();
+  }
+  else
+  {
+    policy_observation_.inference_enabled = false;
+    policy_observation_received_at_ = SteadyClock::time_point{};
+  }
   refreshInferenceEnabledLocked();
 }
 
@@ -1499,12 +1005,12 @@ bool RL_imitation::loadPolicyLocked(const std::string& policy_name, std::string&
 }
 
 void RL_imitation::switchImitationPolicyCallback(
-    const std::shared_ptr<luvbot_control_interfaces::srv::SwitchPolicy::Request> request,
-    std::shared_ptr<luvbot_control_interfaces::srv::SwitchPolicy::Response> response) {
+    const std::shared_ptr<robot_interfaces::srv::SwitchPolicy::Request> request,
+    std::shared_ptr<robot_interfaces::srv::SwitchPolicy::Response> response) {
   if (!dynamic_policy_switch_enabled_)
   {
     response->success = false;
-    response->error_code = luvbot_control_interfaces::srv::SwitchPolicy::Response::ERROR_INVALID_CONFIGURATION;
+    response->error_code = robot_interfaces::srv::SwitchPolicy::Response::ERROR_INVALID_CONFIGURATION;
     response->message = "dynamic_policy_switch_enabled is false";
     response->active_policy = current_policy_name_;
     return;
@@ -1518,8 +1024,8 @@ void RL_imitation::switchImitationPolicyCallback(
   std::string message;
   const bool ok = loadPolicyLocked(request->policy_name, robot_cfg_path, message);
   response->success = ok;
-  response->error_code = ok ? luvbot_control_interfaces::srv::SwitchPolicy::Response::ERROR_NONE
-                            : luvbot_control_interfaces::srv::SwitchPolicy::Response::ERROR_LOAD_FAILED;
+  response->error_code = ok ? robot_interfaces::srv::SwitchPolicy::Response::ERROR_NONE
+                            : robot_interfaces::srv::SwitchPolicy::Response::ERROR_LOAD_FAILED;
   response->message = message;
   response->active_policy = current_policy_name_;
 }
@@ -1544,8 +1050,6 @@ void RL_imitation::resetImitationState() {
   imitation_start_time = nh_->get_clock()->now();
   time_step_counter_ = 0;
   initial_quats_logged_ = false;
-  initial_yaw_ = 0.0;
-  initial_yaw_valid_ = false;
   motion_done_sent_ = false;
   resetObservationState();
 }
@@ -1777,10 +1281,13 @@ bool RL_imitation::updateObservation() {
     rbt_state.imu_quat.y() = policy_observation_.imu.orientation.y;
     rbt_state.imu_quat.z() = policy_observation_.imu.orientation.z;
 
-    // get imitation info first
+    // Select the reference for this cycle's time, rather than the previous cycle's frame.
+    const double elapsed = std::max(0.0, (nh_->get_clock()->now() - imitation_start_time).seconds());
+    time_step_counter_ = motion_data_size_ > 0 ? static_cast<int>(std::min(
+        static_cast<double>(motion_data_size_ - 1), std::floor(elapsed * params.policy_frequency))) : 0;
     updateImitationData();
 
-    if (time_step_counter_ == 0 && !initial_quats_logged_)
+    if (!initial_quats_logged_)
     {
       // on the first time step, store the robot initial quat and imitation
       // initial quat
@@ -1789,19 +1296,8 @@ bool RL_imitation::updateObservation() {
       initial_quats_logged_ = true;
     }
 
-    // Build MJ-ordered vectors from hardware state
-    Eigen::VectorXd mj_q(params.num_actions);
-    Eigen::VectorXd mj_dq(params.num_actions);
-
-    for (int i = 0; i < params.num_actions; ++i)
-    {
-      mj_q[i] = policy_observation_.joints.position[i] - params.default_joint_angles[i];
-      mj_dq[i] = policy_observation_.joints.velocity[i];
-    }
-
-    // Transform to Isaac ordering
-    order_mapper_.transformMjToIsaac(mj_q, rbt_state.q);
-    order_mapper_.transformMjToIsaac(mj_dq, rbt_state.dq);
+    order_mapper_.mapJointObservation(policy_observation_.joints.position, policy_observation_.joints.velocity,
+                                      params.default_joint_angles, rbt_state.q, rbt_state.dq);
 
     rbt_state.base_ang_vel << policy_observation_.imu.angular_velocity.x, policy_observation_.imu.angular_velocity.y,
         policy_observation_.imu.angular_velocity.z;
@@ -1811,30 +1307,7 @@ bool RL_imitation::updateObservation() {
     rbt_state.quat.w() = policy_observation_.imu.orientation.w;
     rbt_state.quat.normalize();
 
-    auto yaw_from_quat = [](const Eigen::Quaterniond& q) -> double {
-      const double w = q.w();
-      const double x = q.x();
-      const double y = q.y();
-      const double z = q.z();
-      const double t3 = 2.0 * (w * z + x * y);
-      const double t4 = 1.0 - 2.0 * (y * y + z * z);
-      return std::atan2(t3, t4);
-    };
-    auto quat_from_yaw = [](double yaw) -> Eigen::Quaterniond {
-      const double cy = std::cos(yaw * 0.5);
-      const double sy = std::sin(yaw * 0.5);
-      return Eigen::Quaterniond(cy, 0.0, 0.0, sy);
-    };
-
-    const double current_yaw = yaw_from_quat(rbt_state.quat);
-    if (!initial_yaw_valid_)
-    {
-      initial_yaw_ = current_yaw;
-      initial_yaw_valid_ = true;
-    }
-    const Eigen::Quaterniond initial_yaw_quat_inv = quat_from_yaw(initial_yaw_).conjugate();
-    rbt_state.quat_obs = initial_yaw_quat_inv * rbt_state.quat;
-    rbt_state.quat_obs.normalize();
+    // Imitation observations use anchor_ori, not the AMP yaw-relative quaternion.
 
     if (params.imitation_anchor_dim > 0 && has_body_quat_output_)
     {
@@ -1859,27 +1332,6 @@ bool RL_imitation::updateObservation() {
     }
     obs.hist_obs.push_back(obs.observations);
 
-    // 基于实际运行时间计算时间步数，向下取整（与 ROS1 一致：已 reset 后才推进）
-    const rclcpp::Time time_unset(0, 0, nh_->get_clock()->get_clock_type());
-    if (imitation_start_time == time_unset)
-    {
-      time_step_counter_ = 0;
-    }
-    else
-    {
-      rclcpp::Duration elapsed_time = nh_->get_clock()->now() - imitation_start_time;
-      double elapsed_seconds = elapsed_time.seconds();
-      double time_step_float = elapsed_seconds * params.policy_frequency;
-      time_step_counter_ = static_cast<int>(std::floor(time_step_float));
-      if (motion_data_size_ > 0)
-      {
-        const int last_frame = motion_data_size_ - 1;
-        if (time_step_counter_ > last_frame)
-        {
-          time_step_counter_ = last_frame;
-        }
-      }
-    }
     return true;
   } catch (const std::exception& e)
   {
@@ -1888,10 +1340,7 @@ bool RL_imitation::updateObservation() {
   }
 }
 
-bool RL_imitation::updateAction() {
-  static std::mutex inference_mutex;
-  std::lock_guard<std::mutex> lock(inference_mutex);
-
+bool RL_imitation::updateAction(Robot_Imitation_Output& output) {
   const int hist_size = static_cast<int>(obs.hist_obs.size());
   for (int i = 0; i < params.frame_stack; ++i)
   {
@@ -1913,100 +1362,39 @@ bool RL_imitation::updateAction() {
     return false;
   }
 
-  // -- backend-specific inference --
   const float* raw_output = nullptr;
-  std::vector<float> ov_out_buf;
 
-#ifdef USE_TENSORRT
+  if (!model_policy_->run(obs.input_flat.data(), input_size))
   {
-    cudaError_t err =
-        cudaMemcpy(policy_input_device_, obs.input_flat.data(), input_size * sizeof(float), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT policy: H2D failed: %s", cudaGetErrorString(err));
-      return false;
-    }
-    const char* input_name = trt_engine_policy_->getIOTensorName(policy_input_binding_idx_);
-    const char* output_name = trt_engine_policy_->getIOTensorName(policy_output_binding_idx_);
-    if (!trt_context_policy_->setTensorAddress(input_name, policy_input_device_) ||
-        !trt_context_policy_->setTensorAddress(output_name, policy_output_device_))
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT policy: setTensorAddress failed");
-      return false;
-    }
-    if (!trt_context_policy_->enqueueV3(0))
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT policy: enqueueV3 failed");
-      return false;
-    }
-    err = cudaMemcpy(policy_output_host_.data(), policy_output_device_, output_size * sizeof(float),
-                     cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "TRT policy: D2H failed: %s", cudaGetErrorString(err));
-      return false;
-    }
-    raw_output = policy_output_host_.data();
-  }
-
-#elif defined(USE_RKNN)
-  if (!rknn_policy_->run(obs.input_flat.data(), input_size))
-  {
-    RCLCPP_ERROR(nh_->get_logger(), "RKNN policy inference failed: %s", rknn_policy_->lastError().c_str());
+    RCLCPP_ERROR(nh_->get_logger(), "Inference policy inference failed: %s", model_policy_->lastError().c_str());
     return false;
   }
-  raw_output = rknn_policy_->output(static_cast<size_t>(rknn_policy_output_idx_)).data();
+  raw_output = model_policy_->output(static_cast<size_t>(model_policy_output_idx_)).data();
 
-#elif defined(USE_OPENVINO)
+  if (!raw_output || !std::all_of(raw_output, raw_output + output_size,
+                                  [](float value) { return std::isfinite(value); }))
   {
-    auto in_tensor = ov_infer_policy_.get_input_tensor();
-    std::copy(obs.input_flat.begin(), obs.input_flat.end(), in_tensor.data<float>());
-    ov_infer_policy_.infer();
-    ov::Tensor out_tensor;
-    if (!policy_output_name_.empty())
-    {
-      try
-      { out_tensor = ov_infer_policy_.get_tensor(policy_output_name_); } catch (...)
-      { out_tensor = ov_infer_policy_.get_output_tensor(); }
-    }
-    else
-    {
-      out_tensor = ov_infer_policy_.get_output_tensor();
-    }
-    const float* p = out_tensor.data<const float>();
-    ov_out_buf.assign(p, p + output_size);
-    raw_output = ov_out_buf.data();
+    RCLCPP_ERROR(nh_->get_logger(), "Policy returned an invalid action");
+    return false;
   }
-#endif
-
-  if (!raw_output) return false;
 
   // Read Isaac-ordered actions
   for (int isaac_i = 0; isaac_i < params.num_actions; ++isaac_i)
   {
-    rbt_output.action[isaac_i] =
+    output.action[isaac_i] =
         std::clamp(static_cast<double>(raw_output[isaac_i]), -params.clip_actions, params.clip_actions);
   }
 
   // Transform to MJ ordering
   Eigen::VectorXd mj_actions;
-  order_mapper_.transformIsaacToMj(rbt_output.action, mj_actions);
+  order_mapper_.transformIsaacToMj(output.action, mj_actions);
 
   // Apply scaling and default angles in MJ ordering
   for (int mj_i = 0; mj_i < params.num_actions; ++mj_i)
   {
     double scale = params.action_scale[mj_i];
-    rbt_output.target_q[mj_i] = mj_actions[mj_i] * scale + params.default_joint_angles[mj_i];
-    posCmd_.target_positions[mj_i] = rbt_output.target_q[mj_i];
+    output.target_q[mj_i] = mj_actions[mj_i] * scale + params.default_joint_angles[mj_i];
+    posCmd_.target_positions[mj_i] = output.target_q[mj_i];
   }
   return true;
-}
-
-Eigen::Vector3d RL_imitation::qr_ty_i(const Eigen::Vector4d& q, const Eigen::Vector3d& v) {
-  double q_w = q[3];
-  Eigen::Vector3d q_vec = q.head<3>();
-  Eigen::Vector3d a = v * (2.0 * q_w * q_w - 1.0);
-  Eigen::Vector3d b = q_vec.cross(v) * q_w * 2.0;
-  Eigen::Vector3d c = q_vec * (q_vec.dot(v) * 2.0);
-  return (a - b + c);
 }

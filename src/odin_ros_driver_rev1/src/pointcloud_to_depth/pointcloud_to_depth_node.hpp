@@ -171,7 +171,6 @@ static inline int pointcloud_to_depth(const float* xyz_in,
     float xp, yp, zp;
     mat4_apply_kcl(Kcl, x, y, z, &xp, &yp, &zp);
 
-    if (!std::isfinite(xp) || !std::isfinite(yp) || !std::isfinite(zp) || zp <= 0.0f) continue;
     if (use_z_buffer) {
       if (zp < z_min || zp > z_max) continue;
     } else {
@@ -179,14 +178,10 @@ static inline int pointcloud_to_depth(const float* xyz_in,
       if (zp <= 0.0f) continue;
     }
 
-    // Clip in floating point before converting. Near the camera plane, a
-    // finite input may project beyond int range (float-to-int would be UB).
-    const float uf = xp / zp + 0.5f;
-    const float vf = yp / zp + 0.5f;
-    if (!std::isfinite(uf) || !std::isfinite(vf) ||
-        uf < 0.0f || vf < 0.0f || uf >= out_w || vf >= out_h) continue;
-    const int u = static_cast<int>(uf);
-    const int v = static_cast<int>(vf);
+    const int u = static_cast<int>(xp / zp + 0.5f);
+    const int v = static_cast<int>(yp / zp + 0.5f);
+    if (static_cast<unsigned>(u) >= static_cast<unsigned>(out_w))  continue;
+    if (static_cast<unsigned>(v) >= static_cast<unsigned>(out_h)) continue;
 
     const int idx = v * out_w + u;
     if (use_z_buffer) {

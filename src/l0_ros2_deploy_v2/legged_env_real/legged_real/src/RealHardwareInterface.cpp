@@ -1,4 +1,4 @@
-#include "legged_real/LeggedReal.h"
+#include "LeggedReal.h"
 
 namespace legged {
 

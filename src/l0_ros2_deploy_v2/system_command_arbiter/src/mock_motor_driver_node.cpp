@@ -4,6 +4,7 @@
 #include <functional>
 #include <luvbot_hardware_interfaces/msg/motor_command.hpp>
 #include <luvbot_hardware_interfaces/msg/motor_state_array.hpp>
+#include <luvbot_hardware_interfaces/msg/motor_target.hpp>
 #include <luvbot_hardware_interfaces/srv/set_motor_enabled.hpp>
 #include <map>
 #include <memory>
@@ -11,6 +12,7 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include "AppVersion.h"
 
 namespace {
 
@@ -26,10 +28,10 @@ uint64_t route_key(const MotorRoute& route) {
 }
 
 bool valid_route(const MotorRoute& route) {
-  return route.motor_type >= MotorRoute::MOTOR_TYPE_DM && route.motor_type <= MotorRoute::MOTOR_TYPE_LS;
+  return route.motor_type < 32U;
 }
 
-bool finite_command(const luvbot_hardware_interfaces::msg::ActuatorMotorCommand& command) {
+bool finite_command(const luvbot_hardware_interfaces::msg::MotorTarget& command) {
   return std::isfinite(command.q) && std::isfinite(command.dq) && std::isfinite(command.tau) &&
          std::isfinite(command.kp) && std::isfinite(command.kd);
 }
@@ -41,8 +43,11 @@ class MockMotorDriver : public rclcpp::Node {
   MockMotorDriver() : Node("mock_motor_driver_node") {
     const double state_rate = declare_parameter<double>("state_rate", 100.0);
     watchdog_timeout_ = rclcpp::Duration::from_seconds(declare_parameter<double>("watchdog_timeout", 0.1));
-    if (!std::isfinite(state_rate) || state_rate <= 0.0 || watchdog_timeout_.nanoseconds() <= 0)
-      throw std::runtime_error("state_rate and watchdog_timeout must be positive");
+    command_validity_ = rclcpp::Duration::from_nanoseconds(
+        1000000LL * declare_parameter<int>("command_validity_ms", 20));
+    if (!std::isfinite(state_rate) || state_rate <= 0.0 || watchdog_timeout_.nanoseconds() <= 0 ||
+        command_validity_.nanoseconds() <= 0)
+      throw std::runtime_error("state_rate, watchdog_timeout and command_validity_ms must be positive");
 
     const auto command_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
     const auto state_qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
@@ -58,14 +63,22 @@ class MockMotorDriver : public rclcpp::Node {
 
  private:
   void set_enabled(const SetMotorEnabled::Request::SharedPtr request, SetMotorEnabled::Response::SharedPtr response) {
+    const uint64_t key = route_key(request->motor);
+    for (const auto& item : routes_)
+    {
+      if (item.second.motor_type != request->motor.motor_type || item.first == key) continue;
+      response->success = false;
+      response->error_code = SetMotorEnabled::Response::ERROR_INVALID_ROUTE;
+      response->diagnostic_message = "motor index is already associated with another route";
+      return;
+    }
     if (!valid_route(request->motor))
     {
       response->success = false;
       response->error_code = SetMotorEnabled::Response::ERROR_INVALID_ROUTE;
-      response->diagnostic_message = "motor_type must be supported";
+      response->diagnostic_message = "motor index must fit the feedback mask";
       return;
     }
-    const uint64_t key = route_key(request->motor);
     routes_[key] = request->motor;
     if (request->enabled)
     {
@@ -73,8 +86,8 @@ class MockMotorDriver : public rclcpp::Node {
       MotorState state;
       state.route = request->motor;
       state.valid = true;
-      state.error_code = MotorState::ERROR_NONE;
-      state.operating_mode = MotorState::OPERATING_MODE_HYBRID;
+      state.operating_mode = MotorState::OPERATING_MODE_UNKNOWN;
+      state.enable_state = MotorState::ENABLE_ENABLED;
       state.mos_temperature = 25.0F;
       state.rotor_temperature = 25.0F;
       command_state_[key] = state;
@@ -91,11 +104,18 @@ class MockMotorDriver : public rclcpp::Node {
 
   void command_callback(const MotorCommand::ConstSharedPtr message) {
     const rclcpp::Time current = now();
+    if (message->stamp.sec < 0 || message->stamp.nanosec >= 1000000000U)
+    {
+      RCLCPP_WARN(get_logger(), "Rejected invalid MotorCommand timestamp");
+      return;
+    }
     const rclcpp::Time stamp(message->stamp);
-    const rclcpp::Time valid_until(message->valid_until);
-    if (message->source_id.empty() || message->control_mode != MotorCommand::CONTROL_MODE_HYBRID ||
-        message->commands.size() != enabled_.size() || valid_until <= current || valid_until <= stamp ||
-        stamp > current + watchdog_timeout_ || (have_command_ && message->sequence_id <= last_command_sequence_))
+    const rclcpp::Time valid_until = stamp + command_validity_;
+    const uint32_t sequence_delta = message->sequence_id - last_command_sequence_;
+    if (message->control_mode != MotorCommand::CONTROL_MODE_MIT || message->commands.empty() ||
+        message->commands.size() != enabled_.size() || valid_until <= current ||
+        stamp > current + watchdog_timeout_ ||
+        (have_command_ && (sequence_delta == 0U || sequence_delta >= 0x80000000U)))
     {
       RCLCPP_WARN(get_logger(), "Rejected invalid, expired, incomplete, or out-of-order MotorCommand");
       return;
@@ -113,8 +133,8 @@ class MockMotorDriver : public rclcpp::Node {
       MotorState state;
       state.route = command.route;
       state.valid = true;
-      state.error_code = MotorState::ERROR_NONE;
-      state.operating_mode = MotorState::OPERATING_MODE_HYBRID;
+      state.operating_mode = MotorState::OPERATING_MODE_UNKNOWN;
+      state.enable_state = MotorState::ENABLE_ENABLED;
       state.q = command.q;
       state.dq = command.dq;
       state.tau = command.tau;
@@ -146,6 +166,7 @@ class MockMotorDriver : public rclcpp::Node {
     state_array.sequence_id = ++state_sequence_;
     for (const auto& item : routes_)
     {
+      state_array.feedback_mask |= uint32_t{1} << item.second.motor_type;
       const auto active = command_state_.find(item.first);
       if (active != command_state_.end())
       {
@@ -155,8 +176,8 @@ class MockMotorDriver : public rclcpp::Node {
       MotorState state;
       state.route = item.second;
       state.valid = true;
-      state.error_code = MotorState::ERROR_NONE;
-      state.operating_mode = MotorState::OPERATING_MODE_DISABLED;
+      state.operating_mode = MotorState::OPERATING_MODE_UNKNOWN;
+      state.enable_state = MotorState::ENABLE_DISABLED;
       state.mos_temperature = 25.0F;
       state.rotor_temperature = 25.0F;
       state_array.states.push_back(state);
@@ -168,10 +189,11 @@ class MockMotorDriver : public rclcpp::Node {
   std::set<uint64_t> enabled_;
   std::map<uint64_t, MotorState> command_state_;
   rclcpp::Duration watchdog_timeout_{0, 0};
+  rclcpp::Duration command_validity_{0, 0};
   rclcpp::Time command_deadline_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_command_received_{0, 0, RCL_ROS_TIME};
-  uint64_t last_command_sequence_{0};
-  uint64_t state_sequence_{0};
+  uint32_t last_command_sequence_{0};
+  uint32_t state_sequence_{0};
   bool have_command_{false};
   rclcpp::Publisher<MotorStateArray>::SharedPtr state_pub_;
   rclcpp::Subscription<MotorCommand>::SharedPtr command_sub_;
@@ -180,6 +202,7 @@ class MockMotorDriver : public rclcpp::Node {
 };
 
 int main(int argc, char** argv) {
+  l0::printAppVersion("mock_motor_driver_node");
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<MockMotorDriver>());
   rclcpp::shutdown();

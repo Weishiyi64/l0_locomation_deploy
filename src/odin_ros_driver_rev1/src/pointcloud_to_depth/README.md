@@ -36,8 +36,8 @@ src/pointcloud2depth/
 
 | Topic | Type | 说明 / Description |
 |-------|------|--------------------|
-| `/{prefix}/{model}/device{N}/cloud/raw` | `sensor_msgs/PointCloud2` | dToF 原始点云，约 1~5 万点 / Raw dToF cloud, ~10k–50k points |
-| `/{prefix}/{model}/device{N}/camera0/undistort` | `sensor_msgs/Image` (bgr8) | 鱼眼相机去畸变后的 RGB 图 / Undistorted RGB image |
+| `/{prefix}/device{N}/cloud/raw` | `sensor_msgs/PointCloud2` | dToF 原始点云，约 1~5 万点 / Raw dToF cloud, ~10k–50k points |
+| `/{prefix}/device{N}/camera0/undistort` | `sensor_msgs/Image` (bgr8) | 鱼眼相机去畸变后的 RGB 图 / Undistorted RGB image |
 | `/{prefix}/driver/device_online` | `std_msgs/String` (JSON) | 设备发现广播（**TRANSIENT_LOCAL**，延后加入也能收到）/ Device discovery broadcast (TL) |
 | `/{prefix}/driver/resolution_change` | `std_msgs/String` (JSON) | 当前 RGB 分辨率（**TRANSIENT_LOCAL**）/ Current RGB resolution (TL) |
 
@@ -48,13 +48,13 @@ The two streams are time-synchronized via `message_filters::ApproximateTime`, de
 
 | Service | Type | 用途 / Purpose |
 |---------|------|----------------|
-| `/{prefix}/{model}/device{N}/get_calibration` | `odin_ros_driver_rev1/GetCalibration` | 拉取 `calib_<SN>.yaml` 内容（首次启动用）/ Fetch `calib_<SN>.yaml` once at startup |
+| `/{prefix}/device{N}/get_calibration` | `odin_ros_driver_rev1/GetCalibration` | 拉取 `calib_<SN>.yaml` 内容（首次启动用）/ Fetch `calib_<SN>.yaml` once at startup |
 
 ---
 
 ## 4. 输出 / Outputs
 
-主题前缀 / Topic prefix: `/{topic_prefix}/{model}/device{N}/{output_topic_suffix}/`，默认 `output_topic_suffix = "pointcloud2depth"`。
+主题前缀 / Topic prefix: `/{topic_prefix}/device{N}/{output_topic_suffix}/`，默认 `output_topic_suffix = "pointcloud2depth"`。
 
 | Topic | Encoding | 内容 / Content |
 |-------|----------|----------------|
@@ -144,9 +144,9 @@ The two streams are time-synchronized via `message_filters::ApproximateTime`, de
 
 ```bash
 source install/setup.bash
-ros2 launch odin_ros_driver_rev1 driver.launch.py
+ros2 launch odin_ros_driver_rev1 odin1Lite.launch.py
 # or ROS1:
-roslaunch odin_ros_driver_rev1 driver.launch
+roslaunch odin_ros_driver_rev1 odin1Lite.launch
 ```
 
 **单独运行 / Stand-alone**：

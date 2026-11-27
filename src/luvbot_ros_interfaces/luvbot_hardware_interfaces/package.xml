@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>luvbot_hardware_interfaces</name>
-  <version>1.0.0</version>
+  <version>0.1.0</version>
   <description>Stable Luvbot controller, arbiter, and actuator interfaces.</description>
   <maintainer email="188166614@qq.com">luvbot</maintainer>
   <license>MIT</license>
@@ -12,6 +12,7 @@
   <member_of_group>rosidl_interface_packages</member_of_group>
 
   <depend>builtin_interfaces</depend>
+  <depend>std_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

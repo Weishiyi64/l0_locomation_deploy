@@ -1,21 +1,24 @@
 #pragma once
 
-#include "rknn_model.h"
+#include "inference_model.h"
 #include <yaml-cpp/yaml.h>
 #include <map>
 #include <string>
 #include <vector>
 
+std::string wbcFileHash(const std::string& path);
+
 // A fixed two-input actor plus a catalog of references. No adapter tensors.
 class WbcBaseAssets {
  public:
-  struct Action { std::string config, reference; };
+  struct Action { std::string config, reference, model; };
   WbcBaseAssets(const std::string& manifest, const std::vector<std::string>& selected);
+  const std::string& ilaPath() const { return ila_path_; }
   const Action& action(const std::string& id) const { return actions_.at(id); }
   const std::string& modelPath() const { return model_path_; }
 
  private:
-  std::string model_path_;
+  std::string model_path_, ila_path_;
   std::map<std::string, Action> actions_;
 };
 
@@ -23,7 +26,9 @@ class WbcBaseAssets {
 class WbcLoraAssets {
  public:
   struct Action {
-    std::string id, config, reference, adapter, adapter_hash;
+    std::string id, config, reference, reference_root, adapter;
+    std::string parameter_source;
+    bool json_only{false};
   };
   struct Buffer {
     std::vector<std::vector<float>> parameters;
@@ -31,12 +36,13 @@ class WbcLoraAssets {
   WbcLoraAssets(const std::string& manifest, const std::vector<std::string>& selected);
   const Action& action(const std::string& id) const { return actions_.at(id); }
   const std::string& modelPath() const { return model_path_; }
-  const std::string& baseHash() const { return base_hash_; }
-  void bindModel(const RknnModel& model);
+  std::vector<std::string> actionIds() const;
+  std::string referencePath(const Action& action) const;
+  void bindModel(const InferenceModel& model);
   void allocate(Buffer& buffer) const;
   void loadAdapter(const Action& action, Buffer& buffer) const;
   // Complete parameter mapping, used only by prepare; no device ownership here.
-  std::vector<RknnModel::ParameterInput> parameterInputs(const Buffer& buffer) const;
+  std::vector<InferenceModel::ParameterInput> parameterInputs(const Buffer& buffer) const;
 
  private:
   struct Tensor {
@@ -46,7 +52,7 @@ class WbcLoraAssets {
     int input_index{-1};
   };
   YAML::Node graph_;
-  std::string root_, model_path_, base_hash_;
+  std::string root_, model_path_;
   std::vector<Tensor> tensors_;
   std::map<std::string, Action> actions_;
 };

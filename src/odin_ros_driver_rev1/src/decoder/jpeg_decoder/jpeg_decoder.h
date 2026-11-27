@@ -21,8 +21,16 @@ class JpegDecoder {
   // Whether the backend is ready to decode.
   // Hardware backends may fail to initialize; software backends are always ready.
   virtual bool IsInitialized() const { return true; }
+
+  // Set a human-readable label (e.g. "camera0") for log messages.
+  virtual void SetCameraLabel(const std::string& label) { camera_label_ = label; }
+
+ protected:
+  std::string camera_label_;
 };
 
+// Factory: returns the best available JPEG decoder for this platform/build.
+// Backend selection is compile-time only (USING_JETSON_DECODER / USE_RK_DECODER).
 std::unique_ptr<JpegDecoder> CreateDecoder();
 
 }  // namespace odin_decoder

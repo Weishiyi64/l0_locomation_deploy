@@ -5,14 +5,27 @@
  * This sample demonstrates:
  * - Hotplug detection (device arrival/removal)
  * - Multi-device support
- * - Sensor capability query
- * - Stream control (StartStream/CloseStream)
+ * - Firmware version and sensor capability query
+ * - Device mode query/set  (GetDeviceMode / SetDeviceMode)
+ * - LiDAR mode query/set   (GetSensorMode  / SetSensorMode)
+ * - Filter params query/set (GetFilterParam / SetFilterParam)
+ * - Stream control with channel verification (StartStream / GetChannelConfig / CloseStream)
  * - Frame rate statistics for each data type
  * - Automatic resource cleanup on device removal
  * - Re-connection when device comes back online
+ *
+ * Connection sequence (per protocol spec):
+ *   1. GetDeviceMode           -- confirm current device state
+ *   2. SetDeviceMode(Standby)  -- enter standby for configuration
+ *   3. GetSensorMode           -- read current LiDAR mode
+ *   4. SetSensorMode           -- configure desired LiDAR mode
+ *   5. GetSensorMode           -- verify LiDAR sensor mode took effect
+ *   6. StartStream x6          -- subscribe all data channels
+ *   7. GetChannelConfig        -- verify per-channel subscription
+ *   8. SetDeviceMode(Normal)   -- start data streaming
  */
 
-#include "odin_lidar_api.h"
+#include "odin_lidar_api_ext.h"
 #include "logger.h"
 
 #include <atomic>
@@ -64,7 +77,8 @@ struct DeviceContext {
   FrameStats slam_stats;
   FrameStats image_stats;
   FrameStats imu_stats;
-  FrameStats odom_stats;
+  FrameStats odom_lf_stats;
+  FrameStats odom_hf_stats;
   FrameStats image2_stats;
 
   std::chrono::steady_clock::time_point connect_time;
@@ -88,7 +102,12 @@ std::string GetTimestamp() {
   auto now = std::chrono::system_clock::now();
   auto time = std::chrono::system_clock::to_time_t(now);
   std::tm tm_info;
+#ifdef _WIN32
+  // localtime_r is POSIX; the MSVC equivalent swaps the argument order.
+  localtime_s(&tm_info, &time);
+#else
   localtime_r(&time, &tm_info);
+#endif
   char buffer[32];
   strftime(buffer, sizeof(buffer), "%H:%M:%S", &tm_info);
   return buffer;
@@ -117,46 +136,49 @@ DeviceContext* FindDeviceByHandle(OdinDeviceHandle handle) {
 // Callbacks
 // =============================================================================
 
-void PointCloudCallback(const OdinPointCloudPacket& packet, void*) {
+void PointCloudCallback(const OdinPointCloudPacket& packet, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
     ctx->raw_stats.frame_count++;
   }
 }
 
-void SlamCallback(const OdinSlamPacket& packet, void*) {
+void SlamCallback(const OdinSlamPacket& packet, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
     ctx->slam_stats.frame_count++;
   }
 }
 
-void ImageCallback(const OdinImagePacket& packet, void*) {
+void CameraCallback(const OdinCameraPacket& packet, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
     ctx->image_stats.frame_count++;
   }
 }
 
-void ImageCallback2(const OdinImagePacket& packet, void*) {
+void CameraCallback2(const OdinCameraPacket& packet, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
     ctx->image2_stats.frame_count++;
   }
 }
 
-void ImuCallback(const OdinImuPacket& packet, void*) {
+void ImuCallback(const OdinImuPacket& packet, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
     ctx->imu_stats.frame_count++;
   }
 }
 
-void OdomCallback(const OdinOdomPacket& packet, OdomSourceType odom_type, void*) {
-  (void)odom_type;  // Unused
+void OdomCallback(const OdinOdomPacket& packet, OdomSourceType odom_type, void* client_data) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
-  if (auto* ctx = FindDeviceByHandle(packet.device)) {
-    ctx->odom_stats.frame_count++;
+  if (auto* ctx = static_cast<DeviceContext*>(client_data)) {
+    if (odom_type == OdomSourceType::kOdom2ImuHigh) {
+      ctx->odom_hf_stats.frame_count++;
+    } else {
+      ctx->odom_lf_stats.frame_count++;
+    }
   }
 }
 
@@ -165,52 +187,81 @@ void OdomCallback(const OdinOdomPacket& packet, OdomSourceType odom_type, void*)
 // =============================================================================
 
 // Helper function to convert channel to string
-const char* ChannelToString(OdinDataChannel ch) {
-  switch (ch) {
-    case OdinDataChannel::kRawPoint:  return "RawPoint";
-    case OdinDataChannel::kSlamPoint: return "SlamPoint";
-    case OdinDataChannel::kImage0:    return "Image0";
-    case OdinDataChannel::kImage1:    return "Image1";
-    case OdinDataChannel::kImu:       return "IMU";
-    case OdinDataChannel::kOdom:      return "Odom";
-    default: return "Unknown";
+std::string ChannelToString(OdinDataChannel ch) {
+  auto lookup = [](OdinDataChannel c) -> const char* {
+    switch (c) {
+      case OdinDataChannel::kRawPoint:      return "RawPoint";
+      case OdinDataChannel::kSlamPoint:     return "SlamPoint";
+      case OdinDataChannel::kImage0:        return "Image0";
+      case OdinDataChannel::kImage1:        return "Image1";
+      case OdinDataChannel::kImu:           return "IMU";
+      case OdinDataChannel::kOdomLF:        return "OdomLF";
+      case OdinDataChannel::kOdomHF:        return "OdomHF";
+      case OdinDataChannel::kAlgoDownlink:  return "AlgoDownlink";
+      case OdinDataChannel::kCalibFile:     return "CalibFile";
+      case OdinDataChannel::kTelemetry:     return "Telemetry";
+      default: return nullptr;
+    }
+  }(ch);
+
+  if (lookup != nullptr) {
+    return lookup;
   }
+  char buf[32];
+  snprintf(buf, sizeof(buf), "Unknown(0x%02X)", static_cast<uint8_t>(ch));
+  return buf;
 }
 
 // Helper function to convert format to string
-const char* FormatToString(OdinDataFormat fmt) {
+// For image channels, format is a bitmask — decode individual bits.
+// For other channels, format is a fixed enum value.
+std::string FormatToString(OdinDataFormat fmt) {
+  uint8_t v = static_cast<uint8_t>(fmt);
+
+  // Image formats use bitmask (0x01|0x02|0x04|0x08)
+  if (v > 0 && v < 0x10) {
+    std::string result;
+    if (v & 0x01) result += (result.empty() ? "" : "|") + std::string("NV12");
+    if (v & 0x02) result += (result.empty() ? "" : "|") + std::string("MJPEG");
+    if (v & 0x04) result += (result.empty() ? "" : "|") + std::string("H264");
+    if (v & 0x08) result += (result.empty() ? "" : "|") + std::string("H265");
+    uint8_t known_mask = 0x0F;
+    if (!result.empty() && (v & ~known_mask) == 0) return result;
+    // Partial match or unknown bits — fall through to show raw value
+  }
+
   switch (fmt) {
-    case OdinDataFormat::kImageMjpeg:       return "MJPEG";
-    case OdinDataFormat::kImageYuyv:        return "YUYV";
-    case OdinDataFormat::kImageNv12:        return "NV12";
-    case OdinDataFormat::kImageNv21:        return "NV21";
-    case OdinDataFormat::kImageRgb24:       return "RGB24";
-    case OdinDataFormat::kRawPointXyzic:    return "XYZIC";
-    case OdinDataFormat::kRawPointXyz:      return "XYZ";
-    case OdinDataFormat::kSlamPointXyzrgba: return "XYZRGBA";
-    case OdinDataFormat::kSlamPointXyz:     return "XYZ";
-    case OdinDataFormat::kImu6Axis:         return "6-Axis";
-    case OdinDataFormat::kImu9Axis:         return "9-Axis";
-    case OdinDataFormat::kOdomStandard:     return "Standard";
-    default: return "Unknown";
+    case OdinDataFormat::kImageNv12:         return "NV12";
+    case OdinDataFormat::kImageMjpeg:        return "MJPEG";
+    case OdinDataFormat::kImageH264:         return "H264";
+    case OdinDataFormat::kImageH265:         return "H265";
+    case OdinDataFormat::kRawPointXyzic:     return "XYZIC";
+    case OdinDataFormat::kSlamPointXyzrgba:  return "XYZRGBA";
+    case OdinDataFormat::kImu6Axis:          return "6-Axis";
+    case OdinDataFormat::kOdomStandard:      return "Standard";
+    default: {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "Unknown(0x%02X)", v);
+      return buf;
+    }
   }
 }
 
 void PrintSensorCapabilities(const std::vector<OdinSensorCapability>& capabilities) {
-  std::cout << "\n  ╔════════════════════════════════════════════════════════╗\n";
-  std::cout << "  ║              SENSOR CAPABILITIES                       ║\n";
-  std::cout << "  ╠════════════════════════════════════════════════════════╣\n";
+  std::cout << "\n  +==========================================================+\n";
+  std::cout << "  |              SENSOR CAPABILITIES                        |\n";
+  std::cout << "  +==========================================================+\n";
 
   for (const auto& cap : capabilities) {
-    std::cout << "  ║  Channel: " << std::left << std::setw(12) << ChannelToString(cap.channel);
-    std::cout << "                              ║\n";
-    std::cout << "  ║  ┌──────────────────────────────────────────────────┐ ║\n";
-    std::cout << "  ║  │  Mode   Width  Height   FPS   Format            │ ║\n";
-    std::cout << "  ║  ├──────────────────────────────────────────────────┤ ║\n";
+    std::cout << "  |  Channel: " << std::left << std::setw(12) << ChannelToString(cap.channel);
+    std::cout << "                              |\n";
+    std::cout << "  |  +----------------------------------------------------+  |\n";
+    std::cout << "  |  |  Mode   Width  Height   FPS   Format               |  |\n";
+    std::cout << "  |  |----------------------------------------------------|  |\n";
 
     int mode_idx = 0;
     for (const auto& cfg : cap.modes) {
-      std::cout << "  ║  │  [" << std::setw(2) << mode_idx++ << "]  ";
+      std::cout << "  |  |  [" << std::setw(2) << mode_idx++ << "]  ";
       if (cfg.width > 0) {
         std::cout << std::setw(5) << cfg.width << "  ";
       } else {
@@ -222,26 +273,26 @@ void PrintSensorCapabilities(const std::vector<OdinSensorCapability>& capabiliti
         std::cout << "  -    ";
       }
       if (cfg.fps > 0) {
-        std::cout << std::setw(4) << cfg.fps << "  ";
+        std::cout << std::setw(4) << static_cast<unsigned>(cfg.fps) << "  ";
       } else {
         std::cout << " -   ";
       }
       std::cout << std::left << std::setw(16) << FormatToString(cfg.format);
-      std::cout << " │ ║\n";
+      std::cout << " |  |\n";
     }
 
     if (cap.modes.empty()) {
-      std::cout << "  ║  │  (No configurations available)                   │ ║\n";
+      std::cout << "  |  |  (No configurations available)                     |  |\n";
     }
 
-    std::cout << "  ║  └──────────────────────────────────────────────────┘ ║\n";
+    std::cout << "  |  +----------------------------------------------------+  |\n";
   }
 
   if (capabilities.empty()) {
-    std::cout << "  ║  (No sensor capabilities reported by device)          ║\n";
+    std::cout << "  |  (No sensor capabilities reported by device)            |\n";
   }
 
-  std::cout << "  ╚════════════════════════════════════════════════════════╝\n\n";
+  std::cout << "  +==========================================================+\n\n";
 }
 
 void ConnectAndRegister(DeviceContext* ctx) {
@@ -259,12 +310,12 @@ void ConnectAndRegister(DeviceContext* ctx) {
   ctx->connect_time = std::chrono::steady_clock::now();
 
   // Register all callbacks
-  RegisterPointCloudCallback(ctx->handle, PointCloudCallback, nullptr);
-  RegisterSlamCallback(ctx->handle, SlamCallback, nullptr);
-  RegisterImageCallback(ctx->handle, ImageCallback, nullptr);
-  RegisterImageCallback2(ctx->handle, ImageCallback2, nullptr);
-  RegisterImuCallback(ctx->handle, ImuCallback, nullptr);
-  RegisterOdomCallback(ctx->handle, OdomCallback, nullptr);
+  RegisterPointCloudCallback(ctx->handle, PointCloudCallback, ctx);
+  RegisterSlamCallback(ctx->handle, SlamCallback, ctx);
+  RegisterCameraCallback(ctx->handle, CameraCallback, ctx);
+  RegisterCameraCallback2(ctx->handle, CameraCallback2, ctx);
+  RegisterImuCallback(ctx->handle, ImuCallback, ctx);
+  RegisterOdomCallback(ctx->handle, OdomCallback, ctx);
 
   // Get and print firmware version
   std::string version;
@@ -286,15 +337,85 @@ void ConnectAndRegister(DeviceContext* ctx) {
     std::cerr << "[" << GetTimestamp() << "] Failed to query capabilities, result="
               << static_cast<int>(cap_result) << std::endl;
   }
-
-  // Set to standby mode first for stream configuration
-  if (SetOperatingMode(ctx->handle, OdinOperatingMode::kStandby) != OdinResult::kOk) {
+  
+  // --- Step 1: Query current device mode ---
+  OdinDeviceMode cur_device_mode = OdinDeviceMode::kUnknown;
+  if (GetDeviceMode(ctx->handle, cur_device_mode) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] Current device mode: "
+              << static_cast<int>(cur_device_mode) << std::endl;
+  } else {
+    std::cerr << "[" << GetTimestamp() << "] Failed to get device mode" << std::endl;
+  }
+  
+  // --- Step 2: Enter standby mode for configuration ---
+  if (SetDeviceMode(ctx->handle, OdinDeviceMode::kStandby) != OdinResult::kOk) {
     std::cerr << "[" << GetTimestamp() << "] Failed to set STANDBY mode" << std::endl;
   }
+  
+  // --- Step 3: Query current LiDAR mode ---
+  OdinSensorMode cur_lidar_mode = OdinSensorMode::kHighPeak;
+  if (GetSensorMode(ctx->handle, cur_lidar_mode) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] Current LiDAR mode: "
+              << static_cast<int>(cur_lidar_mode) << std::endl;
+  } else {
+    std::cerr << "[" << GetTimestamp() << "] Failed to get LiDAR mode" << std::endl;
+  }
+  
+  // --- Step 4: Configure LiDAR mode (HighPeak) ---
+  constexpr OdinSensorMode kDesiredLiDARMode = OdinSensorMode::kHighPeak;
+  if (SetSensorMode(ctx->handle, kDesiredLiDARMode) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] LiDAR mode set to Adaptive" << std::endl;
+  } else {
+    std::cerr << "[" << GetTimestamp() << "] Failed to set LiDAR mode" << std::endl;
+  }
+  
+  // --- Step 5: Verify LiDAR mode ---
+  OdinSensorMode verified_lidar_mode = OdinSensorMode::kHighPeak;
+  if (GetSensorMode(ctx->handle, verified_lidar_mode) == OdinResult::kOk) {
+    const bool ok = (verified_lidar_mode == kDesiredLiDARMode);
+    std::cout << "[" << GetTimestamp() << "] LiDAR mode verify: "
+              << (ok ? "OK" : "MISMATCH")
+              << " (mode=" << static_cast<int>(verified_lidar_mode) << ")" << std::endl;
+  }
+  
+  // --- Step 6: Query current filter params ---
+  OdinLidarFilterParams filter_params;
+  if (GetFilterParam(ctx->handle, filter_params) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] Current filter params:"
+              << " confidence=" << (filter_params.has_confidence ? "yes" : "no")
+              << "(threshold=" << static_cast<int>(filter_params.confidence.confidence_threshold) << ")"
+              << " adaptive=" << (filter_params.has_adaptive ? "yes" : "no")
+              << "(cdf=" << filter_params.adaptive.cdf_percentile
+              << " outdoor=" << filter_params.adaptive.outdoor_threshold << "mm)"
+              << " range=" << (filter_params.has_range ? "yes" : "no")
+              << "(min_depth=" << filter_params.range.min_depth << "mm)"
+              << std::endl;
+  } else {
+    std::cerr << "[" << GetTimestamp() << "] Failed to get filter params" << std::endl;
+  }
 
-  // Start all data streams with UDP transport
+  // --- Step 7: Set confidence threshold (0 = no filtering) ---
+  OdinLidarFilterParams desired_params;
+  desired_params.has_confidence = true;
+  desired_params.confidence = OdinConfidenceFilterParam(0);
+  if (SetFilterParam(ctx->handle, desired_params) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] Filter param set: confidence_threshold=0" << std::endl;
+  } else {
+    std::cerr << "[" << GetTimestamp() << "] Failed to set filter param" << std::endl;
+  }
+
+  // --- Step 8: Verify filter params ---
+  OdinLidarFilterParams verified_params;
+  if (GetFilterParam(ctx->handle, verified_params) == OdinResult::kOk) {
+    std::cout << "[" << GetTimestamp() << "] Filter params verified:"
+              << " confidence(threshold="
+              << static_cast<int>(verified_params.confidence.confidence_threshold) << ")"
+              << std::endl;
+  }
+  
+  // --- Step 9: Start all data streams with UDP transport ---
   std::cout << "[" << GetTimestamp() << "] Starting data streams..." << std::endl;
-
+  
   auto start_stream = [&](OdinDataChannel channel, const char* name) {
     auto result = StartStream(ctx->handle, channel, OdinTransportMode::kUdp);
     if (result == OdinResult::kOk) {
@@ -304,16 +425,37 @@ void ConnectAndRegister(DeviceContext* ctx) {
                 << static_cast<int>(result) << std::endl;
     }
   };
-
-  start_stream(OdinDataChannel::kRawPoint, "RawPoint");
+  
+  start_stream(OdinDataChannel::kRawPoint,  "RawPoint");
   start_stream(OdinDataChannel::kSlamPoint, "SlamPoint");
-  start_stream(OdinDataChannel::kImage0, "Image0");
-  start_stream(OdinDataChannel::kImage1, "Image1");
-  start_stream(OdinDataChannel::kImu, "IMU");
-  start_stream(OdinDataChannel::kOdom, "Odom");
-
-  // Set to normal mode to start streaming
-  if (SetOperatingMode(ctx->handle, OdinOperatingMode::kNormal) == OdinResult::kOk) {
+  start_stream(OdinDataChannel::kImage0,    "Image0");
+  start_stream(OdinDataChannel::kImage1,    "Image1");
+  start_stream(OdinDataChannel::kImu,       "IMU");
+  start_stream(OdinDataChannel::kOdomLF,    "OdomLF");
+  start_stream(OdinDataChannel::kOdomHF,    "OdomHF");
+  
+  // --- Step 7: Verify per-channel subscription state ---
+  auto query_channel = [&](OdinDataChannel channel, const char* name) {
+    OdinChannelConfigInfo ch_info;
+    if (GetChannelConfig(ctx->handle, channel, ch_info) == OdinResult::kOk) {
+      std::cout << "  [" << name << "] subscribed=" << (ch_info.subscribed ? "yes" : "no")
+                << " port=" << ch_info.dst_port
+                << " transport=" << (ch_info.transport_mode == OdinTransportMode::kTcp ? "TCP" : "UDP")
+                << std::endl;
+    } else {
+      std::cerr << "  [" << name << "] GetChannelConfig failed" << std::endl;
+    }
+  };
+  query_channel(OdinDataChannel::kRawPoint,  "RawPoint");
+  query_channel(OdinDataChannel::kSlamPoint, "SlamPoint");
+  query_channel(OdinDataChannel::kImage0,    "Image0");
+  query_channel(OdinDataChannel::kImage1,    "Image1");
+  query_channel(OdinDataChannel::kImu,       "IMU");
+  query_channel(OdinDataChannel::kOdomLF,    "OdomLF");
+  query_channel(OdinDataChannel::kOdomHF,    "OdomHF");
+  
+  // --- Step 8: Switch to normal mode to begin streaming ---
+  if (SetDeviceMode(ctx->handle, OdinDeviceMode::kNormal) == OdinResult::kOk) {
     std::cout << "[" << GetTimestamp() << "] Device " << ctx->device.sn
               << " set to NORMAL mode, streaming started" << std::endl;
   } else {
@@ -330,7 +472,7 @@ void DisconnectAndRelease(DeviceContext* ctx) {
 
   if (ctx->handle != kInvalidDeviceHandle) {
     // Set to standby mode before closing streams
-    SetOperatingMode(ctx->handle, OdinOperatingMode::kStandby);
+    SetDeviceMode(ctx->handle, OdinDeviceMode::kStandby);
 
     // Close all data streams
     CloseStream(ctx->handle, OdinDataChannel::kRawPoint);
@@ -338,7 +480,8 @@ void DisconnectAndRelease(DeviceContext* ctx) {
     CloseStream(ctx->handle, OdinDataChannel::kImage0);
     CloseStream(ctx->handle, OdinDataChannel::kImage1);
     CloseStream(ctx->handle, OdinDataChannel::kImu);
-    CloseStream(ctx->handle, OdinDataChannel::kOdom);
+    CloseStream(ctx->handle, OdinDataChannel::kOdomLF);
+    CloseStream(ctx->handle, OdinDataChannel::kOdomHF);
 
     DisconnectDevice(ctx->handle);
     ctx->handle = kInvalidDeviceHandle;
@@ -349,7 +492,8 @@ void DisconnectAndRelease(DeviceContext* ctx) {
   ctx->slam_stats.Reset();
   ctx->image_stats.Reset();
   ctx->imu_stats.Reset();
-  ctx->odom_stats.Reset();
+  ctx->odom_lf_stats.Reset();
+  ctx->odom_hf_stats.Reset();
   ctx->image2_stats.Reset();
 
   ctx->connected = false;
@@ -371,7 +515,6 @@ void OnDeviceAttach(const DiscoveredDevice& device) {
   std::cout << "  IP: " << device.network.ip_address << std::endl;
   std::cout << "  SN: " << device.sn << std::endl;
   std::cout << "  Model: " << device.model << std::endl;
-  std::cout << "  Firmware: " << device.firmware_version << std::endl;
 
   if (g_devices.find(key) != g_devices.end()) {
     // Device already exists (shouldn't happen since we erase on removal)
@@ -434,7 +577,8 @@ void PrintStatistics() {
     UpdateFps(ctx->slam_stats);
     UpdateFps(ctx->image_stats);
     UpdateFps(ctx->imu_stats);
-    UpdateFps(ctx->odom_stats);
+    UpdateFps(ctx->odom_lf_stats);
+    UpdateFps(ctx->odom_hf_stats);
     UpdateFps(ctx->image2_stats);
   }
 
@@ -455,8 +599,9 @@ void PrintStatistics() {
     std::cout << "SLAM:   " << std::setw(6) << ctx->slam_stats.fps << " fps | ";
     std::cout << "IMAGE:  " << std::setw(6) << ctx->image_stats.fps << " fps\n";
     std::cout << "  IMU:    " << std::setw(6) << ctx->imu_stats.fps << " fps | ";
-    std::cout << "ODOM:   " << std::setw(6) << ctx->odom_stats.fps << " fps | ";
-    std::cout << "IMAGE2: " << std::setw(6) << ctx->image2_stats.fps << " fps\n";
+    std::cout << "ODOM_LF:" << std::setw(6) << ctx->odom_lf_stats.fps << " fps | ";
+    std::cout << "ODOM_HF:" << std::setw(6) << ctx->odom_hf_stats.fps << " fps\n";
+    std::cout << "  IMAGE2: " << std::setw(6) << ctx->image2_stats.fps << " fps\n";
   }
 
   std::cout << "============================================================\n";

@@ -1,0 +1,7 @@
+# Request - empty, query persisted default time sync mode (cmd_id=0x21)
+---
+# Response
+bool success
+int32 error_code   # 0=OK, other values from OdinResult enum
+string message
+uint8 sync_mode    # 0=SysTick (system clock), 1=PTP (hardware timestamp)

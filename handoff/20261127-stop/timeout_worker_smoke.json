@@ -1,0 +1,9 @@
+[
+  {
+    "action": "L0_backseat_A",
+    "requested_frame": 60,
+    "stop_to_amp_preview_s": 0.20078580100016552,
+    "max_wbc_publish_gap_s": 0.020987384999898495,
+    "fresh_preview_with_wbc_active": true
+  }
+]

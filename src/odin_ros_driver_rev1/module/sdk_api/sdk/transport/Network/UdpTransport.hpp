@@ -1,23 +1,10 @@
 #pragma once
 
 #include "../ITransport/ITransport.hpp"
+#include "SocketHandle.hpp"
 #include <atomic>
 #include <mutex>
 #include <thread>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-using SocketHandle = SOCKET;
-constexpr SocketHandle kInvalidSocketHandle = INVALID_SOCKET;
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-using SocketHandle = int;
-constexpr SocketHandle kInvalidSocketHandle = -1;
-#endif
 
 namespace odin {
 namespace sdk {

@@ -2,17 +2,26 @@
 <package format="3">
   <name>luvbot_cloud_bridge</name>
   <version>0.1.0</version>
-  <description>C++ MQTT/Protobuf voltage publication test for the robot.</description>
+  <description>MQTT/Protobuf robot status, heartbeats and BLE Wi-Fi provisioning integration.</description>
   <maintainer email="starimpact@126.com">luvbot</maintainer>
   <license>TODO: License declaration</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>pkg-config</build_depend>
   <build_depend>protobuf-compiler</build_depend>
   <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>robot_interfaces</depend>
+  <depend>luvbot_control_interfaces</depend>
+  <depend>luvbot_hardware_interfaces</depend>
+  <depend>nlohmann_json</depend>
   <depend>ament_index_cpp</depend>
   <depend>libmosquitto-dev</depend>
   <depend>libprotobuf-dev</depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>luvbot_provisioning</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

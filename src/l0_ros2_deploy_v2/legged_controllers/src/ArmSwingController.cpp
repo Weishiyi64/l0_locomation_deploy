@@ -1,4 +1,4 @@
-#include "legged_controllers/ArmSwingController.h"
+#include "ArmSwingController.h"
 
 #include <algorithm>
 #include <cmath>

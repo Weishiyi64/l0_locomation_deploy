@@ -83,7 +83,7 @@ SocketHandle CreateBroadcastSocket(const std::string& host_ip, uint16_t host_por
   local_addr.sin_family = AF_INET;
   local_addr.sin_port = htons(host_port);
   if (host_ip.empty() || host_ip == "0.0.0.0") {
-    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
   } else if (inet_pton(AF_INET, host_ip.c_str(), &local_addr.sin_addr) != 1) {
     CloseSocket(sock);
     return kInvalidSocket;
@@ -93,6 +93,30 @@ SocketHandle CreateBroadcastSocket(const std::string& host_ip, uint16_t host_por
     CloseSocket(sock);
     return kInvalidSocket;
   }
+
+  return sock;
+}
+
+SocketHandle CreateBroadcastSocketForInterface(const std::string& host_ip, uint16_t host_port) {
+  // Bind to INADDR_ANY so the socket can receive limited-broadcast replies
+  // (destination 255.255.255.255); a socket bound to a concrete unicast
+  // address would not receive them.
+  SocketHandle sock = CreateBroadcastSocket("0.0.0.0", host_port);
+  if (sock == kInvalidSocket) return kInvalidSocket;
+
+#ifndef _WIN32
+  // Pin the egress interface to the NIC that owns host_ip so probes leave that
+  // NIC even when it is not on the default route. Requires CAP_NET_RAW.
+  std::string ifname = GetInterfaceNameForIp(host_ip);
+  if (!ifname.empty()) {
+    if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ifname.c_str(),
+                   static_cast<socklen_t>(ifname.size())) != 0) {
+      // Non-fatal: keep the socket but fall back to default-route egress.
+    }
+  }
+#else
+  (void)host_ip;
+#endif
 
   return sock;
 }
@@ -141,6 +165,165 @@ std::vector<std::string> GetLocalIPAddresses() {
   return ips;
 }
 
+std::string GetInterfaceNameForIp(const std::string& host_ip) {
+#ifndef _WIN32
+  struct ifaddrs* ifaddr = nullptr;
+  std::string result;
+  if (getifaddrs(&ifaddr) == 0) {
+    for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == nullptr) continue;
+      if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+      char ip[INET_ADDRSTRLEN];
+      auto* sa = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
+      inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip));
+      if (host_ip == ip) {
+        result = (ifa->ifa_name != nullptr) ? ifa->ifa_name : "";
+        break;
+      }
+    }
+    freeifaddrs(ifaddr);
+  }
+  return result;
+#else
+  (void)host_ip;
+  return "";
+#endif
+}
+
+std::string GetDirectedBroadcastAddress(const std::string& host_ip) {
+  if (host_ip.empty() || host_ip == "0.0.0.0") return "";
+
+  std::string result;
+#ifdef _WIN32
+  ULONG bufLen = 15000;
+  PIP_ADAPTER_ADDRESSES addresses = (PIP_ADAPTER_ADDRESSES)malloc(bufLen);
+  if (addresses &&
+      GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, addresses, &bufLen) ==
+          NO_ERROR) {
+    for (auto addr = addresses; addr && result.empty(); addr = addr->Next) {
+      if (addr->OperStatus != IfOperStatusUp) continue;
+      for (auto ua = addr->FirstUnicastAddress; ua; ua = ua->Next) {
+        if (ua->Address.lpSockaddr->sa_family != AF_INET) continue;
+        sockaddr_in* sa = (sockaddr_in*)ua->Address.lpSockaddr;
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip));
+        if (host_ip != ip) continue;
+
+        // /32 point-to-point routes have no broadcast address; /0 routes
+        // degenerate to the limited broadcast (rejected below).
+        ULONG prefix = ua->OnLinkPrefixLength;
+        if (prefix >= 32) break;
+        uint32_t mask = (prefix == 0) ? 0u : (0xFFFFFFFFu << (32 - prefix));
+        uint32_t broadcast = ntohl(sa->sin_addr.s_addr) | ~mask;
+
+        in_addr broadcast_in;
+        broadcast_in.s_addr = htonl(broadcast);
+        char bc[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &broadcast_in, bc, sizeof(bc));
+        result = bc;
+        break;
+      }
+    }
+  }
+  if (addresses) free(addresses);
+#else
+  struct ifaddrs* ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) == 0) {
+    for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+      if (ifa->ifa_addr == nullptr || ifa->ifa_netmask == nullptr) continue;
+      if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+      auto* sa = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
+      char ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &sa->sin_addr, ip, sizeof(ip));
+      if (host_ip != ip) continue;
+
+      auto* netmask = reinterpret_cast<sockaddr_in*>(ifa->ifa_netmask);
+      uint32_t broadcast = ntohl(sa->sin_addr.s_addr) | ~ntohl(netmask->sin_addr.s_addr);
+
+      in_addr broadcast_in;
+      broadcast_in.s_addr = htonl(broadcast);
+      char bc[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &broadcast_in, bc, sizeof(bc));
+      result = bc;
+      break;
+    }
+    freeifaddrs(ifaddr);
+  }
+#endif
+  // Skip degenerate results: a /32 route yields the address itself and a /0
+  // route yields the limited broadcast; neither adds reach beyond unicast.
+  if (result == host_ip || result == "255.255.255.255") return "";
+  return result;
+}
+
+bool IsIpInSameSubnet(const std::string& ip, const std::string& local_ip) {
+  in_addr target_addr{};
+  if (inet_pton(AF_INET, ip.c_str(), &target_addr) != 1) {
+    return true;  // Fail-open: unparsable input keeps the legacy behaviour.
+  }
+
+#ifdef _WIN32
+  ULONG buf_len = 15000;
+  PIP_ADAPTER_ADDRESSES addresses = (PIP_ADAPTER_ADDRESSES)malloc(buf_len);
+  if (addresses == nullptr) return true;  // Fail-open
+
+  if (GetAdaptersAddresses(AF_INET, 0, NULL, addresses, &buf_len) != NO_ERROR) {
+    free(addresses);
+    return true;  // Fail-open
+  }
+
+  bool same_subnet = true;  // Fail-open when local_ip is not found.
+  bool found = false;
+  for (auto addr = addresses; addr != nullptr && !found; addr = addr->Next) {
+    for (auto ua = addr->FirstUnicastAddress; ua != nullptr && !found; ua = ua->Next) {
+      if (ua->Address.lpSockaddr->sa_family != AF_INET) continue;
+
+      sockaddr_in* sa = (sockaddr_in*)ua->Address.lpSockaddr;
+      char lip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &sa->sin_addr, lip, sizeof(lip));
+      if (local_ip != lip) continue;
+
+      uint32_t prefix = ua->OnLinkPrefixLength;
+      uint32_t mask = 0;
+      if (prefix >= 32) {
+        mask = 0xFFFFFFFFu;
+      } else if (prefix > 0) {
+        mask = 0xFFFFFFFFu << (32 - prefix);
+      }
+      same_subnet =
+          (ntohl(target_addr.s_addr) & mask) == (ntohl(sa->sin_addr.s_addr) & mask);
+      found = true;
+    }
+  }
+  free(addresses);
+  return same_subnet;
+#else
+  struct ifaddrs* ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) != 0) {
+    return true;  // Fail-open
+  }
+
+  bool same_subnet = true;  // Fail-open when local_ip is not found.
+  for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr == nullptr || ifa->ifa_netmask == nullptr) continue;
+    if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+    auto* sa = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
+    char lip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &sa->sin_addr, lip, sizeof(lip));
+    if (local_ip != lip) continue;
+
+    uint32_t mask = ntohl(reinterpret_cast<sockaddr_in*>(ifa->ifa_netmask)->sin_addr.s_addr);
+    same_subnet = (ntohl(target_addr.s_addr) & mask) == (ntohl(sa->sin_addr.s_addr) & mask);
+    break;
+  }
+  freeifaddrs(ifaddr);
+  return same_subnet;
+#endif
+}
+
 bool IpStringToBytes(const std::string& ip, uint8_t* bytes_out) {
   if (ip.empty() || bytes_out == nullptr) return false;
 
@@ -161,6 +344,14 @@ std::string BytesToIpString(const uint8_t* bytes) {
          std::to_string(bytes[2]) + "." + std::to_string(bytes[3]);
 }
 
+std::string BytesToMacString(const uint8_t* bytes) {
+  if (bytes == nullptr) return "";
+  char buf[18] = {0};
+  snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", bytes[0], bytes[1], bytes[2],
+           bytes[3], bytes[4], bytes[5]);
+  return std::string(buf);
+}
+
 // =============================================================================
 // Discovery Protocol Helpers
 // =============================================================================
@@ -178,79 +369,76 @@ bool BuildDiscoveryPacket(const std::string& host_ip, uint16_t seq,
                        host_bytes, 4, frame_out);
 }
 
-bool ParseDiscoveryResponse(const uint8_t* data, size_t length, DiscoveredDevice& device_out) {
-  if (data == nullptr || length == 0) return false;
-
-  OdinProtocolV1 protocol;
-  std::unique_ptr<IPacket> packet;
-
-  int consumed = protocol.Parse(data, length, packet);
-  if (consumed <= 0 || !packet) return false;
-
-  auto* odin_pkt = static_cast<OdinPacket*>(packet.get());
-
-  // Check if this is a discovery response
-  // Minimum payload: status(1) + SN(16) + IP(4) = 21 bytes
-  // Extended payload: + model(32) = 53 bytes
-  if (odin_pkt->GetCmdId() != kCmdIdDeviceQuery) return false;
-  if (odin_pkt->GetCmdType() != OdinConst::kCmdTypeAck) return false;
-  if (odin_pkt->GetPayloadSize() < 21) return false;
-
-  const uint8_t* payload = odin_pkt->GetPayload();
-
-  // Check status
-  if (payload[0] != 0) return false;
-
-  // Parse SN (bytes 1-16)
-  std::string sn(reinterpret_cast<const char*>(payload + 1), 16);
-  auto null_pos = sn.find('\0');
-  if (null_pos != std::string::npos) sn.resize(null_pos);
-
-  // Extract actual SN: if format is "xx-xxxxx", use part after '-'
-  auto dash_pos = sn.find('-');
-  if (dash_pos != std::string::npos && dash_pos + 1 < sn.size()) {
-    sn = sn.substr(dash_pos + 1);
-  }
-
-  // Parse IP (bytes 17-20)
-  std::string ip = BytesToIpString(payload + 17);
-
-  // Parse model (bytes 21-52, 32 characters) if available, otherwise use default
-  std::string model = "ODIN2";
-  if (odin_pkt->GetPayloadSize() >= 53) {
-    model = std::string(reinterpret_cast<const char*>(payload + 21), 32);
-    auto model_null_pos = model.find('\0');
-    if (model_null_pos != std::string::npos) model.resize(model_null_pos);
-  }
-
-  device_out.network.ip_address = ip;
-  device_out.sn = sn;
-  device_out.model = model;
-  device_out.firmware_version = "1.0.0";
-  device_out.connection = MTConnectionType::kEthernet;
-
-  return true;
-}
-
 bool SendDiscoveryBroadcast(SocketHandle sock, uint16_t target_port,
                             const IDiscovery::Context& context,
-                            std::shared_ptr<IDiscovery> discovery) {
+                            std::shared_ptr<IDiscovery> discovery,
+                            const std::string& broadcast_ip) {
   static std::atomic<uint16_t> seq_counter{0};
 
   if (!discovery) discovery = DiscoveryFactory::GetDefault();
 
-  std::vector<uint8_t> frame;
-  if (!discovery->BuildRequest(seq_counter.fetch_add(1), context, frame)) {
-    return false;
-  }
-
   sockaddr_in broadcast_addr{};
   broadcast_addr.sin_family = AF_INET;
   broadcast_addr.sin_port = htons(target_port);
-  broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+  if (broadcast_ip.empty() || broadcast_ip == "255.255.255.255") {
+    broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+  } else if (inet_pton(AF_INET, broadcast_ip.c_str(), &broadcast_addr.sin_addr) != 1) {
+    return false;
+  }
 
-  return sendto(sock, reinterpret_cast<const char*>(frame.data()), static_cast<int>(frame.size()),
-                0, reinterpret_cast<sockaddr*>(&broadcast_addr), sizeof(broadcast_addr)) >= 0;
+  // Multi-version probing: emit one frame per epoch the discovery declares
+  // (each with its own seq) so firmware that validates the request-header
+  // version still accepts one of the probes. All replies land in the same
+  // receive window and are deduplicated upstream by SN/IP. An empty list
+  // (or a 0 sentinel) means a single request with the discovery's default
+  // epoch.
+  std::vector<uint8_t> probe_versions = discovery->GetProbeVersions();
+  if (probe_versions.empty()) {
+    probe_versions.push_back(0);
+  }
+
+  size_t frames_sent = 0;
+  for (uint8_t probe_version : probe_versions) {
+    IDiscovery::Context ctx = context;
+    if (probe_version != 0) {
+      ctx[IDiscovery::kContextKeyProtocolVersion] = std::to_string(probe_version);
+    }
+
+    std::vector<uint8_t> frame;
+    if (!discovery->BuildRequest(seq_counter.fetch_add(1), ctx, frame)) {
+      continue;
+    }
+
+    if (sendto(sock, reinterpret_cast<const char*>(frame.data()),
+               static_cast<int>(frame.size()), 0,
+               reinterpret_cast<sockaddr*>(&broadcast_addr), sizeof(broadcast_addr)) < 0) {
+      continue;
+    }
+    ++frames_sent;
+  }
+
+  return frames_sent > 0;
+}
+
+bool SendDiscoveryBroadcastForInterface(SocketHandle sock, uint16_t target_port,
+                                         const IDiscovery::Context& context,
+                                         std::shared_ptr<IDiscovery> discovery,
+                                         const std::string& host_ip) {
+  // A directed subnet broadcast (e.g. 192.168.1.255) routes to the on-link
+  // interface that owns host_ip. This is the portable egress selector on
+  // Windows, where SO_BINDTODEVICE is unavailable and a 255.255.255.255
+  // limited broadcast leaves only through the default-route interface.
+  const std::string directed_bc = GetDirectedBroadcastAddress(host_ip);
+  bool sent = false;
+  if (!directed_bc.empty()) {
+    sent = SendDiscoveryBroadcast(sock, target_port, context, discovery, directed_bc);
+  }
+  // Limited broadcast as a fallback for devices that only answer
+  // 255.255.255.255 and for interfaces without a resolvable subnet.
+  if (SendDiscoveryBroadcast(sock, target_port, context, discovery)) {
+    sent = true;
+  }
+  return sent;
 }
 
 // =============================================================================
@@ -260,7 +448,6 @@ bool SendDiscoveryBroadcast(SocketHandle sock, uint16_t target_port,
 namespace {
 constexpr const char* kContextKeyHostIp = "host_ip";
 constexpr const char* kContextKeyPort = "port";
-std::atomic<uint16_t> g_discovery_seq{0};
 
 uint16_t GenerateRandomPort() {
   static std::random_device rd;
@@ -279,7 +466,10 @@ bool DiscoverDevicesOnInterface(std::vector<DiscoveredDevice>& devices, uint32_t
   if (timeout_ms == 0) timeout_ms = 2000;
   if (!AcquireWinsock()) return false;
 
-  SocketHandle sock = CreateBroadcastSocket(host_ip, host_port);
+  // Bind to INADDR_ANY (to receive limited-broadcast replies with destination
+  // 255.255.255.255) while pinning egress to the NIC that owns host_ip via
+  // SO_BINDTODEVICE. Send and receive on this single socket.
+  SocketHandle sock = CreateBroadcastSocketForInterface(host_ip, host_port);
   if (sock == kInvalidSocket) {
     ReleaseWinsock();
     return false;
@@ -290,80 +480,60 @@ bool DiscoverDevicesOnInterface(std::vector<DiscoveredDevice>& devices, uint32_t
   context[kContextKeyHostIp] = host_ip;
   context[kContextKeyPort] = std::to_string(target_port);
 
-  bool success = true;
-  do {
-    // Build and send discovery request
-    uint16_t seq = g_discovery_seq.fetch_add(1);
-    std::vector<uint8_t> frame;
-    if (!discovery->BuildRequest(seq, context, frame)) {
-      success = false;
-      break;
-    }
+  // Send discovery broadcast (reuse shared helper)
+  if (!SendDiscoveryBroadcastForInterface(sock, target_port, context, discovery, host_ip)) {
+    CloseSocket(sock);
+    ReleaseWinsock();
+    return false;
+  }
 
-    sockaddr_in broadcast_addr;
-    std::memset(&broadcast_addr, 0, sizeof(broadcast_addr));
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(target_port);
-    broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-    if (sendto(sock, reinterpret_cast<const char*>(frame.data()), static_cast<int>(frame.size()), 0,
-               reinterpret_cast<sockaddr*>(&broadcast_addr), sizeof(broadcast_addr)) < 0) {
-      success = false;
-      break;
-    }
+  // Receive responses
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  std::set<std::string> seen;
+  std::vector<uint8_t> buffer(512);
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    std::set<std::string> seen;
-    std::vector<uint8_t> buffer(512);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    timeval tv;
+    tv.tv_sec = static_cast<long>(remaining.count() / 1000);
+    tv.tv_usec = static_cast<long>((remaining.count() % 1000) * 1000);
 
-    while (std::chrono::steady_clock::now() < deadline) {
-      auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-          deadline - std::chrono::steady_clock::now());
-      timeval tv;
-      tv.tv_sec = static_cast<long>(remaining.count() / 1000);
-      tv.tv_usec = static_cast<long>((remaining.count() % 1000) * 1000);
-
-      fd_set read_fds;
-      FD_ZERO(&read_fds);
-      FD_SET(sock, &read_fds);
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(sock, &read_fds);
 #ifdef _WIN32
-      int ready = select(0, &read_fds, nullptr, nullptr, &tv);
+    int ready = select(0, &read_fds, nullptr, nullptr, &tv);
 #else
-      int ready = select(static_cast<int>(sock + 1), &read_fds, nullptr, nullptr, &tv);
+    int ready = select(static_cast<int>(sock + 1), &read_fds, nullptr, nullptr, &tv);
 #endif
-      if (ready <= 0 || !FD_ISSET(sock, &read_fds)) continue;
+    if (ready <= 0 || !FD_ISSET(sock, &read_fds)) continue;
 
-      sockaddr_in from_addr;
-      socklen_t addr_len = sizeof(from_addr);
-      int len =
-          recvfrom(sock, reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()), 0,
-                   reinterpret_cast<sockaddr*>(&from_addr), &addr_len);
-      if (len <= 0) continue;
+    sockaddr_in from_addr;
+    socklen_t addr_len = sizeof(from_addr);
+    int len =
+        recvfrom(sock, reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()), 0,
+                 reinterpret_cast<sockaddr*>(&from_addr), &addr_len);
+    if (len <= 0) continue;
 
-      // Parse response using discovery
-      DiscoveredDevice device;
-      if (!discovery->ParseResponse(buffer.data(), static_cast<size_t>(len), device)) continue;
+    // Parse response using discovery
+    DiscoveredDevice device;
+    if (!discovery->ParseResponse(buffer.data(), static_cast<size_t>(len), device)) continue;
 
-        // Use actual socket source IP instead of protocol payload IP
-#ifdef _WIN32
-      char socket_ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET, &from_addr.sin_addr, socket_ip, INET_ADDRSTRLEN);
-      device.network.ip_address = socket_ip;
-#else
-      char socket_ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET, &from_addr.sin_addr, socket_ip, INET_ADDRSTRLEN);
-      device.network.ip_address = socket_ip;
-#endif
+    // Use actual socket source IP instead of protocol payload IP
+    char socket_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &from_addr.sin_addr, socket_ip, INET_ADDRSTRLEN);
+    device.network.ip_address = socket_ip;
 
-      if (!seen.insert(device.network.ip_address).second) continue;
+    if (!seen.insert(device.network.ip_address).second) continue;
 
-      device.host_ip = host_ip;
-      devices.push_back(device);
-    }
-  } while (false);
+    device.host_ip = host_ip;
+    devices.push_back(device);
+  }
 
   CloseSocket(sock);
   ReleaseWinsock();
-  return success;
+  return true;
 }
 
 bool DiscoverNetworkDevices(std::vector<DiscoveredDevice>& devices, uint32_t timeout_ms,

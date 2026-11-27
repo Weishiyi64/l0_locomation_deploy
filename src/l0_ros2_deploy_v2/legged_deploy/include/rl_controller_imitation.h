@@ -1,14 +1,7 @@
 #ifndef RL_SDK_IMITATION_H
 #define RL_SDK_IMITATION_H
 
-#ifdef USE_TENSORRT
-#include <NvInfer.h>
-#include <cuda_runtime_api.h>
-#elif defined(USE_RKNN)
-#include "rknn_model.h"
-#elif defined(USE_OPENVINO)
-#include <openvino/openvino.hpp>
-#endif
+#include "inference_model.h"
 
 #include <Eigen/Dense>
 #include <atomic>
@@ -26,18 +19,14 @@
 #include "base/base_rl_controller.h"
 #include "base/rl_controller_registrar.h"
 #include "order_mapping.h"
-#ifdef USE_TENSORRT
-#include "trt_logger.h"
-#endif
-#include "luvbot_control_interfaces/srv/switch_policy.hpp"
+#include "robot_interfaces/srv/switch_policy.hpp"
 #include "rl_data.h"
 #include "rl_data_imitation.h"
 
 // Per-output buffer for the imitation (motion) model.
-// Holds the TRT binding index, a GPU device pointer, and a CPU readback buffer.
+// Named output index and validated CPU buffer.
 struct ImitationOutputBuffer {
-  int binding_idx = -1;
-  void* device_ptr = nullptr;
+  int output_index = -1;
   std::vector<float> host_buf;
 };
 
@@ -52,16 +41,11 @@ class RL_imitation : public BaseRLController {
   void initData();
 
   bool updateObservation();
-  bool updateAction();
+  bool updateAction(Robot_Imitation_Output& output);
   void updateImitationData();
 
-  // Fallback observation builder used when no imitation model is provided
-  void updateObservationFallback();
-
-  Eigen::Vector3d qr_ty_i(const Eigen::Vector4d& q, const Eigen::Vector3d& v);
-
   void update();
-  void stateCallback(const luvbot_control_interfaces::msg::PolicyObservation::ConstSharedPtr msg) override;
+  void stateCallback(const robot_interfaces::msg::PolicyObservation::ConstSharedPtr msg) override;
   void imitationResetCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);
   void imitationActiveCallback(const std_msgs::msg::Bool::ConstSharedPtr msg);
 
@@ -98,8 +82,7 @@ class RL_imitation : public BaseRLController {
         : rbt_state(logger),
           rbt_output(logger),
           obs(Observations_Imitation(1, 1)),
-          imitation_start_time(0, 0, clock_type),
-          last_update_time(0, 0, RCL_SYSTEM_TIME) {}
+          imitation_start_time(0, 0, clock_type) {}
 
     std::string policy_name;
     std::string robot_cfg_path;
@@ -109,49 +92,21 @@ class RL_imitation : public BaseRLController {
     Robot_Imitation_Output rbt_output;
     Observations_Imitation obs;
     std::unique_ptr<ObservationManager_Imitation> obs_manager;
-    std::unique_ptr<ObservationManager> fallback_obs_manager;
-    RL_ModelParams fallback_params;
     rclcpp::Time imitation_start_time;
     bool previous_rl_inference_enabled = false;
     bool initial_quats_logged = false;
-    double initial_yaw = 0.0;
-    bool initial_yaw_valid = false;
     Eigen::Quaterniond robot_initial_quat;
     Eigen::Quaterniond imitation_initial_quat;
     int time_step_counter = 0;
-    bool imitation_model_enabled = true;
     std::string policy_output_name;
     bool motion_done_sent = false;
     std::vector<MotionData> precomputed_motion_data;
     int motion_data_size = 0;
     bool has_body_quat_output = false;
-    rclcpp::Time last_update_time;
-    bool update_frequency_initialized = false;
 
-#ifdef USE_TENSORRT
-    nvinfer1::IRuntime* trt_runtime_policy = nullptr;
-    nvinfer1::ICudaEngine* trt_engine_policy = nullptr;
-    nvinfer1::IExecutionContext* trt_context_policy = nullptr;
-    void* policy_input_device = nullptr;
-    void* policy_output_device = nullptr;
-    std::vector<float> policy_output_host;
-    int policy_input_binding_idx = 0;
-    int policy_output_binding_idx = 1;
-    nvinfer1::IRuntime* trt_runtime_imitation = nullptr;
-    nvinfer1::ICudaEngine* trt_engine_imitation = nullptr;
-    nvinfer1::IExecutionContext* trt_context_imitation = nullptr;
-    void* imitation_input_device = nullptr;
-    int imitation_input_binding_idx = 0;
-#elif defined(USE_RKNN)
-    std::unique_ptr<RknnModel> rknn_policy;
-    std::unique_ptr<RknnModel> rknn_imitation;
-    int rknn_policy_output_idx = 0;
-#elif defined(USE_OPENVINO)
-    ov::CompiledModel ov_compiled_policy;
-    ov::InferRequest ov_infer_policy;
-    ov::CompiledModel ov_compiled_imitation;
-    ov::InferRequest ov_infer_imitation;
-#endif
+    std::unique_ptr<InferenceModel> model_policy;
+    std::unique_ptr<InferenceModel> model_imitation;
+    int model_policy_output_idx = 0;
     std::map<std::string, ImitationOutputBuffer> imitation_outputs;
   };
 
@@ -172,19 +127,18 @@ class RL_imitation : public BaseRLController {
   void preloadPoliciesLocked(const std::vector<std::string>& policies);
   void refreshInferenceEnabledLocked();
   void switchImitationPolicyCallback(
-      const std::shared_ptr<luvbot_control_interfaces::srv::SwitchPolicy::Request> request,
-      std::shared_ptr<luvbot_control_interfaces::srv::SwitchPolicy::Response> response);
+      const std::shared_ptr<robot_interfaces::srv::SwitchPolicy::Request> request,
+      std::shared_ptr<robot_interfaces::srv::SwitchPolicy::Response> response);
 
   // Run one imitation model inference step.
-  // Copies timestep to device, calls executeV2, copies all outputs to host.
-  // Returns false on CUDA or TRT error.
+  // Runs the motion model and validates its outputs before use.
   bool runImitationInference(float timestep);
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subResetCmd_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subImitationActive_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr pubImitationJointStates_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pubImitationMotionDone_;
-  rclcpp::Service<luvbot_control_interfaces::srv::SwitchPolicy>::SharedPtr switchPolicySrv_;
+  rclcpp::Service<robot_interfaces::srv::SwitchPolicy>::SharedPtr switchPolicySrv_;
 
   bool motion_done_sent_ = false;
 
@@ -195,16 +149,10 @@ class RL_imitation : public BaseRLController {
   Observations_Imitation obs;
 
   std::unique_ptr<ObservationManager_Imitation> obs_manager_;
-  // Fallback (non-v3) observation manager when motion model is disabled
-  std::unique_ptr<ObservationManager> fallback_obs_manager_;
-  // Parameters mirrored for the non-v3 fallback ObservationManager
-  RL_ModelParams fallback_params_;
 
   rclcpp::Time imitation_start_time;
   bool previous_rl_inference_enabled_ = false;
   bool initial_quats_logged_ = false;
-  double initial_yaw_ = 0.0;
-  bool initial_yaw_valid_ = false;
 
   Eigen::Quaterniond robot_initial_quat, imitation_initial_quat;
 
@@ -213,8 +161,6 @@ class RL_imitation : public BaseRLController {
 
   // time step counter and motion flag
   int time_step_counter_ = 0;
-  // whether a separate imitation model (imitation_name) was provided and loaded
-  bool imitation_model_enabled_ = true;
 
   // optional override for the policy model output name (lowercased)
   std::string policy_output_name_;
@@ -230,49 +176,16 @@ class RL_imitation : public BaseRLController {
   std::vector<std::string> available_imitation_policies_;
   std::vector<std::string> preload_imitation_policies_;
   std::map<std::string, CachedPolicyRuntime> cached_policies_;
-  rclcpp::Time last_update_time_;
-  bool update_frequency_initialized_ = false;
 
   std::vector<MotionData> precomputed_motion_data_;
   int motion_data_size_ = 0;
   bool has_body_quat_output_ = false;
 
-#ifdef USE_TENSORRT
-  // ---- Shared TRT logger ----
-  TRTLogger trt_logger_;
+  std::unique_ptr<InferenceModel> model_policy_;
+  std::unique_ptr<InferenceModel> model_imitation_;
+  int model_policy_output_idx_ = 0;
 
-  // ---- Policy model TRT objects ----
-  nvinfer1::IRuntime* trt_runtime_policy_ = nullptr;
-  nvinfer1::ICudaEngine* trt_engine_policy_ = nullptr;
-  nvinfer1::IExecutionContext* trt_context_policy_ = nullptr;
-  void* policy_input_device_ = nullptr;
-  void* policy_output_device_ = nullptr;
-  std::vector<float> policy_output_host_;
-  int policy_input_binding_idx_ = 0;
-  int policy_output_binding_idx_ = 1;
-
-  // ---- Imitation (motion) model TRT objects ----
-  nvinfer1::IRuntime* trt_runtime_imitation_ = nullptr;
-  nvinfer1::ICudaEngine* trt_engine_imitation_ = nullptr;
-  nvinfer1::IExecutionContext* trt_context_imitation_ = nullptr;
-  void* imitation_input_device_ = nullptr;
-  int imitation_input_binding_idx_ = 0;
-  std::vector<void*> imitation_bindings_;
-#elif defined(USE_RKNN)
-  std::unique_ptr<RknnModel> rknn_policy_;
-  std::unique_ptr<RknnModel> rknn_imitation_;
-  int rknn_policy_output_idx_ = 0;
-#elif defined(USE_OPENVINO)
-  // ---- OpenVINO inference objects ----
-  ov::Core ov_core_;
-  ov::CompiledModel ov_compiled_policy_;
-  ov::InferRequest ov_infer_policy_;
-  ov::CompiledModel ov_compiled_imitation_;
-  ov::InferRequest ov_infer_imitation_;
-#endif
-
-  // Named output buffers (host side) – used by both TRT and OpenVINO.
-  // TRT also stores a device_ptr; OpenVINO leaves device_ptr nullptr.
+  // Named model outputs on the host.
   std::map<std::string, ImitationOutputBuffer> imitation_outputs_;
 
   rclcpp::Node::SharedPtr nh_;

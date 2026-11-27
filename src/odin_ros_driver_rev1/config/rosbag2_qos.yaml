@@ -7,91 +7,99 @@
 
 # High frequency data (IMU 400Hz, Odom 100Hz)
 # 高频数据 (IMU 400Hz, 里程计 100Hz)
-/manifold/ODIN2/device0/imu:
+/manifold/device0/imu:
   reliability: reliable
   history: keep_last
   depth: 4000
 
-/manifold/ODIN2/device0/odometry:
+/manifold/device0/odometry_lf:
   reliability: reliable
   history: keep_last
   depth: 4000
 
-/manifold/ODIN2/device0/odometry_hf:
+/manifold/device0/odometry_hf:
   reliability: reliable
   history: keep_last
   depth: 4000
 
 # Point clouds (~10Hz)
 # 点云数据 (~10Hz)
-/manifold/ODIN2/device0/cloud/raw:
+/manifold/device0/cloud/raw:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/cloud/slam:
+/manifold/device0/cloud/slam:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/cloud/render:
+/manifold/device0/cloud/render:
   reliability: reliable
   history: keep_last
   depth: 300
 
 # Camera 0 (~30Hz)
 # 相机0 (~30Hz)
-/manifold/ODIN2/device0/camera0/compressed:
+/manifold/device0/camera0/compressed:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera0/raw:
+/manifold/device0/camera0/raw:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera0/rect:
+/manifold/device0/camera0/undistort:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera0/undistort:
-  reliability: reliable
-  history: keep_last
-  depth: 300
-
-/manifold/ODIN2/device0/camera0/camera_info:
+/manifold/device0/camera0/camera_info:
   reliability: reliable
   history: keep_last
   depth: 100
 
-# Camera 1 (~30Hz)
-# 相机1 (~30Hz)
-/manifold/ODIN2/device0/camera1/compressed:
+/manifold/device0/loop_closure/corrected_cloud:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera1/raw:
+/manifold/device0/loop_closure/corrected_pose:
   reliability: reliable
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera1/rect:
+/manifold/device0/loop_closure/optimized_cloud:
   reliability: reliable
+  durability: transient_local
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera1/undistort:
+/manifold/device0/loop_closure/optimized_path:
   reliability: reliable
+  durability: transient_local
   history: keep_last
   depth: 300
 
-/manifold/ODIN2/device0/camera1/camera_info:
+/manifold/device0/loop_closure/optimization_busy:
   reliability: reliable
+  durability: transient_local
   history: keep_last
-  depth: 300
+  depth: 1
+
+/manifold/device0/loop_closure/optimization_status_marker:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
+
+/manifold/device0/loop_closure/map_cloud:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
 
 # TF
 /tf:
@@ -101,5 +109,6 @@
 
 /tf_static:
   reliability: reliable
+  durability: transient_local
   history: keep_last
   depth: 100

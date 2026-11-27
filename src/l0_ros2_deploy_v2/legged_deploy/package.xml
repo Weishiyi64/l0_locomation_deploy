@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>legged_deploy</name>
-  <version>0.0.0</version>
+  <version>0.1.0</version>
   <description>TODO: Package description</description>
   <maintainer email="starimpact@126.com">luvbot</maintainer>
   <license>TODO: License declaration</license>
@@ -11,7 +11,7 @@
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
-  <depend>luvbot_control_interfaces</depend>
+  <depend>robot_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
     <!-- if your code really uses actions / control msgs, keep these -->
@@ -29,10 +29,11 @@
 
   <!-- system dependencies -->
   <depend>yaml-cpp</depend>
-  <depend>openssl</depend>
   <depend>openvino</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
+  <depend>luvbot_control_interfaces</depend>
+  <depend>openssl</depend>
 </package>

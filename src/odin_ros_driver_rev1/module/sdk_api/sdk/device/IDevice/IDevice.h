@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "odin_lidar_def.h"  // Types only - no API function dependencies
+#include "odin_lidar_def_ext.h"  // Types - includes ext types for advanced commands
 
 namespace odin {
 namespace sdk {
@@ -96,7 +96,7 @@ class IDevice {
    * @param timeout_ms Timeout in milliseconds
    * @return Operation result
    */
-  virtual OdinResult SetOperatingMode(OdinOperatingMode mode, uint32_t timeout_ms = 1000) = 0;
+  virtual OdinResult SetDeviceMode(OdinDeviceMode mode, uint32_t timeout_ms = 1000) = 0;
 
   // =========================================================================
   // Data Streaming & Callbacks
@@ -108,10 +108,30 @@ class IDevice {
    */
   virtual void RegisterPointCloudCallback(OdinPointCloudCallback cb, void* user_data) = 0;
   virtual void RegisterSlamCallback(OdinSlamCallback cb, void* user_data) = 0;
-  virtual void RegisterImageCallback(OdinImageCallback cb, void* user_data) = 0;
-  virtual void RegisterImageCallback2(OdinImageCallback2 cb, void* user_data) = 0;
+  virtual void RegisterCameraCallback(OdinCameraCallback cb, void* user_data) = 0;
+  virtual void RegisterCameraCallback2(OdinCameraCallback cb, void* user_data) = 0;
   virtual void RegisterImuCallback(OdinImuCallback cb, void* user_data) = 0;
   virtual void RegisterOdomCallback(OdinOdomCallback cb, void* user_data) = 0;
+  virtual void RegisterTfCallback(OdinTfCallback cb, void* user_data) = 0;
+  virtual void RegisterLcOptimizationStatusCallback(OdinLcOptimizationStatusCallback cb,
+                                                    void* user_data) = 0;
+  virtual void RegisterLcFrameCallback(OdinLcFrameCallback cb, void* user_data) = 0;
+  virtual void RegisterLcOptimizationResultCallback(OdinLcOptimizationResultCallback cb,
+                                                    void* user_data) = 0;
+  virtual void RegisterLcMapCloudCallback(OdinLcMapCloudCallback cb, void* user_data) = 0;
+  /**
+   * @brief Start telemetry subscription (data_type=0x42, opt-in).
+   *
+   * Brings up a TCP server and subscribes the 0x42 channel so the device
+   * starts pushing JSON telemetry frames (~1 Hz). Must be called explicitly
+   * after ConnectDevice() when telemetry is desired.
+   */
+  virtual OdinResult StartTelemetry() = 0;
+
+  /**
+   * @brief Register telemetry callback (data_type=0x42, continuous stream).
+   */
+  virtual void RegisterTelemetryCallback(OdinTelemetryCallback cb, void* user_data) = 0;
 
   /**
    * @brief Stop data channels
@@ -123,11 +143,14 @@ class IDevice {
   // =========================================================================
 
   /**
-   * @brief Send file to device
+   * @brief Send file to device.
    *
-   * For firmware upgrade (kFirmware type), handles complete OTA process:
-   * - Auto-selects HTTP/HTTPS, manages state machine, waits for completion
-   * - Progress: 0-100%, 100% means success
+   * For firmware upgrade (kFirmware type), drives the complete OTA flow:
+   * uploads the firmware, waits for the device-side state machine to reach
+   * a terminal state (DONE / FAILED), and reports progress 0~100% via cb.
+   *
+   * The choice of underlying transport/protocol (e.g., HTTP, HTTPS, USB) is
+   * an implementation detail and MUST NOT be assumed by callers.
    *
    * @param type File type (kFirmware for OTA upgrade)
    * @param file_path Local file path
@@ -138,14 +161,24 @@ class IDevice {
                               OdinUpgradeProgressCallback cb) = 0;
 
   /**
-   * @brief Get file from device
-   * @param type File type
-   * @param save_path Local save path
-   * @param cb Progress callback
-   * @return Operation result
+   * @brief Get file from device.
+   *
+   * For `kCalibrationFile`, the implementation prefers the active TCP
+   * connection (0x41 data channel) and falls back to HTTP/HTTPS only if
+   * the channel cannot be initiated. Progress callback convention:
+   *   - 100.0  : transfer complete, file saved to `save_path`
+   *   - < 0.0  : failure (channel error or timeout)
+   *   - 0..100 : incremental progress (HTTP path only)
+   *
+   * @param type       File type
+   * @param save_path  Local save path
+   * @param cb         Progress/done callback
+   * @param timeout_ms Timeout for 0x41 channel transfer (default 5000 ms)
+   * @return kOk if transfer was initiated; error code otherwise
    */
   virtual OdinResult GetFile(OdinFileType type, const std::string& save_path,
-                             OdinUpgradeProgressCallback cb) = 0;
+                             OdinUpgradeProgressCallback cb,
+                             uint32_t timeout_ms = 5000) = 0;
 
   // =========================================================================
   // Sensor Configuration
@@ -157,7 +190,42 @@ class IDevice {
    * @param timeout_ms Timeout in milliseconds
    * @return Operation result
    */
-  virtual OdinResult SetSensorMode(uint8_t mode, uint32_t timeout_ms = 1000) = 0;
+  virtual OdinResult SetSensorMode(OdinSensorMode mode, uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Get LiDAR mode (cmd_id=0x09) - Synchronous
+   * @param mode Output current LiDAR mode (0=HDR, 1=High Peak, 2=Low Peak, 3=Adaptive)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetSensorMode(OdinSensorMode& mode, uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Send algorithm downlink passthrough data to the device (0x40).
+   *
+   * Host->device opaque algorithm bytes. The downlink TCP server and its 0x40
+   * subscription are set up automatically on connect; the host listens
+   * asynchronously and the module connects in, so the link only needs to be up
+   * at send time. The SDK fragments the payload per protocol §2.4 and does NOT
+   * interpret it; semantics are an application contract.
+   *
+   * Wire spec: docs/protocol/PROTOCOL.md section 2.4 (v2 data frame).
+   *
+   * @param data Opaque algorithm bytes (1 .. 256 KB).
+   * @param len  Byte count of `data`.
+   * @return kOk on success; kNotInitialized if the module is not connected;
+   *         kInvalidArgument on null/size violations; kSocketError on write
+   *         failure.
+   */
+  virtual OdinResult SendAlgoData(const uint8_t* data, size_t len) = 0;
+
+  /**
+   * @brief Get device mode (cmd_id=0x08) - Synchronous
+   * @param mode Output current device mode (0x00: Standby, 0x01: Normal)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetDeviceMode(OdinDeviceMode& mode, uint32_t timeout_ms = 1000) = 0;
 
   /**
    * @brief Start a data stream (cmd_id=0x05) - Synchronous
@@ -172,7 +240,7 @@ class IDevice {
                                  uint32_t timeout_ms = 1000) = 0;
 
   /**
-   * @brief Get sensor capabilities (cmd_id=0x06) - Synchronous
+   * @brief Get sensor capabilities (cmd_id=0x08) - Synchronous
    * @param capabilities Output: list of sensor capabilities
    * @param channels Channels to query (empty = query all)
    * @param timeout_ms Timeout in milliseconds
@@ -190,6 +258,134 @@ class IDevice {
    */
   virtual OdinResult CloseStream(OdinDataChannel channel, uint32_t timeout_ms) = 0;
 
+  /**
+   * @brief Query per-channel subscription state (cmd_id=0x06)
+   * @param channel  Channel to query
+   * @param info     Output channel config info (TLV fields)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetChannelConfig(OdinDataChannel channel, OdinChannelConfigInfo& info,
+                                      uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Set filter parameters (cmd_id=0x32)
+   * @param params List of TLV filter params (at least 1)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult SetFilterParam(const OdinLidarFilterParams& params,
+                                    uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Query LiDAR filter parameters (cmd_id=0x33)
+   * @param params Output: populated with current values
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetFilterParam(OdinLidarFilterParams& params,
+                                    uint32_t timeout_ms = 1000) = 0;
+
+  // =========================================================================
+  // Restore Default Config (cmd_id=0x09)
+  // =========================================================================
+
+  /**
+   * @brief Restore factory default configuration (cmd_id=0x09)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult RestoreDefaultConfig(uint32_t timeout_ms = 1000) = 0;
+
+  // =========================================================================
+  // Time Synchronization (0x20-0x2F)
+  // =========================================================================
+
+  /**
+   * @brief Set default time sync mode (cmd_id=0x20, persisted, requires reboot)
+   * @param mode Sync mode (kSysTick or kPtp)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult SetDefaultSyncMode(OdinTimeSyncMode mode,
+                                        uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Query persisted default sync mode (cmd_id=0x21)
+   * @param mode Output: current persisted sync mode
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetDefaultSyncMode(OdinTimeSyncMode& mode,
+                                        uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Query PTP sync status (cmd_id=0x22, real-time snapshot)
+   * @param status Output PTP sync status
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetPtpSyncStatus(OdinPtpSyncStatus& status,
+                                      uint32_t timeout_ms = 1000) = 0;
+
+  // =========================================================================
+  // Standalone Adaptive Param (0x34/0x35)
+  // =========================================================================
+
+  /**
+   * @brief Set adaptive mode parameters (cmd_id=0x34)
+   * @param param Adaptive parameters (cdf_percentile, outdoor_threshold)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult SetAdaptiveParam(const OdinAdaptiveFilterParam& param,
+                                      uint32_t timeout_ms = 1000) = 0;
+
+  /**
+   * @brief Query adaptive mode parameters (cmd_id=0x35)
+   * @param param Output adaptive parameters
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult GetAdaptiveParam(OdinAdaptiveFilterParam& param,
+                                      uint32_t timeout_ms = 1000) = 0;
+
+  // =========================================================================
+  // Algorithm Commands (0x70-0x7F)
+  // =========================================================================
+
+  /**
+   * @brief Reset initial pose (cmd_id=0x70)
+   * @param timeout_ms Timeout in milliseconds
+   * @return Operation result
+   */
+  virtual OdinResult ResetInitialPose(uint32_t timeout_ms = 1000) = 0;
+
+  // =========================================================================
+  // Host-side Loop-Closure / Relocalization Algorithm
+  // =========================================================================
+
+  /**
+   * @brief Save the loop-closure map built by the on-host algorithm
+   * @param path File path to save the map
+   * @return Operation result
+   */
+  virtual OdinResult SaveMap(const std::string& path) = 0;
+
+  /**
+   * @brief Load a pre-built loop-closure map for relocalization
+   * @param path File path to the map file
+   * @return Operation result
+   */
+  virtual OdinResult LoadMap(const std::string& path) = 0;
+
+  /**
+   * @brief Export the current loop-closure map
+   * @param path Output file path
+   * @return Operation result
+   */
+  virtual OdinResult ExployMap(const std::string& path) = 0;
+
   // =========================================================================
   // SLAM-Odom Synchronization
   // =========================================================================
@@ -206,9 +402,11 @@ class IDevice {
   // =========================================================================
 
   /**
-   * @brief Get device network attribute configuration
+   * @brief Get device network attribute configuration.
    *
-   * Retrieves current network settings (IP, gateway, netmask, DHCP, PTP) via HTTP API.
+   * Retrieves current network settings (IP, gateway, netmask, DHCP, PTP).
+   * The underlying transport/protocol is implementation-defined and MUST NOT
+   * be assumed by callers (it may be HTTP today, USB control protocol later).
    *
    * @param attr Output: network attribute structure
    * @param timeout_ms Timeout in milliseconds
@@ -217,10 +415,11 @@ class IDevice {
   virtual OdinResult GetNetworkAttribute(NetworkAttribute& attr, uint32_t timeout_ms = 3000) = 0;
 
   /**
-   * @brief Set device network attribute configuration
+   * @brief Set device network attribute configuration.
    *
-   * Configures network settings (IP, gateway, netmask, DHCP, PTP) via HTTP API.
-   * Changes take effect after device reboot.
+   * Configures network settings (IP, gateway, netmask, DHCP, PTP).
+   * Changes take effect after device reboot. The underlying transport /
+   * protocol is implementation-defined.
    *
    * @param attr Network attribute to set
    * @param timeout_ms Timeout in milliseconds
@@ -229,10 +428,11 @@ class IDevice {
   virtual OdinResult SetNetworkAttribute(const NetworkAttribute& attr, uint32_t timeout_ms = 3000) = 0;
 
   /**
-   * @brief Reboot the device
+   * @brief Reboot the device.
    *
-   * Sends reboot command via HTTP API. Device will restart.
-   * Network settings changes take effect after reboot.
+   * Requests the device to restart. Pending network setting changes take
+   * effect after reboot. The underlying transport / protocol is
+   * implementation-defined.
    *
    * @param timeout_ms Timeout in milliseconds
    * @return Operation result
@@ -244,17 +444,29 @@ class IDevice {
   // =========================================================================
 
   /**
-   * @brief Callback type for heartbeat failure notification
+   * @brief Callback type for heartbeat success (keep-alive) notification
    * @param handle Device handle
+   * @param device Discovered-device descriptor carried with the notification.
+   *        The device layer owns this data (written once on Connect, read-only
+   *        afterwards), so the keep-alive path never needs to look it up under
+   *        an SDK-level lock that blocking commands may hold for seconds.
    */
-  using HeartbeatFailedCallback = std::function<void(OdinDeviceHandle handle)>;
+  using HeartbeatSuccessCallback =
+      std::function<void(OdinDeviceHandle handle, const DiscoveredDevice& device)>;
 
   /**
-   * @brief Register callback for heartbeat failure
-   * Called when heartbeat fails (device offline)
-   * @param cb Callback function
+   * @brief Register callback for successful heartbeat round-trip.
+   *
+   * This is used as a keep-alive signal: the SDK routes it to the hotplug
+   * listener so a connected device that stops answering discovery probes
+   * (e.g. because it is streaming) is not incorrectly marked offline.
+   *
+   * @param cb Callback function invoked on every successful heartbeat
    */
-  virtual void SetHeartbeatFailedCallback(HeartbeatFailedCallback cb) = 0;
+  virtual void SetHeartbeatSuccessCallback(HeartbeatSuccessCallback cb) = 0;
+
+  virtual void SetHeartbeatInterval(uint32_t interval_ms) = 0;
+  virtual void SetHeartbeatTimeout(uint32_t timeout_ms) = 0;
 };
 
 }  // namespace sdk

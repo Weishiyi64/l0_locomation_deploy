@@ -1,0 +1,6 @@
+# Request - empty, restore factory default config (cmd_id=0x09, requires reboot)
+---
+# Response
+bool success
+int32 error_code   # 0=OK, other values from OdinResult enum
+string message

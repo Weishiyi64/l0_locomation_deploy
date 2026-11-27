@@ -13,11 +13,14 @@
 
 #include <algorithm>
 #include <chrono>
-#include <luvbot_hardware_interfaces/srv/set_motor_enabled.hpp>
+#include <cmath>
+#include <limits>
 #include <mutex>
 #include <rclcpp/executors/single_threaded_executor.hpp>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 namespace mj = ::mujoco;
@@ -25,14 +28,20 @@ namespace mju = ::mujoco::sample_util;
 
 using Seconds = std::chrono::duration<double>;
 
-bool validateModelMapping(const mjModel* model) {
+bool validateModelMapping(const mjModel* model, std::vector<SimJointAddress>& addresses) {
   if (!model || !motorMapping || motorMapping->size() != static_cast<std::size_t>(model->nu))
   {
     RCLCPP_FATAL(rclcpp::get_logger("mujoco"), "Motor mapping size (%zu) does not match MuJoCo actuators (%d)",
                  motorMapping ? motorMapping->size() : 0U, model ? model->nu : 0);
     return false;
   }
-  if (model->nq != model->nu + 7 || model->nv != model->nu + 6)
+  if (motorMapping->size() > 32U)
+  {
+    RCLCPP_FATAL(rclcpp::get_logger("mujoco"), "Motor mapping exceeds the 32-bit feedback mask");
+    return false;
+  }
+  if (model->nq != model->nu + 7 || model->nv != model->nu + 6 || model->njnt != model->nu + 1 ||
+      model->jnt_type[0] != mjJNT_FREE || model->jnt_qposadr[0] != 0 || model->jnt_dofadr[0] != 0)
   {
     RCLCPP_FATAL(rclcpp::get_logger("mujoco"),
                  "The simulator bridge requires one free base and one scalar joint per actuator "
@@ -40,6 +49,7 @@ bool validateModelMapping(const mjModel* model) {
                  model->nq, model->nv, model->nu);
     return false;
   }
+  std::vector<SimJointAddress> next(motorMapping->size());
   for (int i = 0; i < model->nu; ++i)
   {
     if (model->actuator_trntype[i] != mjTRN_JOINT)
@@ -49,14 +59,21 @@ bool validateModelMapping(const mjModel* model) {
     }
     const int joint_id = model->actuator_trnid[2 * i];
     const char* joint_name = mj_id2name(model, mjOBJ_JOINT, joint_id);
-    const std::string expected = motorMapping->entries()[static_cast<std::size_t>(i)].joint_name;
-    if (!joint_name || expected != joint_name)
+    const int index = joint_name ? motorMapping->indexOfJoint(joint_name) : -1;
+    if (index < 0 || next[static_cast<std::size_t>(index)].actuator >= 0 ||
+        (model->jnt_type[joint_id] != mjJNT_HINGE && model->jnt_type[joint_id] != mjJNT_SLIDE))
     {
-      RCLCPP_FATAL(rclcpp::get_logger("mujoco"), "Actuator %d targets joint '%s', but mapping entry %d is '%s'", i,
-                   joint_name ? joint_name : "<unnamed>", i, expected.c_str());
+      RCLCPP_FATAL(rclcpp::get_logger("mujoco"),
+                   "Actuator %d targets unknown, duplicate, or non-scalar mapping joint '%s'", i,
+                   joint_name ? joint_name : "<unnamed>");
       return false;
     }
+    auto& address = next[static_cast<std::size_t>(index)];
+    address.actuator = i;
+    address.qpos = model->jnt_qposadr[joint_id];
+    address.dof = model->jnt_dofadr[joint_id];
   }
+  addresses = std::move(next);
   return true;
 }
 }  // namespace
@@ -73,36 +90,22 @@ void PhysicsLoop(mujoco::Simulate& sim, const char* body_name) {
 
   auto node = rclcpp::Node::make_shared("mujoco_simulate");
   node->declare_parameter<double>("command_watchdog_ms", 100.0);
-  watchdogNs = static_cast<int64_t>(std::max(1.0, node->get_parameter("command_watchdog_ms").as_double()) * 1e6);
+  const double watchdog_ms = node->get_parameter("command_watchdog_ms").as_double();
+  if (!std::isfinite(watchdog_ms) || watchdog_ms <= 0.0 ||
+      watchdog_ms >= static_cast<double>(std::numeric_limits<int64_t>::max()) / 1e6)
+    throw std::runtime_error("command_watchdog_ms must be finite, positive, and fit in nanoseconds");
+  watchdogNs = static_cast<int64_t>(std::max(1.0, watchdog_ms) * 1e6);
 
-  const auto command_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-  const auto state_qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort().durability_volatile();
+  const auto command_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
+  const auto state_qos = rclcpp::SensorDataQoS();
   auto cmd_subscriber = node->create_subscription<luvbot_hardware_interfaces::msg::MotorCommand>(
       "actuator/motor/command", command_qos, HandleMotorCommand);
+  auto enable_subscriber = node->create_subscription<luvbot_hardware_interfaces::msg::MotorEnableCommand>(
+      "actuator/motor/enable", command_qos, HandleMotorEnable);
   auto motor_publisher =
       node->create_publisher<luvbot_hardware_interfaces::msg::MotorStateArray>("actuator/motor/state", state_qos);
   auto imu_publisher = node->create_publisher<sensor_msgs::msg::Imu>("imu/data", rclcpp::SensorDataQoS());
   auto odom_publisher = node->create_publisher<nav_msgs::msg::Odometry>("odom", state_qos);
-  auto enable_service = node->create_service<luvbot_hardware_interfaces::srv::SetMotorEnabled>(
-      "actuator/motor/set_enabled",
-      [](const std::shared_ptr<luvbot_hardware_interfaces::srv::SetMotorEnabled::Request> request,
-         std::shared_ptr<luvbot_hardware_interfaces::srv::SetMotorEnabled::Response> response) {
-        const int index = motorMapping ? motorMapping->indexOfRoute(request->motor) : -1;
-        if (index < 0)
-        {
-          response->success = false;
-          response->error_code = response->ERROR_INVALID_ROUTE;
-          response->diagnostic_message = "unknown motor route";
-          return;
-        }
-        pthread_mutex_lock(&recvMutex_);
-        motorEnabled[static_cast<std::size_t>(index)] = request->enabled;
-        if (!request->enabled) recvCmd[static_cast<std::size_t>(index)] = SimJointCommand{};
-        pthread_mutex_unlock(&recvMutex_);
-        response->success = true;
-        response->error_code = response->ERROR_NONE;
-        response->diagnostic_message = request->enabled ? "enabled" : "disabled";
-      });
 
   // Use executor so we can cancel() before joining the thread to avoid
   // std::terminate() when PhysicsLoop returns with a still-joinable thread.
@@ -122,7 +125,8 @@ void PhysicsLoop(mujoco::Simulate& sim, const char* body_name) {
       sim.droploadrequest.store(false);
 
       mjData* dnew = nullptr;
-      if (mnew) dnew = mj_makeData(mnew);
+      std::vector<SimJointAddress> new_addresses;
+      if (mnew && validateModelMapping(mnew, new_addresses)) dnew = mj_makeData(mnew);
       if (dnew)
       {
         sim.Load(mnew, dnew, sim.dropfilename);
@@ -133,10 +137,15 @@ void PhysicsLoop(mujoco::Simulate& sim, const char* body_name) {
 
         m = mnew;
         d = dnew;
+        pthread_mutex_lock(&recvMutex_);
+        simJointAddresses = std::move(new_addresses);
+        init_cmd(d);
+        pthread_mutex_unlock(&recvMutex_);
         LoadInitKeyframeIfAny(m, d);
       }
       else
       {
+        mj_deleteModel(mnew);
         sim.LoadMessageClear();
       }
     }
@@ -147,21 +156,27 @@ void PhysicsLoop(mujoco::Simulate& sim, const char* body_name) {
       sim.LoadMessage(sim.filename);
       mjModel* mnew = LoadModel(sim.filename, sim);
       mjData* dnew = nullptr;
-      if (mnew) dnew = mj_makeData(mnew);
+      std::vector<SimJointAddress> new_addresses;
+      if (mnew && validateModelMapping(mnew, new_addresses)) dnew = mj_makeData(mnew);
       if (dnew)
       {
         sim.Load(mnew, dnew, sim.filename);
+        const std::unique_lock<std::recursive_mutex> lock(sim.mtx);
 
         mj_deleteData(d);
         mj_deleteModel(m);
 
         m = mnew;
         d = dnew;
+        pthread_mutex_lock(&recvMutex_);
+        simJointAddresses = std::move(new_addresses);
         init_cmd(d);
+        pthread_mutex_unlock(&recvMutex_);
         LoadInitKeyframeIfAny(m, d);
       }
       else
       {
+        mj_deleteModel(mnew);
         sim.LoadMessageClear();
       }
     }
@@ -251,6 +266,7 @@ void PhysicsLoop(mujoco::Simulate& sim, const char* body_name) {
 }
 
 void PhysicsThread(mujoco::Simulate* sim, const char* filename, const char* body_name) {
+  RCLCPP_INFO(rclcpp::get_logger("mujoco"), "Loading MuJoCo scene: %s", filename ? filename : "<none>");
   if (filename != nullptr)
   {
     sim->LoadMessage(filename);
@@ -258,16 +274,25 @@ void PhysicsThread(mujoco::Simulate* sim, const char* filename, const char* body
     if (m) d = mj_makeData(m);
     if (d)
     {
-      if (!validateModelMapping(m))
+      if (!validateModelMapping(m, simJointAddresses))
       {
         sim->LoadMessageClear();
+        sim->exitrequest.store(1);
+        mj_deleteData(d);
+        mj_deleteModel(m);
+        d = nullptr;
+        m = nullptr;
         return;
       }
       recvCmd.resize(m->nu);
       motorEnabled.assign(m->nu, false);
+      motorCommandFault.assign(m->nu, false);
       init_cmd(d);
       sim->Load(m, d, filename);
       LoadInitKeyframeIfAny(m, d);
+      RCLCPP_INFO(rclcpp::get_logger("mujoco"),
+                  "MuJoCo model loaded: %d actuators, %zu enabled motors; joints bound by mapping names", m->nu,
+                  motorMapping->enabledSize());
 
       if (body_name != nullptr)
       {
@@ -289,7 +314,12 @@ void PhysicsThread(mujoco::Simulate* sim, const char* filename, const char* body
     }
     else
     {
+      RCLCPP_ERROR(rclcpp::get_logger("mujoco"), "Could not load MuJoCo scene: %s", filename);
       sim->LoadMessageClear();
+      sim->exitrequest.store(1);
+      mj_deleteModel(m);
+      m = nullptr;
+      return;
     }
   }
 

@@ -1,0 +1,91 @@
+{
+  "configById": {
+    "3D!odin-3d": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 20,
+        "phi": 60,
+        "theta": 0,
+        "targetOffset": [0, 0, 0],
+        "fovy": 45
+      },
+      "followMode": "follow-pose",
+      "followTf": "odom",
+      "scene": {
+        "transforms": {
+          "showLabel": true
+        }
+      },
+      "topics": {
+        "/lidar/points": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorField": "intensity",
+          "colorMap": "turbo",
+          "pointSize": 1
+        },
+        "/slam/points": {
+          "visible": true,
+          "colorMode": "rgb",
+          "pointSize": 2,
+          "decayTime": 5
+        }
+      },
+      "layers": {}
+    },
+    "Image!odin-img-left": {
+      "imageMode": {
+        "imageTopic": "/camera/left"
+      },
+      "cameraState": {}
+    },
+    "Image!odin-img-right": {
+      "imageMode": {
+        "imageTopic": "/camera/right"
+      },
+      "cameraState": {}
+    },
+    "RawMessages!odin-odom": {
+      "topicPath": "/odom",
+      "diffTopicPath": "",
+      "diffMethod": "custom",
+      "diffEnabled": false,
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!odin-telemetry": {
+      "topicPath": "/telemetry",
+      "diffTopicPath": "",
+      "diffMethod": "custom",
+      "diffEnabled": false,
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": "3D!odin-3d",
+    "second": {
+      "direction": "column",
+      "first": {
+        "direction": "row",
+        "first": "Image!odin-img-left",
+        "second": "Image!odin-img-right",
+        "splitPercentage": 50
+      },
+      "second": {
+        "direction": "row",
+        "first": "RawMessages!odin-odom",
+        "second": "RawMessages!odin-telemetry",
+        "splitPercentage": 50
+      },
+      "splitPercentage": 50
+    },
+    "splitPercentage": 50
+  }
+}

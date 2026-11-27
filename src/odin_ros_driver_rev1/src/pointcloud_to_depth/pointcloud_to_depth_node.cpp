@@ -14,12 +14,11 @@
 //   - get_calibration client and YAML content
 //   - low-res projection canvas (Kcl, out_width/out_height)
 //   - cloud/raw + camera0/undistort ApproximateTime synchronizer
-//   - publishers: depth / depth_preview / depth_color / depth_overlay
+//   - three publishers: depth / depth_color / depth_overlay
 //   - first-frame latency one-shot log
 //
 // Published topics per device (under the discovered device prefix):
 //   {prefix}pointcloud2depth/depth          sensor_msgs/Image  32FC1 (full-res)
-//   {prefix}pointcloud2depth/depth_preview  sensor_msgs/Image  mono8 (full-res)
 //   {prefix}pointcloud2depth/depth_color    sensor_msgs/Image  bgr8  (jet)
 //   {prefix}pointcloud2depth/depth_overlay  sensor_msgs/Image  bgr8  (jet on RGB)
 //
@@ -27,6 +26,7 @@
 // header-only and free of PCL/Eigen/OpenCV/ROS so it can be lifted into the
 // device-side SDK as a pure C/C++ module without modification.
 
+#include "odin_app_version.hpp"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -36,6 +36,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -80,15 +81,6 @@ using ImageMsg       = sensor_msgs::Image;
 using PointCloud2Msg = sensor_msgs::PointCloud2;
 #endif
 
-#if defined(ODIN_ROS2)
-#include <ament_index_cpp/get_package_share_directory.hpp>
-#else
-#include <ros/package.h>
-#endif
-#include <yaml-cpp/yaml.h>
-#include <cstring>
-#include <algorithm>
-
 #include "pointcloud_to_depth_node.hpp"
 #include "yaml_config_loader.hpp"
 
@@ -121,11 +113,13 @@ static int ParseJsonIntField(const std::string& json, const std::string& key) {
 // ---------------------------------------------------------------------------
 struct DeviceInfo {
   std::string sn;       // device serial number
+  std::string model;    // device model name reported by firmware
   std::string prefix;   // already includes leading + trailing '/'
 };
 
 static bool ParseDeviceInfoJson(const std::string& json, DeviceInfo& info) {
   ParseJsonStringField(json, "sn", info.sn);
+  ParseJsonStringField(json, "model", info.model);
   ParseJsonStringField(json, "prefix", info.prefix);
   return !info.sn.empty() && !info.prefix.empty();
 }
@@ -136,21 +130,17 @@ static bool ParseDeviceInfoJson(const std::string& json, DeviceInfo& info) {
 // ---------------------------------------------------------------------------
 struct Pointcloud2DepthConfig {
   // Projection
-  double depth_rate_hz = 10.0;
-  int output_width = 64;
-  int output_height = 40;
   float scale               = 7.0f;   // low-res canvas = img / scale
   float z_min               = 0.1f;
   float z_max               = 50.0f;
   int   dilate_radius       = 1;
   bool  use_z_buffer        = false;
   float edge_grad_threshold = 0.75f;  // Sobel threshold on full-res depth (m)
-  bool  raw_depth_preview_enabled = false;
   // Jet colormap normalization (m). vis_depth_min < 0 -> per-frame auto.
   float vis_depth_min = 0.1f;
   float vis_depth_max = 5.0f;
   // Synchronization
-  int    sync_queue_size = 5;
+  int    sync_queue_size = 10;
   double sync_slop_sec   = 0.1;
   // Topic naming (suffixes appended to the per-device prefix)
   std::string cloud_topic_suffix  = "cloud/raw";
@@ -184,20 +174,13 @@ class DeviceWorker {
   ~DeviceWorker() {
     logInfo("Worker destroying");
 #if defined(ODIN_ROS2)
-    alive_->store(false);
     // Reset pubs/subs explicitly so topics disappear immediately on unplug.
     depth_pub_.reset();
-    depth_sru_pub_.reset();
-    depth_preview_pub_.reset();
     depth_color_pub_.reset();
     depth_overlay_pub_.reset();
-    if (calibration_client_ && calibration_pending_)
-      calibration_client_->remove_pending_request(calibration_request_id_);
     calibration_client_.reset();
     if (retry_timer_) retry_timer_->cancel();
     retry_timer_.reset();
-    if (depth_timer_) depth_timer_->cancel();
-    depth_timer_.reset();
     sync_.reset();
     cloud_sub_.unsubscribe();
     image_sub_.unsubscribe();
@@ -206,8 +189,6 @@ class DeviceWorker {
     cloud_sub_.unsubscribe();
     image_sub_.unsubscribe();
     depth_pub_.shutdown();
-    depth_sru_pub_.shutdown();
-    depth_preview_pub_.shutdown();
     depth_color_pub_.shutdown();
     depth_overlay_pub_.shutdown();
 #endif
@@ -237,48 +218,34 @@ class DeviceWorker {
  private:
   void fetchCalibrationAsync() {
 #if defined(ODIN_ROS2)
-    // Worker creation and all callbacks use the default mutually exclusive
-    // callback group. Never block it waiting for a calibration service.
-    if (!calibration_client_)
-      calibration_client_ = node_->create_client<odin_driver_interfaces::srv::GetCalibration>(
-          info_.prefix + "get_calibration");
-    if (!retry_timer_)
-      retry_timer_ = node_->create_wall_timer(std::chrono::seconds(1),
-          [this]() { fetchCalibrationAsync(); });
-    if (calibration_pending_) {
-      if (std::chrono::steady_clock::now() - calibration_sent_ < std::chrono::seconds(2))
-        return;
-      calibration_client_->remove_pending_request(calibration_request_id_);
-      calibration_pending_ = false;
-      logWarn("get_calibration timed out; retrying");
+    calibration_client_ = node_->create_client<odin_driver_interfaces::srv::GetCalibration>(
+        info_.prefix + "get_calibration");
+    if (!calibration_client_->wait_for_service(std::chrono::seconds(1))) {
+      logWarn("get_calibration not available yet, retrying in 1s...");
+      retry_timer_ = node_->create_wall_timer(std::chrono::seconds(1), [this]() {
+        retry_timer_->cancel();
+        fetchCalibrationAsync();
+      });
+      return;
     }
-    if (!calibration_client_->service_is_ready()) return;
     auto request = std::make_shared<odin_driver_interfaces::srv::GetCalibration::Request>();
-    const std::weak_ptr<std::atomic<bool>> weak_alive = alive_;
-    auto pending = calibration_client_->async_send_request(
+    calibration_client_->async_send_request(
         request,
-        [this, weak_alive](rclcpp::Client<odin_driver_interfaces::srv::GetCalibration>::SharedFuture f) {
-          const auto alive = weak_alive.lock();
-          if (!alive || !alive->load()) return;
-          calibration_pending_ = false;
+        [this](rclcpp::Client<odin_driver_interfaces::srv::GetCalibration>::SharedFuture f) {
           try {
             auto response = f.get();
             if (!response->success) {
-              logWarn("get_calibration returned failure; retrying");
+              logError("get_calibration returned failure");
               return;
             }
             yaml_content_ = response->yaml_content;
-            if (!rebuildKcl()) return;
-            setupPubSub();
-            retry_timer_->cancel();
             logInfo("Calibration fetched.");
+            rebuildKcl();
+            setupPubSub();
           } catch (const std::exception& e) {
-            logError(std::string("get_calibration future exception; retrying: ") + e.what());
+            logError(std::string("get_calibration future exception: ") + e.what());
           }
         });
-    calibration_request_id_ = pending.request_id;
-    calibration_sent_ = std::chrono::steady_clock::now();
-    calibration_pending_ = true;
 #else
     ros::ServiceClient client = nh_.serviceClient<odin_driver_interfaces::srv::GetCalibration>(
         info_.prefix + "get_calibration");
@@ -300,50 +267,47 @@ class DeviceWorker {
 
   // Parse YAML, resolve cam key by resolution, build DepthParams and the two Kcls.
   bool rebuildKcl() {
-    try {
-      return rebuildKclImpl();
-    } catch (const std::exception& e) {
-      out_width_ = out_height_ = 0;
-      logError(std::string("Invalid calibration; depth disabled: ") + e.what());
-      return false;
-    }
-  }
-
-  bool rebuildKclImpl() {
-    out_width_ = out_height_ = 0;
     YAMLConfigLoader loader;
     if (!loader.loadFromString(yaml_content_)) {
       logError("Failed to parse calibration YAML");
       return false;
     }
 
+    // Pick resolution: prefer dynamic resolution_change, else YAML default.
+    int img_w = img_width_  > 0 ? img_width_  : loader.getValue<int>("image_width", 640);
+    int img_h = img_height_ > 0 ? img_height_ : loader.getValue<int>("image_height", 544);
+    img_width_  = img_w;
+    img_height_ = img_h;
+
+    // Resolve cam key (uses the same resolver as the existing reprojector).
     YAML::Node root = YAML::Load(yaml_content_);
-    const std::string cam_key = yaml_utils::ResolveCamKey(root, 0, img_width_, img_height_);
-    if (cam_key.empty()) { logError("No camera0 calibration"); return false; }
-    YAML::Node cam = root[cam_key];
-    const int img_w = cam["image_width"].as<int>();
-    const int img_h = cam["image_height"].as<int>();
-    if (img_w <= 0 || img_h <= 0) { logError("Invalid calibration resolution"); return false; }
-    // Keep the original calibrated projection and full-resolution depth product.
-    // SRU resizing happens only after the existing depth pipeline has finished.
-    if (img_width_ <= 0) img_width_ = img_w;
-    if (img_height_ <= 0) img_height_ = img_h;
-    depth_core::DepthParams params{};
-    params.A11 = cam["A11"].as<float>() * img_width_ / img_w;
-    params.A12 = cam["A12"] ? cam["A12"].as<float>() * img_width_ / img_w : 0.f;
-    params.A22 = cam["A22"].as<float>() * img_height_ / img_h;
-    params.u0 = cam["u0"].as<float>() * img_width_ / img_w;
-    params.v0 = cam["v0"].as<float>() * img_height_ / img_h;
-    std::vector<double> tcl_v = loader.getVector<double>("Tcl_0");
-    if (tcl_v.size() != 16 || !std::all_of(tcl_v.begin(), tcl_v.end(), [](double x){ return std::isfinite(x); }) ||
-        !std::isfinite(params.A11) || !std::isfinite(params.A22) || params.A11 <= 0 || params.A22 <= 0) {
-      logError("Invalid camera0 intrinsics/Tcl_0; depth disabled (no identity calibration fallback)");
+    const std::string cam_key = yaml_utils::ResolveCamKey(root, /*cam_id=*/0, img_w, img_h);
+    if (cam_key.empty()) {
+      logError("No calibration node found for cam_0 at " + std::to_string(img_w) +
+               "x" + std::to_string(img_h));
       return false;
     }
-    for (int i = 0; i < 16; ++i) params.Tcl[i] = static_cast<float>(tcl_v[i]);
-    params.scale = cfg_.scale;
-    params.out_width = std::max(1, static_cast<int>(img_width_ / cfg_.scale));
-    params.out_height = std::max(1, static_cast<int>(img_height_ / cfg_.scale));
+    YAML::Node cam = root[cam_key];
+
+    depth_core::DepthParams params{};
+    params.A11 = static_cast<float>(yaml_utils::safeGet<double>(cam, "A11", 500.0));
+    params.A12 = static_cast<float>(yaml_utils::safeGet<double>(cam, "A12", 0.0));
+    params.A22 = static_cast<float>(yaml_utils::safeGet<double>(cam, "A22", 500.0));
+    params.u0  = static_cast<float>(yaml_utils::safeGet<double>(cam, "u0",  img_w / 2.0));
+    params.v0  = static_cast<float>(yaml_utils::safeGet<double>(cam, "v0",  img_h / 2.0));
+
+    // Extrinsic Tcl_0 (camera <- lidar), row-major, 16 doubles in YAML.
+    std::vector<double> tcl_v = loader.getVector<double>("Tcl_0");
+    if (tcl_v.size() < 16) {
+      logWarn("Tcl_0 missing/invalid in calibration. Using identity.");
+      for (int i = 0; i < 16; ++i) params.Tcl[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    } else {
+      for (int i = 0; i < 16; ++i) params.Tcl[i] = static_cast<float>(tcl_v[i]);
+    }
+
+    params.scale         = cfg_.scale;
+    params.out_width     = std::max(1, static_cast<int>(img_w / cfg_.scale));
+    params.out_height    = std::max(1, static_cast<int>(img_h / cfg_.scale));
     params.z_min         = cfg_.z_min;
     params.z_max         = cfg_.z_max;
     params.dilate_radius = cfg_.dilate_radius;
@@ -352,8 +316,6 @@ class DeviceWorker {
     out_height_ = params.out_height;
 
     depth_core::compute_kcl(params, Kcl_depth_);
-    // Include the calibrated skew, matching camera0/undistort.
-    for (int j = 0; j < 4; ++j) Kcl_depth_[j] += params.A12 * params.Tcl[4+j] / params.scale;
 
     {
       char buf[256];
@@ -372,8 +334,6 @@ class DeviceWorker {
     if (initialized_.exchange(true)) return;  // already set up
 
     const std::string depth_topic         = info_.prefix + cfg_.output_topic_suffix + "/depth";
-    const std::string depth_sru_topic = info_.prefix + cfg_.output_topic_suffix + "/depth_sru";
-    const std::string depth_preview_topic = info_.prefix + cfg_.output_topic_suffix + "/depth_preview";
     const std::string depth_color_topic   = info_.prefix + cfg_.output_topic_suffix + "/depth_color";
     const std::string depth_overlay_topic = info_.prefix + cfg_.output_topic_suffix + "/depth_overlay";
 
@@ -387,23 +347,10 @@ class DeviceWorker {
                    .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
                    .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
     depth_pub_         = node_->create_publisher<ImageMsg>(depth_topic,         qos);
-    depth_sru_pub_ = node_->create_publisher<ImageMsg>(depth_sru_topic, qos);
-    if (cfg_.raw_depth_preview_enabled) {
-      auto preview_qos = rclcpp::QoS(rclcpp::KeepLast(1))
-                             .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
-                             .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
-      depth_preview_pub_ = node_->create_publisher<ImageMsg>(depth_preview_topic, preview_qos);
-    }
     depth_color_pub_   = node_->create_publisher<ImageMsg>(depth_color_topic,   qos);
     depth_overlay_pub_ = node_->create_publisher<ImageMsg>(depth_overlay_topic, qos);
 
-    depth_timer_ = node_->create_wall_timer(std::chrono::duration<double>(1.0 / cfg_.depth_rate_hz), [this]() {
-      auto cloud = std::move(pending_cloud_);
-      auto image = std::move(pending_image_);
-      if (cloud && image && std::chrono::steady_clock::now() - pending_time_ < std::chrono::milliseconds(500))
-        processFrame(*cloud, image);
-    });
-    auto sub_qos = rclcpp::QoS(5)
+    auto sub_qos = rclcpp::QoS(30)
                        .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
                        .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
     cloud_sub_.subscribe(node_, info_.prefix + cfg_.cloud_topic_suffix, sub_qos.get_rmw_qos_profile());
@@ -416,9 +363,6 @@ class DeviceWorker {
                   std::placeholders::_1, std::placeholders::_2));
 #else
     depth_pub_         = nh_.advertise<ImageMsg>(depth_topic,         10);
-    depth_sru_pub_ = nh_.advertise<ImageMsg>(depth_sru_topic, 5);
-    if (cfg_.raw_depth_preview_enabled)
-      depth_preview_pub_ = nh_.advertise<ImageMsg>(depth_preview_topic, 1);
     depth_color_pub_   = nh_.advertise<ImageMsg>(depth_color_topic,   10);
     depth_overlay_pub_ = nh_.advertise<ImageMsg>(depth_overlay_topic, 10);
 
@@ -429,9 +373,6 @@ class DeviceWorker {
 #endif
 
     logInfo("Publishing: " + depth_topic);
-    logInfo("Publishing adapted depth: " + depth_sru_topic);
-    if (cfg_.raw_depth_preview_enabled)
-      logInfo("Publishing full-resolution preview: " + depth_preview_topic);
     logInfo("Publishing: " + depth_color_topic);
     logInfo("Publishing: " + depth_overlay_topic);
   }
@@ -442,9 +383,7 @@ class DeviceWorker {
 #if defined(ODIN_ROS2)
   void syncCallback(const PointCloud2Msg::ConstSharedPtr& cloud,
                     const ImageMsg::ConstSharedPtr& image) {
-    pending_cloud_ = cloud;
-    pending_image_ = image;
-    pending_time_ = std::chrono::steady_clock::now();
+    processFrame(*cloud, image);
   }
 #else
   void syncCallback(const PointCloud2Msg::ConstPtr& cloud,
@@ -456,15 +395,11 @@ class DeviceWorker {
   template <typename ImagePtr>
   void processFrame(const PointCloud2Msg& cloud, const ImagePtr& image_msg) {
     if (out_width_ <= 0 || out_height_ <= 0) return;  // not yet calibrated
-    const bool want_depth_sru = hasSubscribers(depth_sru_pub_);
-    // The full-resolution depth image is a primary data product.  Keep it
-    // available for late-joining consumers instead of gating it on the
-    // current subscription count.
-    const bool want_depth = true;
-    const bool want_preview = cfg_.raw_depth_preview_enabled;
-    const bool want_color = hasSubscribers(depth_color_pub_);
-    const bool want_overlay = hasSubscribers(depth_overlay_pub_);
-    if (!want_depth_sru && !want_depth && !want_preview && !want_color && !want_overlay) return;
+
+    // One-shot end-to-end timing: from the moment we enter the synchronized
+    // callback to right after the last image is published. Useful to compare
+    // against budget without spamming the log every frame.
+    const auto frame_t0 = std::chrono::steady_clock::now();
 
     // ---- Extract xyz array from PointCloud2 (assumes float32 x/y/z fields) ----
     int x_off = -1, y_off = -1, z_off = -1;
@@ -478,24 +413,20 @@ class DeviceWorker {
       return;
     }
 
-    const size_t step = cloud.point_step;
-    const size_t n_total = static_cast<size_t>(cloud.width) * cloud.height;
-    if (cloud.is_bigendian || step == 0 ||
-        static_cast<size_t>(std::max({x_off,y_off,z_off})+4) > step ||
-        cloud.row_step < cloud.width*step || cloud.data.size() < static_cast<size_t>(cloud.row_step)*cloud.height) {
-      logWarn("Invalid PointCloud2 layout"); return;
-    }
-    for (const auto& field : cloud.fields)
-      if ((field.name == "x" || field.name == "y" || field.name == "z") && field.datatype != 7) {
-        logWarn("Depth projection requires FLOAT32 xyz fields"); return;
-      }
+    const uint8_t* data    = cloud.data.data();
+    const size_t   step    = cloud.point_step;
+    const size_t   n_total = static_cast<size_t>(cloud.width) * cloud.height;
+
     std::vector<float> xyz;
-    xyz.reserve(n_total*3);
-    for (size_t row=0;row<cloud.height;++row) for(size_t col=0;col<cloud.width;++col) {
-      const auto* p = cloud.data.data()+row*cloud.row_step+col*step;
-      float x,y,z;
-      std::memcpy(&x,p+x_off,4); std::memcpy(&y,p+y_off,4); std::memcpy(&z,p+z_off,4);
-      xyz.push_back(x); xyz.push_back(y); xyz.push_back(z);
+    xyz.reserve(n_total * 3);
+    for (size_t i = 0; i < n_total; ++i) {
+      const uint8_t* p = data + i * step;
+      const float x = *reinterpret_cast<const float*>(p + x_off);
+      const float y = *reinterpret_cast<const float*>(p + y_off);
+      const float z = *reinterpret_cast<const float*>(p + z_off);
+      xyz.push_back(x);
+      xyz.push_back(y);
+      xyz.push_back(z);
     }
 
     // ---- Decode RGB image for overlay color sampling ----
@@ -529,80 +460,64 @@ class DeviceWorker {
     // ---- Depth path: low-res depth map via plain-types core ----
     std::vector<float> depth_buf(static_cast<size_t>(out_width_) * out_height_, 0.0f);
     const uint32_t n_pts = static_cast<uint32_t>(n_total);
-    depth_core::pointcloud_to_depth(
+    const int n_written = depth_core::pointcloud_to_depth(
         xyz.data(), n_pts, Kcl_depth_,
         out_width_, out_height_, cfg_.dilate_radius,
         cfg_.z_min, cfg_.z_max, cfg_.use_z_buffer, depth_buf.data());
 
+    // ---- Step 3: nearest-neighbor upsample to full image resolution ----
+    // Per spec: project on a low-res canvas (W/scale x H/scale), then NN-upsample
+    // to the camera's full resolution to produce a dense depth map aligned with rgb.
     cv::Mat depth_lowres(out_height_, out_width_, CV_32FC1, depth_buf.data());
-    // Depth measures the cloud, even when the RGB pair has a nearby timestamp.
-    // Keep the optical frame used by the projection, but preserve cloud provenance.
-    auto depth_header = image_msg->header;
-    depth_header.stamp = cloud.header.stamp;
+    cv::Mat depth_full;
+    cv::resize(depth_lowres, depth_full, cv::Size(rgb.cols, rgb.rows),
+               0, 0, cv::INTER_NEAREST);
 
-    if (want_depth_sru) {
-      cv::Mat depth_sru;
-      cv::resize(depth_lowres, depth_sru, cv::Size(cfg_.output_width, cfg_.output_height),
-                 0, 0, cv::INTER_NEAREST);
-
-      // Clamp measured depth to the deployment range; missing data stays zero.
-      for (int row = 0; row < depth_sru.rows; ++row) {
-        float* values = depth_sru.ptr<float>(row);
-        for (int col = 0; col < depth_sru.cols; ++col) {
-          const float z = values[col];
-          values[col] = std::isfinite(z) && z > 0.f
-              ? std::max(0.2f, std::min(5.0f, z)) : 0.f;
-        }
-      }
-      publishImage(depth_sru, "32FC1", depth_header, depth_sru_pub_);
+    // ---- Step 4: Sobel edge suppression on FULL-RES depth ----
+    // We run Sobel on the upsampled depth (not the low-res grid) on purpose:
+    // doing it on low-res produces an edge mask that, after NN-upsample, is
+    // ~scale pixels wide on the full image, which visibly over-erases depth
+    // along discontinuities. Full-res Sobel keeps the wipeout band to ~2 px,
+    // matching the visual fidelity the doc spec / customer expects.
+    if (cfg_.edge_grad_threshold > 0.0f) {
+      cv::Mat gx, gy, grad;
+      cv::Sobel(depth_full, gx, CV_32F, 1, 0, 3);
+      cv::Sobel(depth_full, gy, CV_32F, 0, 1, 3);
+      cv::magnitude(gx, gy, grad);
+      cv::Mat edge_mask = grad > cfg_.edge_grad_threshold;  // 8UC1, 0 or 255
+      depth_full.setTo(0.0f, edge_mask);
     }
 
-    if (want_depth || want_preview || want_color || want_overlay) {
-      // Upsample only for optional full-resolution products.
-      cv::Mat depth_full;
-      cv::resize(depth_lowres, depth_full, cv::Size(rgb.cols, rgb.rows),
-                 0, 0, cv::INTER_NEAREST);
-      // ---- Step 4: Sobel edge suppression on FULL-RES depth ----
-      // We run Sobel on the upsampled depth (not the low-res grid) on purpose:
-      // doing it on low-res produces an edge mask that, after NN-upsample, is
-      // ~scale pixels wide on the full image, which visibly over-erases depth
-      // along discontinuities. Full-res Sobel keeps the wipeout band to ~2 px,
-      // matching the visual fidelity the doc spec / customer expects.
-      if (cfg_.edge_grad_threshold > 0.0f) {
-        cv::Mat gx, gy, grad;
-        cv::Sobel(depth_full, gx, CV_32F, 1, 0, 3);
-        cv::Sobel(depth_full, gy, CV_32F, 0, 1, 3);
-        cv::magnitude(gx, gy, grad);
-        cv::Mat edge_mask = grad > cfg_.edge_grad_threshold;  // 8UC1, 0 or 255
-        depth_full.setTo(0.0f, edge_mask);
-      }
-      if (want_depth) publishImage(depth_full, "32FC1", depth_header, depth_pub_);
-      if (want_preview) {
-        cv::Mat preview(depth_full.rows, depth_full.cols, CV_8UC1);
-        const double max_depth = cfg_.vis_depth_max;
-        for (int row = 0; row < depth_full.rows; ++row) {
-          const float* depth_values = depth_full.ptr<float>(row);
-          uint8_t* preview_values = preview.ptr<uint8_t>(row);
-          for (int col = 0; col < depth_full.cols; ++col) {
-            const float depth = depth_values[col];
-            preview_values[col] = std::isfinite(depth) && depth > 0.0f
-                ? static_cast<uint8_t>(1 + std::lround(254 * std::min(1.0, depth / max_depth)))
-                : 0;
-          }
-        }
-        publishImage(preview, "mono8", depth_header, depth_preview_pub_);
-      }
-      if (want_color || want_overlay) {
-        cv::Mat jet_color, valid_mask;
-        makeDepthJet(depth_full, jet_color, valid_mask);
-        if (want_color) publishImage(jet_color, "bgr8", depth_header, depth_color_pub_);
-        if (want_overlay) {
-          cv::Mat depth_overlay = blendJetOnImage(jet_color, valid_mask, rgb);
-          publishImage(depth_overlay, "bgr8", image_msg->header, depth_overlay_pub_);
-        }
-      }
+    // ---- Publish depth (32FC1, meters, full resolution; data product) ----
+    publishImage(depth_full, "32FC1", image_msg->header, depth_pub_);
+
+    // ---- Build jet-color visualization (black where depth is invalid) ----
+    // This is the key disambiguation: in 32FC1 grayscale, both "near" and
+    // "no depth" look dark. Jet colormap makes "valid but near" colored
+    // (red/yellow) while keeping invalid pixels truly black.
+    cv::Mat jet_color, valid_mask;
+    makeDepthJet(depth_full, jet_color, valid_mask);
+
+    // ---- Publish depth_color (pure jet visualization, OpenCV-style) ----
+    publishImage(jet_color, "bgr8", image_msg->header, depth_color_pub_);
+
+    // ---- Publish depth_overlay (jet blended onto camera image) ----
+    cv::Mat depth_overlay = blendJetOnImage(jet_color, valid_mask, rgb);
+    publishImage(depth_overlay, "bgr8", image_msg->header, depth_overlay_pub_);
+
+    // One-shot end-to-end latency log (subscription -> all publishes done).
+    if (!timing_logged_.exchange(true)) {
+      const auto dt = std::chrono::steady_clock::now() - frame_t0;
+      const double ms =
+          std::chrono::duration<double, std::milli>(dt).count();
+      char buf[128];
+      std::snprintf(buf, sizeof(buf),
+                    "First-frame pipeline latency: %.3f ms (n_pts=%u, %dx%d)",
+                    ms, static_cast<unsigned>(n_pts), rgb.cols, rgb.rows);
+      logInfo(buf);
     }
 
+    (void)n_written;  // for future stats
   }
 
   // Render the depth map as an OpenCV-style jet visualization where:
@@ -693,10 +608,6 @@ class DeviceWorker {
   void logWarn (const std::string& s) { RCLCPP_WARN (node_->get_logger(), "[%s] %s", info_.sn.c_str(), s.c_str()); }
   void logError(const std::string& s) { RCLCPP_ERROR(node_->get_logger(), "[%s] %s", info_.sn.c_str(), s.c_str()); }
 
-  bool hasSubscribers(const rclcpp::Publisher<ImageMsg>::SharedPtr& pub) const {
-    return pub && (pub->get_subscription_count() + pub->get_intra_process_subscription_count() > 0);
-  }
-
   template <typename HeaderT>
   void publishImage(const cv::Mat& img, const std::string& encoding,
                     const HeaderT& header,
@@ -712,10 +623,6 @@ class DeviceWorker {
   void logInfo (const std::string& s) { ROS_INFO ("[%s] %s", info_.sn.c_str(), s.c_str()); }
   void logWarn (const std::string& s) { ROS_WARN ("[%s] %s", info_.sn.c_str(), s.c_str()); }
   void logError(const std::string& s) { ROS_ERROR("[%s] %s", info_.sn.c_str(), s.c_str()); }
-
-  bool hasSubscribers(const ros::Publisher& pub) const {
-    return pub.getNumSubscribers() > 0;
-  }
 
   template <typename HeaderT>
   void publishImage(const cv::Mat& img, const std::string& encoding,
@@ -734,18 +641,11 @@ class DeviceWorker {
   // --------------------------------------------------------------------
 #if defined(ODIN_ROS2)
   rclcpp::Node::SharedPtr node_;
-  rclcpp::Publisher<ImageMsg>::SharedPtr depth_pub_, depth_sru_pub_, depth_preview_pub_;
+  rclcpp::Publisher<ImageMsg>::SharedPtr depth_pub_;
   rclcpp::Publisher<ImageMsg>::SharedPtr depth_color_pub_;
   rclcpp::Publisher<ImageMsg>::SharedPtr depth_overlay_pub_;
   rclcpp::Client<odin_driver_interfaces::srv::GetCalibration>::SharedPtr calibration_client_;
-  rclcpp::TimerBase::SharedPtr retry_timer_, depth_timer_;
-  std::shared_ptr<std::atomic<bool>> alive_{std::make_shared<std::atomic<bool>>(true)};
-  bool calibration_pending_ = false;
-  int64_t calibration_request_id_ = 0;
-  std::chrono::steady_clock::time_point calibration_sent_;
-  PointCloud2Msg::ConstSharedPtr pending_cloud_;
-  ImageMsg::ConstSharedPtr pending_image_;
-  std::chrono::steady_clock::time_point pending_time_;
+  rclcpp::TimerBase::SharedPtr retry_timer_;
 
   message_filters::Subscriber<PointCloud2Msg> cloud_sub_;
   message_filters::Subscriber<ImageMsg> image_sub_;
@@ -754,7 +654,7 @@ class DeviceWorker {
   std::shared_ptr<Sync> sync_;
 #else
   ros::NodeHandle& nh_;
-  ros::Publisher depth_pub_, depth_sru_pub_, depth_preview_pub_;
+  ros::Publisher depth_pub_;
   ros::Publisher depth_color_pub_;
   ros::Publisher depth_overlay_pub_;
 
@@ -770,6 +670,7 @@ class DeviceWorker {
 
   // Per-device state
   std::atomic<bool> initialized_{false};
+  std::atomic<bool> timing_logged_{false};  // first-frame latency log guard
   std::string yaml_content_;
 
   // Resolution (updated dynamically via resolution_change or YAML defaults)
@@ -811,21 +712,17 @@ class Pointcloud2DepthNode {
   void declareParameters() {
     node_->declare_parameter<std::string>("topic_prefix", "manifold");
     node_->declare_parameter<double>("scale", 7.0);
-    node_->declare_parameter<double>("depth_rate_hz", 10.0);
-    node_->declare_parameter<int>("depth_width", 64);
-    node_->declare_parameter<int>("depth_height", 40);
     node_->declare_parameter<double>("z_min", 0.1);
     node_->declare_parameter<double>("z_max", 50.0);
     node_->declare_parameter<int>("dilate_radius", 1);
     node_->declare_parameter<bool>("use_z_buffer", false);
     node_->declare_parameter<double>("edge_grad_threshold", 0.75);
-    node_->declare_parameter<bool>("raw_depth_preview_enabled", false);
     node_->declare_parameter<double>("vis_depth_min", 0.1);
     node_->declare_parameter<double>("vis_depth_max", 5.0);
     node_->declare_parameter<std::string>("cloud_topic_suffix", "cloud/raw");
     node_->declare_parameter<std::string>("image_topic_suffix", "camera0/undistort");
     node_->declare_parameter<std::string>("output_topic_suffix", "pointcloud2depth");
-    node_->declare_parameter<int>("sync_queue_size", 5);
+    node_->declare_parameter<int>("sync_queue_size", 10);
     node_->declare_parameter<double>("sync_slop_sec", 0.1);
   }
 #endif
@@ -833,18 +730,12 @@ class Pointcloud2DepthNode {
   void loadParameters() {
 #if defined(ODIN_ROS2)
     topic_prefix_base_       = node_->get_parameter("topic_prefix").as_string();
-    cfg_.depth_rate_hz = node_->get_parameter("depth_rate_hz").as_double();
-    cfg_.output_width = node_->get_parameter("depth_width").as_int();
-    cfg_.output_height = node_->get_parameter("depth_height").as_int();
-    if (!std::isfinite(cfg_.depth_rate_hz) || cfg_.depth_rate_hz <= 0 || cfg_.output_width <= 0 || cfg_.output_height <= 0)
-      throw std::runtime_error("Depth rate and resolution must be positive");
     cfg_.scale               = static_cast<float>(node_->get_parameter("scale").as_double());
     cfg_.z_min               = static_cast<float>(node_->get_parameter("z_min").as_double());
     cfg_.z_max               = static_cast<float>(node_->get_parameter("z_max").as_double());
     cfg_.dilate_radius       = node_->get_parameter("dilate_radius").as_int();
     cfg_.use_z_buffer        = node_->get_parameter("use_z_buffer").as_bool();
     cfg_.edge_grad_threshold = static_cast<float>(node_->get_parameter("edge_grad_threshold").as_double());
-    cfg_.raw_depth_preview_enabled = node_->get_parameter("raw_depth_preview_enabled").as_bool();
     cfg_.vis_depth_min       = static_cast<float>(node_->get_parameter("vis_depth_min").as_double());
     cfg_.vis_depth_max       = static_cast<float>(node_->get_parameter("vis_depth_max").as_double());
     cfg_.cloud_topic_suffix  = node_->get_parameter("cloud_topic_suffix").as_string();
@@ -852,11 +743,6 @@ class Pointcloud2DepthNode {
     cfg_.output_topic_suffix = node_->get_parameter("output_topic_suffix").as_string();
     cfg_.sync_queue_size     = node_->get_parameter("sync_queue_size").as_int();
     cfg_.sync_slop_sec       = node_->get_parameter("sync_slop_sec").as_double();
-    if (cfg_.sync_queue_size <= 0 || !std::isfinite(cfg_.sync_slop_sec) || cfg_.sync_slop_sec < 0.0)
-      throw std::runtime_error("Sync queue size must be positive and slop must be finite/nonnegative");
-    if (cfg_.raw_depth_preview_enabled &&
-        (!std::isfinite(cfg_.vis_depth_max) || cfg_.vis_depth_max <= 0.0f))
-      throw std::runtime_error("vis_depth_max must be finite and positive for raw depth preview");
 #else
     pnh_.param<std::string>("topic_prefix", topic_prefix_base_, "manifold");
     double scale_d = 7.0, zmin_d = 0.1, zmax_d = 50.0, edge_d = 0.75;
@@ -873,16 +759,12 @@ class Pointcloud2DepthNode {
     cfg_.edge_grad_threshold = static_cast<float>(edge_d);
     cfg_.vis_depth_min       = static_cast<float>(vmin_d);
     cfg_.vis_depth_max       = static_cast<float>(vmax_d);
-    pnh_.param<bool>("raw_depth_preview_enabled", cfg_.raw_depth_preview_enabled, false);
-    if (cfg_.raw_depth_preview_enabled &&
-        (!std::isfinite(cfg_.vis_depth_max) || cfg_.vis_depth_max <= 0.0f))
-      throw std::runtime_error("vis_depth_max must be finite and positive for raw depth preview");
     pnh_.param<int>("dilate_radius", cfg_.dilate_radius, 1);
     pnh_.param<bool>("use_z_buffer", cfg_.use_z_buffer, false);
     pnh_.param<std::string>("cloud_topic_suffix", cfg_.cloud_topic_suffix, "cloud/raw");
     pnh_.param<std::string>("image_topic_suffix", cfg_.image_topic_suffix, "camera0/undistort");
     pnh_.param<std::string>("output_topic_suffix", cfg_.output_topic_suffix, "pointcloud2depth");
-    pnh_.param<int>("sync_queue_size", cfg_.sync_queue_size, 5);
+    pnh_.param<int>("sync_queue_size", cfg_.sync_queue_size, 10);
     pnh_.param<double>("sync_slop_sec", cfg_.sync_slop_sec, 0.1);
 #endif
   }
@@ -950,22 +832,31 @@ class Pointcloud2DepthNode {
       workers_[info.sn] = nullptr;
     }
 
-    logInfo("New device online: sn=" + info.sn + " prefix=" + info.prefix);
+    logInfo("New device online: sn=" + info.sn + " model=" + info.model + " prefix=" + info.prefix);
 
-    // ROS2 calibration is nonblocking. Construct on the executor so offline
-    // and shutdown cannot race a detached constructor or resurrect a worker.
+    // Construct the worker in a detached thread: in ROS1 this lets the
+    // synchronous get_calibration service call block without freezing the
+    // subscriber thread; in ROS2 it just avoids long-running work inside
+    // the executor callback.
+    std::thread([this, info]() {
 #if defined(ODIN_ROS2)
-    auto worker = std::make_unique<DeviceWorker>(node_, info, cfg_);
+      auto worker = std::make_unique<DeviceWorker>(node_, info, cfg_);
 #else
-    auto worker = std::make_unique<DeviceWorker>(nh_, info, cfg_);
+      auto worker = std::make_unique<DeviceWorker>(nh_, info, cfg_);
 #endif
-    std::lock_guard<std::mutex> lock(workers_mutex_);
-    workers_[info.sn] = std::move(worker);
-    logInfo("DeviceWorker registered for " + info.sn +
-            " (total devices: " + std::to_string(workers_.size()) + ")");
+      std::lock_guard<std::mutex> lock(workers_mutex_);
+      workers_[info.sn] = std::move(worker);
+      logInfo("DeviceWorker registered for " + info.sn +
+              " (total devices: " + std::to_string(workers_.size()) + ")");
+    }).detach();
   }
 
-  void onDeviceOffline(const std::string& sn) {
+  void onDeviceOffline(const std::string& payload) {
+    // device_offline carries JSON {"sn":"...","model":"..."}; fall back to a
+    // plain SN string for compatibility with older driver versions.
+    std::string sn;
+    ParseJsonStringField(payload, "sn", sn);
+    if (sn.empty()) sn = payload;
     std::unique_ptr<DeviceWorker> dying;  // destruct outside the lock
     {
       std::lock_guard<std::mutex> lock(workers_mutex_);
@@ -1041,70 +932,33 @@ class Pointcloud2DepthNode {
 
 }  // namespace odin
 
-// Locate package source directory to load config/control_command.yaml.
-static std::string getPackageSourceDirectory() {
-#if defined(ODIN_ROS2)
-  try {
-    return ament_index_cpp::get_package_share_directory(ODIN_ROS_PACKAGE_NAME);
-  } catch (const std::exception& e) {
-    return "";
-  }
-#else
-  return ros::package::getPath(ODIN_ROS_PACKAGE_NAME);
-#endif
-}
-
-// Read enable_pointcloud_to_depth from config/control_command.yaml.
-// Returns true (enabled) by default when the config cannot be read.
-static bool loadPointcloud2DepthEnabled() {
-  std::string pkg_path = getPackageSourceDirectory();
-  if (pkg_path.empty()) {
-    std::cout << "[pointcloud2depth] package dir not found, using default (enable=1)" << std::endl;
-    return true;
-  }
-  std::string config_file = pkg_path + "/config/control_command.yaml";
-  try {
-    YAML::Node config = YAML::LoadFile(config_file);
-    if (!config["register_keys"]) {
-      std::cout << "[pointcloud2depth] register_keys missing, using default (enable=1)" << std::endl;
-      return true;
-    }
-    YAML::Node keys = config["register_keys"];
-    int enable = keys["enable_pointcloud_to_depth"]
-                     ? keys["enable_pointcloud_to_depth"].as<int>()
-                     : 1;
-    std::cout << "[pointcloud2depth] enable_pointcloud_to_depth=" << enable << std::endl;
-    return enable != 0;
-  } catch (const std::exception& e) {
-    std::cerr << "[pointcloud2depth] Failed to load " << config_file << ": " << e.what()
-              << ", using default (enable=1)" << std::endl;
-    return true;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
+  odin::print_app_version("pointcloud_to_depth_node");
 #if defined(ODIN_ROS2)
   rclcpp::init(argc, argv);
-  if (!loadPointcloud2DepthEnabled()) {
-    std::cout << "[pointcloud2depth] disabled by config, exiting" << std::endl;
+  auto node = std::make_shared<rclcpp::Node>("pointcloud2depth_node");
+  bool enable = node->declare_parameter<bool>("enable_pointcloud_to_depth", false);
+  if (!enable) {
+    std::cout << "[pointcloud2depth] disabled by param, exiting" << std::endl;
     rclcpp::shutdown();
     return 0;
   }
-  auto node = std::make_shared<rclcpp::Node>("pointcloud2depth_node");
   odin::Pointcloud2DepthNode manager(node);
   rclcpp::spin(node);
   rclcpp::shutdown();
 #else
   ros::init(argc, argv, "pointcloud2depth_node");
-  if (!loadPointcloud2DepthEnabled()) {
-    ROS_INFO("[pointcloud2depth] disabled by config, exiting");
-    return 0;
-  }
   ros::NodeHandle nh;
   ros::NodeHandle pnh("~");
+  bool enable = false;
+  pnh.param("enable_pointcloud_to_depth", enable, false);
+  if (!enable) {
+    ROS_INFO("[pointcloud2depth] disabled by param, exiting");
+    return 0;
+  }
   odin::Pointcloud2DepthNode manager(nh, pnh);
   ros::spin();
 #endif

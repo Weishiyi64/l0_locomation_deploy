@@ -44,9 +44,7 @@ bool rawCloudRender::initFromStringWithKey(const std::string& yamlContent,
     return false;
   }
 
-  model_type_ = cam_config_loader->getValue<std::string>(cam_key + ".model_type", std::string(""));
-  camera_name_ =
-      cam_config_loader->getValue<std::string>(cam_key + ".camera_name", std::string(""));
+  model_type_ = cam_config_loader->getValue<std::string>(cam_key + ".cam_model", std::string(""));
   image_width_ =
       static_cast<int>(cam_config_loader->getValue<double>(cam_key + ".image_width", 0.0));
   image_height_ =
@@ -167,7 +165,6 @@ void rawCloudRender::render(const cv::Mat& image_bgr,
 
 void rawCloudRender::print_camera_calib() {
   std::cout << model_type_ << std::endl;
-  std::cout << camera_name_ << std::endl;
   std::cout << image_width_ << std::endl;
   std::cout << image_height_ << std::endl;
 

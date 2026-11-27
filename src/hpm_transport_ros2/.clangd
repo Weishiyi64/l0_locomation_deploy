@@ -1,0 +1,30 @@
+CompileFlags:
+  Add:
+    - -stdlib=libstdc++
+    # clangd otherwise picks gcc-12 (C-only on this box) and cannot find <array>/<algorithm>.
+    - --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/11
+---
+If:
+  PathMatch: .*/hpm_imu/.*
+CompileFlags:
+  CompilationDatabase: ../../build/hpm_imu
+---
+If:
+  PathMatch: .*/hpm_transport/.*
+CompileFlags:
+  CompilationDatabase: ../../build/hpm_transport
+---
+If:
+  PathMatch: .*/hpm_system/.*
+CompileFlags:
+  CompilationDatabase: ../../build/hpm_system
+---
+If:
+  PathMatch: .*/hpm_motor/.*
+CompileFlags:
+  CompilationDatabase: ../../build/hpm_motor
+---
+If:
+  PathMatch: .*/hpm_tactile/.*
+CompileFlags:
+  CompilationDatabase: ../../build/hpm_tactile

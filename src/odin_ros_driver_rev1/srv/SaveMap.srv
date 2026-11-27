@@ -1,0 +1,7 @@
+# Request - save the on-host loop-closure map to a file
+string path  # output map file path
+---
+# Response
+bool success
+int32 error_code  # 0=OK, other values from OdinResult enum
+string message

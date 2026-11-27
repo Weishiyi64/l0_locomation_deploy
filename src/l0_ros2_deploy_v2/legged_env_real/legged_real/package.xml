@@ -1,23 +1,21 @@
 <?xml version="1.0"?>
 <package format="3">
     <name>legged_real</name>
-    <version>0.0.0</version>
+    <version>0.1.0</version>
     <description>Real robot hardware layer using ROS2 motor command, state, and lifecycle interfaces.</description>
     <maintainer email="2466087629@qq.com">ShiboMu</maintainer>
 
     <license>MIT</license>
 
     <buildtool_depend>ament_cmake</buildtool_depend>
-    <exec_depend>rclpy</exec_depend>
-    <exec_depend>python3-yaml</exec_depend>
 
     <depend>rclcpp</depend>
+    <depend>nlohmann_json</depend>
     <depend>nav_msgs</depend>
     <depend>sensor_msgs</depend>
     <depend>std_msgs</depend>
     <depend>legged_controllers</depend>
     <depend>luvbot_hardware_interfaces</depend>
-    <depend>robot_interfaces</depend>
     <depend>system_command_arbiter</depend>
     <depend>yaml_cpp_vendor</depend>
 

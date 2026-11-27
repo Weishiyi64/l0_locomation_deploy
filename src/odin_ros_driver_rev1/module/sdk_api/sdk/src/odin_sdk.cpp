@@ -10,7 +10,7 @@ namespace {
 std::unique_ptr<odin::sdk::IHotplugListener> g_hotplug_listener;
 std::mutex g_hotplug_mutex;
 
-// Store callbacks for heartbeat failure notification
+// User-registered hotplug callbacks (on_attach/on_detach).
 odin::sdk::HotplugCallbacks g_hotplug_callbacks;
 }  // namespace
 
@@ -22,27 +22,23 @@ namespace sdk {
 // =============================================================================
 
 OdinDeviceHandle ConnectDevice(const DiscoveredDevice &device) {
-  // Ensure heartbeat failure callback is registered (in case StartHotplugListener was called first)
-  // This allows on_detach to be triggered even if ConnectDevice is called after StartHotplugListener
+  // Register the heartbeat-success keep-alive bridge exactly once. Every
+  // successful heartbeat on a connected device routes through here and
+  // refreshes the hotplug listener's last_seen for that device, so connected
+  // devices never get timed out by the discovery-timeout path even if they
+  // stop answering discovery probes while streaming. Offline detection is
+  // therefore unified to a single time-based path inside the listener.
   static std::once_flag once;
   std::call_once(once, []() {
-    OdinSdkImpl::Instance().SetHeartbeatFailedNotifyCallback(
+    OdinSdkImpl::Instance().SetHeartbeatSuccessNotifyCallback(
         [](const DiscoveredDevice& dev) {
-          OnDetachCallback detach_cb;
-          {
-            std::lock_guard<std::mutex> lock(g_hotplug_mutex);
-            detach_cb = g_hotplug_callbacks.on_detach;
-            // Mark device as offline in hotplug listener so it can be re-discovered
-            if (g_hotplug_listener) {
-              g_hotplug_listener->MarkDeviceOffline(dev);
-            }
-          }
-          if (detach_cb) {
-            detach_cb(dev);
+          std::lock_guard<std::mutex> lock(g_hotplug_mutex);
+          if (g_hotplug_listener) {
+            g_hotplug_listener->RefreshDeviceAlive(dev);
           }
         });
   });
-  
+
   return OdinSdkImpl::Instance().ConnectDevice(device);
 }
 
@@ -57,12 +53,12 @@ void RegisterSlamCallback(OdinDeviceHandle handle, OdinSlamCallback cb, void *cl
   OdinSdkImpl::Instance().RegisterSlamCallback(handle, cb, client_data);
 }
 
-void RegisterImageCallback(OdinDeviceHandle handle, OdinImageCallback cb, void *client_data) {
-  OdinSdkImpl::Instance().RegisterImageCallback(handle, cb, client_data);
+void RegisterCameraCallback(OdinDeviceHandle handle, OdinCameraCallback cb, void *client_data) {
+  OdinSdkImpl::Instance().RegisterCameraCallback(handle, cb, client_data);
 }
 
-void RegisterImageCallback2(OdinDeviceHandle handle, OdinImageCallback2 cb, void *client_data) {
-  OdinSdkImpl::Instance().RegisterImageCallback2(handle, cb, client_data);
+void RegisterCameraCallback2(OdinDeviceHandle handle, OdinCameraCallback cb, void *client_data) {
+  OdinSdkImpl::Instance().RegisterCameraCallback2(handle, cb, client_data);
 }
 
 void RegisterImuCallback(OdinDeviceHandle handle, OdinImuCallback cb, void *client_data) {
@@ -73,13 +69,48 @@ void RegisterOdomCallback(OdinDeviceHandle handle, OdinOdomCallback cb, void *cl
   OdinSdkImpl::Instance().RegisterOdomCallback(handle, cb, client_data);
 }
 
+void RegisterTelemetryCallback(OdinDeviceHandle handle, OdinTelemetryCallback cb,
+                               void *client_data) {
+  OdinSdkImpl::Instance().RegisterTelemetryCallback(handle, cb, client_data);
+}
+
+OdinResult StartTelemetry(OdinDeviceHandle handle) {
+  return OdinSdkImpl::Instance().StartTelemetry(handle);
+}
+
+void RegisterTfCallback(OdinDeviceHandle handle, OdinTfCallback cb, void *client_data) {
+  OdinSdkImpl::Instance().RegisterTfCallback(handle, cb, client_data);
+}
+
+void RegisterLcOptimizationStatusCallback(OdinDeviceHandle handle,
+                                          OdinLcOptimizationStatusCallback cb,
+                                          void *client_data) {
+  OdinSdkImpl::Instance().RegisterLcOptimizationStatusCallback(handle, cb, client_data);
+}
+
+void RegisterLcFrameCallback(OdinDeviceHandle handle, OdinLcFrameCallback cb,
+                             void *client_data) {
+  OdinSdkImpl::Instance().RegisterLcFrameCallback(handle, cb, client_data);
+}
+
+void RegisterLcOptimizationResultCallback(OdinDeviceHandle handle,
+                                          OdinLcOptimizationResultCallback cb,
+                                          void *client_data) {
+  OdinSdkImpl::Instance().RegisterLcOptimizationResultCallback(handle, cb, client_data);
+}
+
+void RegisterLcMapCloudCallback(OdinDeviceHandle handle, OdinLcMapCloudCallback cb,
+                                void *client_data) {
+  OdinSdkImpl::Instance().RegisterLcMapCloudCallback(handle, cb, client_data);
+}
+
 void EnableSlamOdomSyncForDevice(OdinDeviceHandle handle, bool enabled, uint32_t max_frame_lag) {
   OdinSdkImpl::Instance().EnableSlamOdomSyncForDevice(handle, enabled, max_frame_lag);
 }
 
-OdinResult SetOperatingMode(OdinDeviceHandle device, OdinOperatingMode mode,
+OdinResult SetDeviceMode(OdinDeviceHandle device, OdinDeviceMode mode,
                             uint32_t timeout_ms) {
-  return OdinSdkImpl::Instance().SetOperatingMode(device, mode, timeout_ms);
+  return OdinSdkImpl::Instance().SetDeviceMode(device, mode, timeout_ms);
 }
 
 OdinResult GetFirmwareVersion(OdinDeviceHandle device, std::string &version,
@@ -87,8 +118,20 @@ OdinResult GetFirmwareVersion(OdinDeviceHandle device, std::string &version,
   return OdinSdkImpl::Instance().GetFirmwareVersion(device, version, timeout_ms);
 }
 
-OdinResult SetSensorMode(OdinDeviceHandle device, uint8_t mode, uint32_t timeout_ms) {
+OdinResult SetSensorMode(OdinDeviceHandle device, OdinSensorMode mode, uint32_t timeout_ms) {
   return OdinSdkImpl::Instance().SetSensorMode(device, mode, timeout_ms);
+}
+
+OdinResult SendAlgoData(OdinDeviceHandle device, const uint8_t* data, size_t len) {
+  return OdinSdkImpl::Instance().SendAlgoData(device, data, len);
+}
+
+OdinResult GetDeviceMode(OdinDeviceHandle device, OdinDeviceMode& mode, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetDeviceMode(device, mode, timeout_ms);
+}
+
+OdinResult GetSensorMode(OdinDeviceHandle device, OdinSensorMode& mode, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetSensorMode(device, mode, timeout_ms);
 }
 
 OdinResult StartStream(OdinDeviceHandle device, OdinDataChannel channel,
@@ -106,6 +149,70 @@ OdinResult GetSensorCapability(OdinDeviceHandle device,
 
 OdinResult CloseStream(OdinDeviceHandle device, OdinDataChannel channel, uint32_t timeout_ms) {
   return OdinSdkImpl::Instance().CloseStream(device, channel, timeout_ms);
+}
+
+OdinResult GetChannelConfig(OdinDeviceHandle device, OdinDataChannel channel,
+                           OdinChannelConfigInfo& info, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetChannelConfig(device, channel, info, timeout_ms);
+}
+
+OdinResult SetFilterParam(OdinDeviceHandle device, const OdinLidarFilterParams& params,
+                          uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().SetFilterParam(device, params, timeout_ms);
+}
+
+OdinResult GetFilterParam(OdinDeviceHandle device, OdinLidarFilterParams& params,
+                          uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetFilterParam(device, params, timeout_ms);
+}
+
+OdinResult RestoreDefaultConfig(OdinDeviceHandle device, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().RestoreDefaultConfig(device, timeout_ms);
+}
+
+OdinResult SetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode mode,
+                              uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().SetDefaultSyncMode(device, mode, timeout_ms);
+}
+
+OdinResult GetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode& mode,
+                              uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetDefaultSyncMode(device, mode, timeout_ms);
+}
+
+OdinResult GetPtpSyncStatus(OdinDeviceHandle device, OdinPtpSyncStatus& status,
+                            uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetPtpSyncStatus(device, status, timeout_ms);
+}
+
+OdinResult SetAdaptiveParam(OdinDeviceHandle device, const OdinAdaptiveFilterParam& param,
+                            uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().SetAdaptiveParam(device, param, timeout_ms);
+}
+
+OdinResult GetAdaptiveParam(OdinDeviceHandle device, OdinAdaptiveFilterParam& param,
+                            uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetAdaptiveParam(device, param, timeout_ms);
+}
+
+OdinResult ResetInitialPose(OdinDeviceHandle device, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().ResetInitialPose(device, timeout_ms);
+}
+
+// =============================================================================
+// Host-side loop-closure / relocalization
+// =============================================================================
+
+OdinResult SaveMap(OdinDeviceHandle handle, const std::string& path) {
+  return OdinSdkImpl::Instance().SaveMap(handle, path);
+}
+
+OdinResult LoadMap(OdinDeviceHandle handle, const std::string& path) {
+  return OdinSdkImpl::Instance().LoadMap(handle, path);
+}
+
+OdinResult ExployMap(OdinDeviceHandle handle, const std::string& path) {
+  return OdinSdkImpl::Instance().ExployMap(handle, path);
 }
 
 OdinResult GetNetworkAttribute(OdinDeviceHandle device, NetworkAttribute& attr, uint32_t timeout_ms) {
@@ -127,8 +234,8 @@ bool DiscoverDevices(std::vector<DiscoveredDevice> &devices, uint32_t timeout_ms
 }
 
 OdinResult GetDeviceFile(OdinDeviceHandle device, OdinUpgradeProgressCallback cb, OdinFileType type,
-                         std::string save_path) {
-  return OdinSdkImpl::Instance().GetDeviceFile(device, cb, type, save_path);
+                         std::string save_path, uint32_t timeout_ms) {
+  return OdinSdkImpl::Instance().GetDeviceFile(device, cb, type, save_path, timeout_ms);
 }
 
 OdinResult SendFileToDevice(OdinDeviceHandle device, OdinUpgradeProgressCallback cb,
@@ -136,7 +243,7 @@ OdinResult SendFileToDevice(OdinDeviceHandle device, OdinUpgradeProgressCallback
   return OdinSdkImpl::Instance().SendFileToDevice(device, cb, type, file_path);
 }
 
-std::string GetSdkVersion() { return "2.0.2_20260518"; }
+std::string GetSdkVersion() { return ODIN_SDK_VERSION_STRING; }
 
 // =============================================================================
 // Hotplug Listener API
@@ -170,21 +277,20 @@ bool IsHotplugListenerRunning() {
 }
 
 void SetHotplugPollingInterval(uint32_t interval_ms) {
+  // Hotplug discovery cadence only. Heartbeat tuning is a per-device protocol
+  // detail owned by the device layer and is intentionally NOT coupled to this.
   std::lock_guard<std::mutex> lock(g_hotplug_mutex);
   if (g_hotplug_listener) {
     g_hotplug_listener->SetPollingInterval(interval_ms);
   }
-  // Also set heartbeat interval for devices
-  OdinSdkImpl::Instance().SetHeartbeatInterval(interval_ms);
 }
 
 void SetHotplugOfflineTimeout(uint32_t timeout_ms) {
+  // Hotplug offline threshold only; see note above.
   std::lock_guard<std::mutex> lock(g_hotplug_mutex);
   if (g_hotplug_listener) {
     g_hotplug_listener->SetOfflineTimeout(timeout_ms);
   }
-  // Also set heartbeat timeout for devices
-  OdinSdkImpl::Instance().SetHeartbeatTimeout(timeout_ms);
 }
 
 }  // namespace sdk

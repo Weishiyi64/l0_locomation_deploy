@@ -1,18 +1,26 @@
 #include "hybrid_decoder.h"
-#include "utility/ros_compat.hpp"
+#include "utility/rc_log.hpp"
 
 namespace odin_decoder {
+
+// Build a log prefix like "[JPEG|camera0|HybridDecoder]" or "[JPEG|HybridDecoder]".
+static std::string LogTag(const std::string& label) {
+  std::string s = "[JPEG";
+  if (!label.empty()) s += "|" + label;
+  s += "|HybridDecoder]";
+  return s;
+}
 
 HybridDecoder::HybridDecoder(std::unique_ptr<JpegDecoder> hw,
                              std::unique_ptr<JpegDecoder> sw)
     : hwDecoder_(std::move(hw)), swDecoder_(std::move(sw)) {
   if (hwDecoder_ && hwDecoder_->IsInitialized()) {
     useHardware_ = true;
-    RC_LOG_INFO("[HybridDecoder] Mode: Hardware decoder (%s)",
-                hwDecoder_->GetName().c_str());
+    RC_LOG_DEBUG("%s [init] Mode: Hardware decoder (%s)",
+                 LogTag(camera_label_).c_str(), hwDecoder_->GetName().c_str());
   } else {
     useHardware_ = false;
-    RC_LOG_WARN("[HybridDecoder] Mode: Software decoder (HW unavailable or init failed)");
+    RC_LOG_WARN("%s [init] Mode: Software decoder (HW unavailable or init failed)", LogTag(camera_label_).c_str());
   }
 }
 
@@ -29,8 +37,8 @@ bool HybridDecoder::Decode(const uint8_t* data, size_t size, cv::Mat& output) {
     // Incomplete/corrupt JPEG - skip this frame entirely to avoid crash
     invalidJpegCount_++;
     if (invalidJpegCount_ <= 10 || invalidJpegCount_ % 100 == 0) {
-      RC_LOG_WARN("[HybridDecoder] Incomplete JPEG (no SOI/EOI), frame dropped (count: %d)",
-                  invalidJpegCount_);
+      RC_LOG_WARN("%s [decode] Incomplete JPEG (no SOI/EOI), frame dropped (count: %d)",
+                  LogTag(camera_label_).c_str(), invalidJpegCount_);
     }
     return false;
   }
@@ -40,17 +48,26 @@ bool HybridDecoder::Decode(const uint8_t* data, size_t size, cv::Mat& output) {
     if (hwDecoder_->Decode(data, size, output)) {
       return true;
     }
-    // Hardware available but failed on this frame: drop it (do NOT silently fall back to SW,
-    // to keep timing predictable and avoid hiding HW regressions).
+    // Hardware available but failed on this frame: fall back to SW decoder.
     hwFailCount_++;
     if (hwFailCount_ <= 10 || hwFailCount_ % 100 == 0) {
-      RC_LOG_WARN("[HybridDecoder] HW decode failed on valid JPEG (fail count: %d), frame dropped",
-                  hwFailCount_);
+      RC_LOG_WARN("%s [decode] HW decode failed on valid JPEG (fail count: %d), falling back to SW",
+                  LogTag(camera_label_).c_str(), hwFailCount_);
     }
-    return false;
   }
 
-  // Software decoder path (HW unavailable)
+  // Software decoder path (HW unavailable or HW failed on this frame)
+#ifdef USING_JETSON_DECODER
+  if (!swFallbackWarned_) {
+    RC_LOG_ERROR(
+        "%s [decode] About to use software decoder (cv::imdecode) while "
+        "libnvjpeg is linked. libnvjpeg's jpeg_* symbols may interpose and "
+        "cause a segfault. If this crashes, recompile with "
+        "-DJPEG_PREFER_SOFTWARE_DECODER=ON to use pure software decoding.",
+        LogTag(camera_label_).c_str());
+    swFallbackWarned_ = true;
+  }
+#endif
   if (swDecoder_ && swDecoder_->Decode(data, size, output)) {
     return true;
   }

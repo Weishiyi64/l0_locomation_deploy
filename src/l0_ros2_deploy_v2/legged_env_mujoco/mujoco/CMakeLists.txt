@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.12)
 project(mujoco)
 
+# Optimize deployment builds while retaining symbols and explicit build-type choices.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
@@ -17,6 +22,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/AppVersion.cmake")
 find_package(rclcpp REQUIRED)
 find_package(realtime_tools REQUIRED)
 find_package(luvbot_hardware_interfaces REQUIRED)
@@ -70,11 +76,11 @@ else()
   )
 
   target_compile_options(${PROJECT_NAME}_simulate PRIVATE
-    -fsanitize=address
+    $<$<CONFIG:Debug>:-fsanitize=address>
     -fno-omit-frame-pointer
     -Wno-missing-field-initializers
   )
-  target_link_options(${PROJECT_NAME}_simulate PRIVATE -fsanitize=address)
+  target_link_options(${PROJECT_NAME}_simulate PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
 
   install(TARGETS ${PROJECT_NAME}_simulate
     DESTINATION lib/${PROJECT_NAME}

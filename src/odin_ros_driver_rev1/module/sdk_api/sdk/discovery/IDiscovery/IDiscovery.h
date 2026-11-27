@@ -22,14 +22,29 @@ class IDiscovery {
  public:
   using Context = std::map<std::string, std::string>;
 
+  // Context key carrying the probe frame's protocol epoch (decimal).
+  // Injected by multi-version senders (see GetProbeVersions); discoveries
+  // that care read it in BuildRequest, everyone else ignores it.
+  static constexpr const char* kContextKeyProtocolVersion = "protocol_version";
+
   virtual ~IDiscovery() = default;
 
   // Get protocol name for logging/debugging
   virtual const char* GetName() const = 0;
 
+  // Protocol epochs to probe, one request frame per entry.
+  // Empty (default) = single request; the discovery then picks its own
+  // default epoch inside BuildRequest. Non-empty lists exist so firmware
+  // that validates the reply's request-header version still accepts one
+  // of the probes - old firmware answers the old epoch, new firmware
+  // answers the new one. The reply's own version byte (or its explicit
+  // payload extension) tells the SDK which epoch the device speaks.
+  virtual std::vector<uint8_t> GetProbeVersions() const { return {}; }
+
   // Build a discovery request packet
   // @param seq: Sequence number for the request
-  // @param context: Transport-specific context (e.g., "host_ip", "bus_id")
+  // @param context: Transport-specific context (e.g., "host_ip", "bus_id",
+  //                 IDiscovery::kContextKeyProtocolVersion)
   // @param request_out: Output buffer for the built packet
   // @return true on success
   virtual bool BuildRequest(uint16_t seq, const Context& context,

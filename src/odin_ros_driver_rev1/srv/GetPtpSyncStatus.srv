@@ -1,0 +1,11 @@
+# Request - empty, query real-time PTP synchronization status (cmd_id=0x22)
+---
+# Response
+bool success
+int32 error_code   # 0=OK, other values from OdinResult enum
+string message
+uint8 sync_state      # 0=searching, 1=locking, 2=locked, 3=error
+uint8 servo_state     # ptp4l raw servo state (0/1/2)
+int64 offset_ns       # Master-Slave offset (nanoseconds)
+int64 path_delay_ns   # Path delay (nanoseconds)
+int32 freq_ppb        # Frequency adjustment (ppb)

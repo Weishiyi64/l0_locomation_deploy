@@ -1,12 +1,15 @@
 /**
  * @file odin_lidar_api.h
- * @brief Odin LiDAR SDK Public API
+ * @brief Odin LiDAR SDK Core Public API
  *
- * C++ interface for communicating with Odin LiDAR devices.
- * Provides device discovery, connection management, data reception, and command sending.
+ * Core C++ interface for communicating with Odin LiDAR devices.
+ * Covers device discovery, connection management, data streaming, and basic control.
+ *
+ * For advanced / tuning APIs (filter parameters, image encoder, PTP sync,
+ * adaptive parameters, network configuration, etc.), include
+ * "odin_lidar_api_ext.h" instead.
  *
  * All type definitions are in odin_lidar_def.h.
- * This file only contains function declarations.
  */
 
 #pragma once
@@ -61,20 +64,25 @@ void RegisterPointCloudCallback(OdinDeviceHandle handle, OdinPointCloudCallback 
 void RegisterSlamCallback(OdinDeviceHandle handle, OdinSlamCallback cb, void *client_data);
 
 /**
- * @brief Register image callback - left camera (data_type=2)
+ * @brief Register camera frame callback - left camera (kImage0)
+ *
+ * Delivers frames from the left image/video channel regardless of format.
+ * The packet's `format` field identifies the codec (kImageMjpeg, kImageH264, etc.).
+ * Supersedes RegisterImageCallback and RegisterVideoStreamCallback.
+ *
  * @param handle Device handle (must be connected)
  * @param cb Callback function pointer
  * @param client_data User-defined data
  */
-void RegisterImageCallback(OdinDeviceHandle handle, OdinImageCallback cb, void *client_data);
+void RegisterCameraCallback(OdinDeviceHandle handle, OdinCameraCallback cb, void *client_data);
 
 /**
- * @brief Register image callback - right camera (data_type=6)
+ * @brief Register camera frame callback - right camera (kImage1)
  * @param handle Device handle (must be connected)
  * @param cb Callback function pointer
  * @param client_data User-defined data
  */
-void RegisterImageCallback2(OdinDeviceHandle handle, OdinImageCallback2 cb, void *client_data);
+void RegisterCameraCallback2(OdinDeviceHandle handle, OdinCameraCallback cb, void *client_data);
 
 /**
  * @brief Register IMU data callback (data_type=3)
@@ -93,6 +101,100 @@ void RegisterImuCallback(OdinDeviceHandle handle, OdinImuCallback cb, void *clie
 void RegisterOdomCallback(OdinDeviceHandle handle, OdinOdomCallback cb, void *client_data);
 
 /**
+ * @brief Start telemetry subscription (data_type=0x42, opt-in)
+ *
+ * Brings up a local TCP server and subscribes the 0x42 channel so the device
+ * begins pushing JSON telemetry frames at ~1 Hz. Call RegisterTelemetryCallback
+ * before or after this to receive parsed telemetry data.
+ *
+ * @param handle Device handle (must be connected)
+ * @return kOk on success; kNotInitialized if the device is not connected
+ */
+OdinResult StartTelemetry(OdinDeviceHandle handle);
+
+/**
+ * @brief Register telemetry data callback (data_type=0x42, device -> host)
+ *
+ * The device pushes JSON telemetry frames at ~1 Hz. The SDK parses the
+ * JSON internally and delivers structured OdinTelemetryData fields via
+ * the callback (no raw JSON bytes exposed to the caller).
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterTelemetryCallback(OdinDeviceHandle handle, OdinTelemetryCallback cb,
+                               void *client_data);
+/**
+ * @brief Register TF transform callback (data_type=0x32, device -> host)
+ *
+ * Delivers parsed TF frames (translation + rotation + frame IDs) at the
+ * device's TF publish rate. Each frame is self-contained.
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterTfCallback(OdinDeviceHandle handle, OdinTfCallback cb, void *client_data);
+
+/**
+ * @brief Register loop-closure optimization status callback
+ *
+ * Fires whenever the host-side loop-closure algorithm starts or finishes an
+ * optimization round (packet.busy = true/false). Only produced when the
+ * loop-closure algorithm library is loaded and the device runs in a
+ * map-building / relocalization mode; in pure streaming modes it never fires.
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterLcOptimizationStatusCallback(OdinDeviceHandle handle,
+                                          OdinLcOptimizationStatusCallback cb,
+                                          void *client_data);
+
+/**
+ * @brief Register loop-closure adjusted frame callback
+ *
+ * Delivers every frame processed by the host-side loop-closure algorithm:
+ * the LC-adjusted pose (translation + quaternion), the frame cloud, and
+ * whether the frame was selected as a keyframe.
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterLcFrameCallback(OdinDeviceHandle handle, OdinLcFrameCallback cb,
+                             void *client_data);
+
+/**
+ * @brief Register loop-closure optimization result callback
+ *
+ * Fires when an optimization round completes, delivering the corrected pose
+ * sequence and the optimized (loop-closure-adjusted) cloud.
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterLcOptimizationResultCallback(OdinDeviceHandle handle,
+                                          OdinLcOptimizationResultCallback cb,
+                                          void *client_data);
+
+/**
+ * @brief Register loop-closure map cloud callback
+ *
+ * Delivers the current loop-closure map cloud whenever the map is updated
+ * (e.g. after map building or an optimization round).
+ *
+ * @param handle Device handle (must be connected)
+ * @param cb Callback function pointer
+ * @param client_data User-defined data passed to the callback
+ */
+void RegisterLcMapCloudCallback(OdinDeviceHandle handle, OdinLcMapCloudCallback cb,
+                                void *client_data);
+
+/**
  * @brief Enable/disable SLAM and Odom data synchronization for specific device
  *
  * When enabled (default), SDK matches SLAM and Odom data by frame_count before invoking callbacks.
@@ -107,29 +209,55 @@ void EnableSlamOdomSyncForDevice(OdinDeviceHandle handle, bool enabled,
                                  uint32_t max_frame_lag = 10);
 
 // ============================================================================
-// Command Sending
+// Basic Command Sending
 // ============================================================================
 
 /**
  * @brief Set device operating mode synchronously (cmd_id=0x02)
  * @param device Device handle
- * @param mode Target operating mode (kStandby, kNormal, kUpgrade)
+* @param mode Target device mode (kStandby, kNormal, kUpgrade, kSlam, KRelocation, kReMap)
  * @param timeout_ms Timeout in milliseconds (default: 1000)
  * @return Operation result
  */
-OdinResult SetOperatingMode(OdinDeviceHandle device, OdinOperatingMode mode,
-                            uint32_t timeout_ms = 1000);
+OdinResult SetDeviceMode(OdinDeviceHandle device, OdinDeviceMode mode,
+                         uint32_t timeout_ms = 1000);
 
 /**
- * @brief Get file from device via HTTPS
+ * @brief Get device mode synchronously (cmd_id=0x08)
+ *
+ * Queries the current device operating mode.
+ *
  * @param device Device handle
- * @param cb Progress callback function
- * @param type File type
- * @param save_path Local path to save the file
+ * @param mode Output current device mode (0x00: Standby, 0x01: Normal)
+ * @param timeout_ms Timeout in milliseconds (default: 1000)
  * @return Operation result
  */
+OdinResult GetDeviceMode(OdinDeviceHandle device, OdinDeviceMode& mode, uint32_t timeout_ms = 1000);
+
+/**
+ * @brief Get file from device (synchronous/blocking).
+ *
+ * For `kCalibrationFile`, the SDK prefers the active TCP connection
+ * (0x41 data channel) and falls back to HTTP/HTTPS only if the channel
+ * cannot be initiated. The call blocks until the file is saved to `save_path`
+ * or the transfer fails/times out.
+ *
+ * Progress callback convention:
+ *   - 100.0  : transfer complete, file saved to `save_path` (always fired on success)
+ *   - 0..99  : incremental progress (HTTP path always; 0x41 path only for multi-chunk files)
+ *
+ * On failure the function returns a non-kOk result code directly;
+ * no negative-progress callback is issued.
+ *
+ * @param device     Device handle
+ * @param cb         Progress callback (may be nullptr)
+ * @param type       File type (kCalibrationFile, kRelocationMap, kDevLogFile)
+ * @param save_path  Local path to save the file
+ * @param timeout_ms Timeout for 0x41 channel transfer (default: 5000 ms)
+ * @return kOk when the file has been saved; error code otherwise
+ */
 OdinResult GetDeviceFile(OdinDeviceHandle device, OdinUpgradeProgressCallback cb, OdinFileType type,
-                         std::string save_path);
+                         std::string save_path, uint32_t timeout_ms = 5000);
 
 /**
  * @brief Send file to device (supports firmware upgrade with kFirmware type)
@@ -167,17 +295,50 @@ OdinResult GetFirmwareVersion(OdinDeviceHandle device, std::string &version,
                               uint32_t timeout_ms = 1000);
 
 /**
- * @brief Set sensor mode synchronously (cmd_id=0x07)
+ * @brief Set sensor mode synchronously (cmd_id=0x05)
  * @param device Device handle
  * @param mode Sensor mode (0: HDR, 1: High Peak, 2: Low Peak, 3: Adaptive)
  * @param timeout_ms Timeout in milliseconds (default: 1000)
  * @return Operation result
  */
-OdinResult SetSensorMode(OdinDeviceHandle device, uint8_t mode, uint32_t timeout_ms = 1000);
+OdinResult SetSensorMode(OdinDeviceHandle device, OdinSensorMode mode, uint32_t timeout_ms = 5000);
+
+/**
+ * @brief Get LiDAR mode synchronously (cmd_id=0x09)
+ *
+ * Queries the current LiDAR sensor mode.
+ *
+ * @param device Device handle
+ * @param mode Output current LiDAR mode (OdinSensorMode: kHDR/kHighPeak/kLowPeak/kAdaptive)
+ * @param timeout_ms Timeout in milliseconds (default: 1000)
+ * @return Operation result
+ */
+OdinResult GetSensorMode(OdinDeviceHandle device, OdinSensorMode& mode, uint32_t timeout_ms = 5000);
 
 // ============================================================================
 // Stream Control
 // ============================================================================
+
+/**
+ * @brief Get sensor capabilities (cmd_id=0x08) - Synchronous
+ *
+ * Queries the device for supported sensor modes for specified channels.
+ * Format field interpretation depends on channel type (all use OdinDataFormat):
+ * - Image: kImageMjpeg, kImageH264 etc.
+ * - PointCloud: kRawPointXyzic, kSlamPointXyzrgba, etc.
+ * - IMU: kImu6Axis
+ * - Odom: kOdomStandard
+ *
+ * @param device Device handle
+ * @param capabilities Output: list of sensor capabilities
+ * @param channels Channels to query (default empty = query all)
+ * @param timeout_ms Timeout in milliseconds (default: 1000)
+ * @return Operation result
+ */
+OdinResult GetSensorCapability(OdinDeviceHandle device,
+                               std::vector<OdinSensorCapability>& capabilities,
+                               const std::vector<OdinDataChannel>& channels = {},
+                               uint32_t timeout_ms = 1000);
 
 /**
  * @brief Start a data stream (cmd_id=0x05) - Synchronous
@@ -197,27 +358,6 @@ OdinResult StartStream(OdinDeviceHandle device, OdinDataChannel channel,
                        uint32_t timeout_ms = 1000);
 
 /**
- * @brief Get sensor capabilities (cmd_id=0x06) - Synchronous
- *
- * Queries the device for supported sensor modes for specified channels.
- * Format field interpretation depends on channel type (all use OdinDataFormat):
- * - Image: kImageMjpeg, kImageYuyv, kImageNv12, etc.
- * - PointCloud: kRawPointXyzic, kSlamPointXyzrgba, etc.
- * - IMU: kImu6Axis, kImu9Axis
- * - Odom: kOdomStandard
- *
- * @param device Device handle
- * @param capabilities Output: list of sensor capabilities
- * @param channels Channels to query (default empty = query all)
- * @param timeout_ms Timeout in milliseconds (default: 1000)
- * @return Operation result
- */
-OdinResult GetSensorCapability(OdinDeviceHandle device,
-                               std::vector<OdinSensorCapability>& capabilities,
-                               const std::vector<OdinDataChannel>& channels = {},
-                               uint32_t timeout_ms = 1000);
-
-/**
  * @brief Close a data stream (cmd_id=0x05) - Synchronous
  *
  * Stops a data stream by sending dst_port=0 to device.
@@ -230,37 +370,6 @@ OdinResult GetSensorCapability(OdinDeviceHandle device,
  */
 OdinResult CloseStream(OdinDeviceHandle device, OdinDataChannel channel,
                        uint32_t timeout_ms = 1000);
-
-// ============================================================================
-// Network Configuration
-// ============================================================================
-
-/**
- * @brief Get device network attribute configuration
- *
- * Retrieves current network settings (IP, gateway, netmask, DHCP, PTP) via HTTP API.
- *
- * @param device Device handle
- * @param attr Output: network attribute structure
- * @param timeout_ms Timeout in milliseconds (default: 3000)
- * @return Operation result
- */
-OdinResult GetNetworkAttribute(OdinDeviceHandle device, NetworkAttribute& attr,
-                               uint32_t timeout_ms = 3000);
-
-/**
- * @brief Set device network attribute configuration
- *
- * Configures network settings (IP, gateway, netmask, DHCP, PTP) via HTTP API.
- * Changes take effect after device reboot.
- *
- * @param device Device handle
- * @param attr Network attribute to set
- * @param timeout_ms Timeout in milliseconds (default: 3000)
- * @return Operation result
- */
-OdinResult SetNetworkAttribute(OdinDeviceHandle device, const NetworkAttribute& attr,
-                               uint32_t timeout_ms = 3000);
 
 /**
  * @brief Reboot the device
@@ -296,15 +405,6 @@ bool DiscoverDevices(std::vector<DiscoveredDevice> &devices, uint32_t timeout_ms
  */
 std::string GetSdkVersion();
 
-}  // namespace sdk
-}  // namespace odin
-
-// Include hotplug types after namespace close to avoid circular dependency
-#include "../sdk/hotplugListener/IHotplugListener/IHotplugListener.h"
-
-namespace odin {
-namespace sdk {
-
 // ============================================================================
 // Hotplug Listener
 // ============================================================================
@@ -334,7 +434,7 @@ bool IsHotplugListenerRunning();
 
 /**
  * @brief Set hotplug polling interval
- * @param interval_ms Interval in milliseconds (default 1000)
+ * @param interval_ms Interval in milliseconds (default 500)
  */
 void SetHotplugPollingInterval(uint32_t interval_ms);
 

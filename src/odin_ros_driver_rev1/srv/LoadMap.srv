@@ -1,0 +1,7 @@
+# Request - load a previously saved loop-closure map for relocalization
+string path  # input map file path
+---
+# Response
+bool success
+int32 error_code  # 0=OK, other values from OdinResult enum
+string message

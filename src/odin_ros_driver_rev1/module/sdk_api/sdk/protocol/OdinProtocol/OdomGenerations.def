@@ -1,0 +1,43 @@
+// ============================================================================
+// OdomGenerations.def - the odom generation manifest (data-only file).
+// ============================================================================
+// One entry per REGISTERED odom layout. This file is the single place a new
+// generation touches: adding generation 4 means (1) creating V4/OdomEntry.hpp
+// next to the V2/ V3/ folders and (2) ONE entry line here - neither
+// OdomLayoutRouter.hpp nor OdinFrameAssembler.cpp changes (both re-expand
+// this manifest).
+//
+// Included multiple times by consumers that #define X first and #undef it
+// afterwards: OdomLayoutRouter.hpp (enum + routing + tail budget) and
+// OdinFrameAssembler.cpp (the dispatch switch). The #error below refuses an
+// include without a definition, so a manifest line can never be silently
+// skipped. No include guard on purpose - the whole point is re-expansion.
+//
+// ENTRY ORDER IS LOAD-BEARING: newest generation FIRST. The router expands
+// the entries into an if-chain where the first satisfied "payload_gen >=
+// MIN_GEN" wins; an entry listed below an older one is shadowed.
+// scripts/verify_odom_routing.cpp pins this ordering with executable
+// assertions - run it after editing this file.
+//
+// X(MIN_GEN, ENTRY_TYPE, TAG, LENIENT)
+//   MIN_GEN    first payload generation this layout serves (forward
+//              compatible: later generations keep it until they change it)
+//   ENTRY_TYPE the packed entry struct, namespace-qualified - the layout
+//              itself, static asserts included
+//   TAG        OdomLayoutGen enumerator for this layout
+//   LENIENT    true ONLY on the newest entry: accepts same-generation tail
+//              extensions (kOdomMaxTailExt B/entry). Historical entries
+//              stay false = strict frozen records. Exactly one true per
+//              manifest - the newest one.
+#ifndef X
+#error "Define X(MIN_GEN, ENTRY_TYPE, TAG, LENIENT) before including OdomGenerations.def"
+#endif
+
+// The layout includes live WITH the manifest so an entry can never compile
+// without its struct (and a folder without a manifest line stays simply
+// unreachable, never half-wired).
+#include "V3/OdomEntry.hpp"  // 197 B, cov[36]
+#include "V2/OdomEntry.hpp"  // 125 B, cov[18]
+
+X(3, protocol::v3::OdomEntry, kV3, true)   // newest: lenient tail window
+X(2, protocol::v2::OdomEntry, kV2, false)  // historical: strict, frozen

@@ -1,20 +1,25 @@
 #include "wbc_lora_assets.h"
 
 #include <openssl/evp.h>
+#include <sstream>
+#include <iomanip>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
+#include <cstdlib>
+#include <sys/stat.h>
 #include <fstream>
-#include <iomanip>
 #include <memory>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 
 namespace {
-namespace fs = std::filesystem;
+std::string canonicalPath(const std::string& path) {
+  std::unique_ptr<char, decltype(&std::free)> resolved(::realpath(path.c_str(), nullptr), std::free);
+  if (!resolved) throw std::runtime_error("WBC LoRA: cannot resolve asset: " + path);
+  return resolved.get();
+}
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error("WBC LoRA: " + message);
 }
@@ -23,17 +28,6 @@ bool validId(const std::string& id) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
            (c >= '0' && c <= '9') || c == '_' || c == '-';
   });
-}
-bool isHash(const std::string& value) {
-  return value.size() == 64 && value.find_first_not_of("0123456789abcdef") == std::string::npos;
-}
-std::string digest(const void* data, std::size_t size) {
-  unsigned char out[EVP_MAX_MD_SIZE];
-  unsigned int length = 0;
-  require(EVP_Digest(data, size, out, &length, EVP_sha256(), nullptr) == 1, "SHA256 failed");
-  std::ostringstream hex;
-  for (unsigned i = 0; i < length; ++i) hex << std::hex << std::setw(2) << std::setfill('0') << unsigned(out[i]);
-  return hex.str();
 }
 std::vector<unsigned char> readFile(const std::string& path, std::size_t maximum) {
   std::ifstream stream(path, std::ios::binary | std::ios::ate);
@@ -44,6 +38,39 @@ std::vector<unsigned char> readFile(const std::string& path, std::size_t maximum
   stream.seekg(0);
   require(bool(stream.read(reinterpret_cast<char*>(data.data()), data.size())), "short read: " + path);
   return data;
+}
+YAML::Node readManifest(const std::string& path) {
+  const auto bytes = readFile(path, 4 * 1024 * 1024);
+  const auto value = YAML::Load(std::string(bytes.begin(), bytes.end()));
+  require(value.IsMap(), "manifest must be a map: " + path);
+  return value;
+}
+std::string asset(const std::string& root, const std::string& relative) {
+  require(!relative.empty() && relative.front() != '/', "expected relative asset path");
+  const auto base = canonicalPath(root);
+  const auto path = canonicalPath(base + "/" + relative);
+  const auto prefix = base == "/" ? base : base + "/";
+  struct stat info{};
+  require(path.compare(0, prefix.size(), prefix) == 0 &&
+          ::stat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode), "asset escapes bundle: " + relative);
+  return path;
+}
+std::vector<std::size_t> shape(const YAML::Node& node) {
+  require(node.IsSequence() && node.size() > 0 && node.size() <= 4, "invalid tensor rank");
+  std::vector<std::size_t> result;
+  for (const auto& dim : node) {
+    const auto value = dim.as<int>();
+    require(value > 0 && value <= 65536, "invalid tensor dimension");
+    result.push_back(static_cast<std::size_t>(value));
+  }
+  return result;
+}
+std::vector<std::size_t> withoutSingletons(std::vector<std::size_t> dims) {
+  dims.erase(std::remove(dims.begin(), dims.end(), 1), dims.end());
+  return dims;
+}
+bool isHash(const std::string& value) {
+  return value.size() == 64 && value.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
 std::string fileHash(const std::string& path) {
   std::ifstream stream(path, std::ios::binary);
@@ -61,34 +88,6 @@ std::string fileHash(const std::string& path) {
   for (unsigned i = 0; i < length; ++i) hex << std::hex << std::setw(2) << std::setfill('0') << unsigned(out[i]);
   return hex.str();
 }
-YAML::Node readManifest(const std::string& path) {
-  const auto bytes = readFile(path, 4 * 1024 * 1024);
-  const auto value = YAML::Load(std::string(bytes.begin(), bytes.end()));
-  require(value.IsMap(), "manifest must be a map: " + path);
-  return value;
-}
-std::string asset(const std::string& root, const std::string& relative) {
-  require(!relative.empty() && !fs::path(relative).is_absolute(), "expected relative asset path");
-  const auto base = fs::canonical(root);
-  const auto path = fs::canonical(base / relative);
-  const auto tail = path.lexically_relative(base);
-  require(!tail.empty() && *tail.begin() != ".." && fs::is_regular_file(path), "asset escapes bundle: " + relative);
-  return path.string();
-}
-std::vector<std::size_t> shape(const YAML::Node& node) {
-  require(node.IsSequence() && node.size() > 0 && node.size() <= 4, "invalid tensor rank");
-  std::vector<std::size_t> result;
-  for (const auto& dim : node) {
-    const auto value = dim.as<int>();
-    require(value > 0 && value <= 65536, "invalid tensor dimension");
-    result.push_back(static_cast<std::size_t>(value));
-  }
-  return result;
-}
-std::vector<std::size_t> withoutSingletons(std::vector<std::size_t> dims) {
-  dims.erase(std::remove(dims.begin(), dims.end(), 1), dims.end());
-  return dims;
-}
 std::string checkedRknn(const std::string& root, const std::string& relative, const std::string& source_hash) {
   require(isHash(source_hash), "invalid ONNX fingerprint");
   const auto path = asset(root, relative);
@@ -96,10 +95,26 @@ std::string checkedRknn(const std::string& root, const std::string& relative, co
   require(record["format"].as<std::string>() == "wbc_rknn_conversion_v1" &&
           record["source_sha256"].as<std::string>() == source_hash &&
           record["rknn_sha256"].as<std::string>() == fileHash(path) &&
-          record["precision"].as<std::string>() == "float16" && !record["do_quantization"].as<bool>(),
+          record["target_platform"].as<std::string>() == "rk3588" && record["precision"].as<std::string>() == "float16" && !record["do_quantization"].as<bool>(),
           "model/conversion record mismatch: " + relative);
   return path;
 }
+
+std::string fixedModel(const std::string& root, const YAML::Node& model,
+                       const std::string& onnx_key, const std::string& rknn_key,
+                       const std::string& hash_key) {
+  const auto hash = model[hash_key].as<std::string>();
+#ifdef USE_RKNN
+  (void)onnx_key;
+  return checkedRknn(root, model[rknn_key].as<std::string>(), hash);
+#else
+  (void)rknn_key;
+  const auto path = asset(root, model[onnx_key].as<std::string>());
+  require(fileHash(path) == hash, "ONNX hash mismatch: " + path);
+  return path;
+#endif
+}
+
 float halfToFloat(std::uint16_t bits) {
   const int sign = (bits & 0x8000U) ? -1 : 1;
   const int exponent = (bits >> 10U) & 31U;
@@ -110,14 +125,20 @@ float halfToFloat(std::uint16_t bits) {
 }
 }  // namespace
 
+std::string wbcFileHash(const std::string& path) { return fileHash(path); }
+
 WbcBaseAssets::WbcBaseAssets(const std::string& manifest, const std::vector<std::string>& selected) {
   const auto graph = readManifest(manifest);
-  const auto root = fs::canonical(fs::path(manifest).parent_path()).string();
+  const auto path = canonicalPath(manifest);
+  const auto root = path.substr(0, path.find_last_of('/'));
   require(graph["format"].as<std::string>() == "wbc_base_graph_v1" &&
           graph["kind"].as<std::string>() == "policy" &&
           graph["target_precision"].as<std::string>() == "float16", "unsupported base-only graph contract");
-  model_path_ = checkedRknn(root, graph["model"]["rknn"].as<std::string>(),
-                           graph["model"]["sha256"].as<std::string>());
+  model_path_ = fixedModel(root, graph["model"], "onnx", "rknn", "sha256");
+  if (const auto ila = graph["ila_adapter"]) {
+    require(ila["format"].as<std::string>() == "sonic_ila_arm_window_v1", "unsupported ILA adapter");
+    ila_path_ = fixedModel(root, ila, "onnx", "rknn", "sha256");
+  }
   require(!selected.empty() && std::set<std::string>(selected.begin(), selected.end()).size() == selected.size(),
           "empty/duplicate base action selection");
   const auto actions = graph["actions"];
@@ -129,10 +150,13 @@ WbcBaseAssets::WbcBaseAssets(const std::string& manifest, const std::vector<std:
     require(validId(id) && ids.insert(id).second, "invalid/duplicate base action ID");
     if (std::find(selected.begin(), selected.end(), id) == selected.end()) continue;
     Action action;
+    if (item["model"]) {
+      const auto model = item["model"];
+      action.model = fixedModel(root, model, "onnx", "rknn", "sha256");
+    }
     action.config = asset(root, item["config"].as<std::string>());
     require(fileHash(action.config) == item["config_sha256"].as<std::string>(), "base config hash mismatch: " + id);
-    action.reference = checkedRknn(root, item["reference_rknn"].as<std::string>(),
-                                   item["reference_onnx_sha256"].as<std::string>());
+    action.reference = fixedModel(root, item, "reference_onnx", "reference_rknn", "reference_onnx_sha256");
     const auto config = readManifest(action.config);
     require(config["WbcCfg"]["motion_id"].as<std::string>() == id, "base action binding mismatch: " + id);
     // One fixed actor must use the same actuation and input encoding for every clip.
@@ -153,17 +177,28 @@ WbcBaseAssets::WbcBaseAssets(const std::string& manifest, const std::vector<std:
 }
 
 WbcLoraAssets::WbcLoraAssets(const std::string& manifest, const std::vector<std::string>& selected)
-    : graph_(readManifest(manifest)), root_(fs::canonical(fs::path(manifest).parent_path()).string()) {
+    : graph_(readManifest(manifest)), root_(canonicalPath(manifest)) {
+  root_.resize(root_.find_last_of('/') + 1);
+  std::string model_manifest = manifest;
+  std::vector<std::pair<YAML::Node, std::string>> catalogs;
+  const bool deployment = graph_["format"].as<std::string>() == "wbc_motion_deployment_v1";
+  if (deployment) {
+    const auto layout = graph_;
+    model_manifest = asset(root_, layout["model_manifest"].as<std::string>());
+    for (const auto& relative : layout["catalogs"]) {
+      const auto path = asset(root_, relative.as<std::string>());
+      catalogs.emplace_back(readManifest(path), path.substr(0, path.find_last_of('/') + 1));
+    }
+    graph_ = readManifest(model_manifest);
+    root_ = model_manifest.substr(0, model_manifest.find_last_of('/') + 1);
+  } else {
+    catalogs.emplace_back(graph_, root_);
+  }
   require(graph_["format"].as<std::string>() == "wbc_lora_graph_v1" &&
           graph_["kind"].as<std::string>() == "policy" && graph_["rank"].as<int>() == 16 &&
           graph_["alpha"].as<int>() == 16 && graph_["target_precision"].as<std::string>() == "float16",
           "unsupported graph contract (WBC Base is independent of AMP)");
-  for (const char* key : {"base_checkpoint_sha256", "source_onnx_sha256", "normalization_sha256", "parameter_schema_sha256"})
-    require(isHash(graph_[key].as<std::string>()), std::string("invalid fingerprint: ") + key);
-  base_hash_ = graph_["base_checkpoint_sha256"].as<std::string>();
-  model_path_ = checkedRknn(root_, graph_["model"]["rknn"].as<std::string>(), graph_["model"]["sha256"].as<std::string>());
-  require(readManifest(model_path_ + ".json")["graph_manifest_sha256"].as<std::string>() == fileHash(manifest),
-          "shared model was converted with another graph manifest");
+  model_path_ = asset(root_, graph_["model"][inferenceAssetKey()].as<std::string>());
 
   std::map<std::string, std::vector<std::size_t>> expected;
   const std::array<std::size_t, 7> widths{{639, 1024, 1024, 1423, 1024, 1024, 1024}};
@@ -180,8 +215,6 @@ WbcLoraAssets::WbcLoraAssets(const std::string& manifest, const std::vector<std:
   const auto specs = graph_["parameters"];
   require(specs.IsSequence() && specs.size() == 31, "expected 31 complete adapter tensors");
   std::set<std::string> names;
-  std::ostringstream canonical;
-  canonical << '[';
   for (const auto& spec : specs) {
     Tensor tensor;
     tensor.name = spec["name"].as<std::string>();
@@ -191,46 +224,59 @@ WbcLoraAssets::WbcLoraAssets(const std::string& manifest, const std::vector<std:
             "wrong or duplicate parameter: " + tensor.name);
     require(!tensor.actor_key.empty() && tensor.actor_key.find_first_not_of(
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.") == std::string::npos, "invalid actor key");
-    if (!tensors_.empty()) canonical << ',';
-    canonical << "{\"actor_key\":\"" << tensor.actor_key << "\",\"name\":\"" << tensor.name << "\",\"shape\":[";
     tensor.elements = 1;
-    for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
-      if (i) canonical << ',';
-      canonical << tensor.shape[i];
-      tensor.elements *= tensor.shape[i];
-    }
-    canonical << "]}";
+    for (const auto dim : tensor.shape) tensor.elements *= dim;
     tensors_.push_back(std::move(tensor));
   }
-  canonical << ']';
-  const auto schema = canonical.str();
-  require(digest(schema.data(), schema.size()) == graph_["parameter_schema_sha256"].as<std::string>(),
-          "parameter schema fingerprint mismatch");
-  require(!selected.empty() && std::set<std::string>(selected.begin(), selected.end()).size() == selected.size(),
-          "empty/duplicate action selection");
-  const auto actions = graph_["actions"];
-  require(actions.IsSequence(), "missing action catalog");
+  require((deployment || !selected.empty()) &&
+          std::set<std::string>(selected.begin(), selected.end()).size() == selected.size(), "empty/duplicate action selection");
   std::set<std::string> ids;
-  for (const auto& item : actions) {
-    const auto id = item["action_id"].as<std::string>();
-    require(validId(id) && ids.insert(id).second, "invalid/duplicate action ID");
-    if (std::find(selected.begin(), selected.end(), id) == selected.end()) continue;
-    Action action;
-    action.id = id;
-    action.config = asset(root_, item["config"].as<std::string>());
-    require(fileHash(action.config) == item["config_sha256"].as<std::string>(), "config hash mismatch: " + id);
-    action.reference = checkedRknn(root_, item["reference_rknn"].as<std::string>(),
-                                   item["reference_onnx_sha256"].as<std::string>());
-    action.adapter = asset(root_, item["adapter_manifest"].as<std::string>());
-    action.adapter_hash = fileHash(action.adapter);
-    require(readManifest(action.adapter)["action_id"].as<std::string>() == id &&
-            readManifest(action.config)["WbcCfg"]["motion_id"].as<std::string>() == id, "action binding mismatch: " + id);
-    actions_.emplace(id, std::move(action));
+  for (const auto& catalog : catalogs) {
+    const auto& data = catalog.first;
+    const auto& root = catalog.second;
+    const auto format = data["format"].as<std::string>();
+    require(format == "wbc_motion_catalog_v1" ||
+            (format == "wbc_lora_graph_v1" && data["kind"].as<std::string>() == "policy"),
+            "unsupported action catalog");
+    const auto actions = data["actions"];
+    require(actions.IsSequence(), "missing action catalog");
+    for (const auto& item : actions) {
+      const auto id = item["action_id"].as<std::string>();
+      require(validId(id) && ids.insert(id).second, "invalid/duplicate action ID");
+      const bool json_only = item["json_only"].as<bool>(false);
+      if ((!deployment || !selected.empty()) && !json_only &&
+          std::find(selected.begin(), selected.end(), id) == selected.end()) continue;
+      Action action;
+      action.id = id;
+      action.parameter_source = item["parameter_source"].as<std::string>("lora");
+      action.json_only = json_only;
+      require(action.parameter_source == "base" || action.parameter_source == "lora", "invalid parameter source");
+      action.config = asset(root, item["config"].as<std::string>());
+      if (!action.json_only) {
+        action.reference_root = root;
+        action.reference = item[std::string("reference_") + inferenceAssetKey()].as<std::string>();
+        // Resolve fixed references only when preparing the action.
+      }
+      action.adapter = asset(root, item["adapter_manifest"].as<std::string>());
+      actions_.emplace(id, std::move(action));
+    }
   }
-  require(actions_.size() == selected.size(), "selected action absent from manifest");
+  for (const auto& id : selected) require(actions_.count(id), "selected action absent from catalog: " + id);
+  require(!actions_.empty(), "empty deployment catalog");
 }
 
-void WbcLoraAssets::bindModel(const RknnModel& model) {
+std::vector<std::string> WbcLoraAssets::actionIds() const {
+  std::vector<std::string> ids;
+  for (const auto& item : actions_) ids.push_back(item.first);
+  return ids;
+}
+
+std::string WbcLoraAssets::referencePath(const Action& action) const {
+  require(!action.json_only, "text tracker has no reference model");
+  return asset(action.reference_root, action.reference);
+}
+
+void WbcLoraAssets::bindModel(const InferenceModel& model) {
   const auto inputs = graph_["inputs"];
   require(inputs.IsSequence() && inputs.size() == 33 && model.inputCount() == 33 && model.outputCount() == 1 &&
           model.outputIndex("action") == 0 && model.outputElements(0) == 21, "WBC shared model must have 33 inputs / action[21]");
@@ -242,8 +288,8 @@ void WbcLoraAssets::bindModel(const RknnModel& model) {
     const int index = model.inputIndex(name);
     require(seen.insert(name).second && index >= 0 && item["dtype"].as<std::string>() == "float32", "invalid input: " + name);
     require(withoutSingletons(model.inputShape(index)) == withoutSingletons(dims) &&
-            (model.inputType(index) == RKNN_TENSOR_FLOAT16 || model.inputType(index) == RKNN_TENSOR_FLOAT32),
-            "RKNN input shape/type mismatch: " + name);
+            isFloatingInput(model, index),
+            "inference input shape/type mismatch: " + name);
     if (name == "policy" || name == "command_short") {
       require(role == "observation" && dims == std::vector<std::size_t>{name == "policy" ? 399U : 240U}, "wrong WBC observation ABI");
     } else {
@@ -262,17 +308,13 @@ void WbcLoraAssets::allocate(Buffer& buffer) const {
 }
 
 void WbcLoraAssets::loadAdapter(const Action& action, Buffer& buffer) const {
-  require(fileHash(action.adapter) == action.adapter_hash, "adapter manifest changed since startup");
   const auto manifest = readManifest(action.adapter);
   require(manifest["format"].as<std::string>() == "wbc_lora_adapter_v1" &&
           manifest["action_id"].as<std::string>() == action.id, "adapter identity mismatch");
-  for (const char* key : {"base_checkpoint_sha256", "normalization_sha256", "parameter_schema_sha256", "rank", "alpha"})
-    require(manifest[key].as<std::string>() == graph_[key].as<std::string>(), std::string("adapter mismatch: ") + key);
   const auto weights = manifest["weights"];
-  const auto path = asset(fs::path(action.adapter).parent_path().string(), weights["path"].as<std::string>());
+  const auto path = asset(action.adapter.substr(0, action.adapter.find_last_of('/')), weights["path"].as<std::string>());
   const auto payload = readFile(path, 4 * 1024 * 1024);
-  require(weights["dtype"].as<std::string>() == "float16-le" && weights["size_bytes"].as<std::size_t>() == payload.size() &&
-          digest(payload.data(), payload.size()) == weights["sha256"].as<std::string>(), "invalid adapter payload");
+  require(weights["dtype"].as<std::string>() == "float16-le" && weights["size_bytes"].as<std::size_t>() == payload.size(), "invalid adapter payload");
   const auto records = manifest["tensors"];
   require(records.IsSequence() && records.size() == tensors_.size() && buffer.parameters.size() == tensors_.size(),
           "incomplete adapter buffer/schema");
@@ -294,9 +336,9 @@ void WbcLoraAssets::loadAdapter(const Action& action, Buffer& buffer) const {
   require(end == payload.size(), "trailing adapter payload");
 }
 
-std::vector<RknnModel::ParameterInput> WbcLoraAssets::parameterInputs(const Buffer& buffer) const {
+std::vector<InferenceModel::ParameterInput> WbcLoraAssets::parameterInputs(const Buffer& buffer) const {
   require(buffer.parameters.size() == tensors_.size(), "incomplete staged adapter");
-  std::vector<RknnModel::ParameterInput> inputs;
+  std::vector<InferenceModel::ParameterInput> inputs;
   inputs.reserve(tensors_.size());
   for (std::size_t i = 0; i < tensors_.size(); ++i) {
     require(tensors_[i].input_index >= 0 && buffer.parameters[i].size() == tensors_[i].elements,

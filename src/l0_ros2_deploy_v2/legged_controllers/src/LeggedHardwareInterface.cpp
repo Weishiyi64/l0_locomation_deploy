@@ -4,7 +4,7 @@
 // Copyright (c) 2024, Shibo Mu (Modifications)
 // All rights reserved.
 
-#include "legged_controllers/LeggedHardwareInterface.h"
+#include "LeggedHardwareInterface.h"
 
 #include <stdexcept>
 
@@ -43,17 +43,17 @@ bool LeggedHardwareInterface::write(rclcpp::Time /*time*/, rclcpp::Duration /*pe
 
 // ====== Getter implementations ======
 
-std::vector<double> LeggedHardwareInterface::getBodyPosition() { return {base_px_, base_py_, base_pz_}; }
+std::array<double, 3> LeggedHardwareInterface::getBodyPosition() { return {{base_px_, base_py_, base_pz_}}; }
 
-std::vector<double> LeggedHardwareInterface::getBodyOrientation() { return {base_qx_, base_qy_, base_qz_, base_qw_}; }
+std::array<double, 4> LeggedHardwareInterface::getBodyOrientation() { return {{base_qx_, base_qy_, base_qz_, base_qw_}}; }
 
-std::vector<JointMotorState> LeggedHardwareInterface::getHyridJointMotorState() { return joint_motor_states_; }
+const std::vector<JointMotorState>& LeggedHardwareInterface::getHyridJointMotorState() { return joint_motor_states_; }
 
 std::vector<JointMotorCommand> LeggedHardwareInterface::getJointMotorCommands() { return joint_motor_commands_; }
 
-std::vector<double> LeggedHardwareInterface::getImuQuaternion() { return {imu_qx_, imu_qy_, imu_qz_, imu_qw_}; }
+std::array<double, 4> LeggedHardwareInterface::getImuQuaternion() { return {{imu_qx_, imu_qy_, imu_qz_, imu_qw_}}; }
 
-std::vector<double> LeggedHardwareInterface::getImuAngularVelocity() { return {imu_gyx_, imu_gyy_, imu_gyz_}; }
+std::array<double, 3> LeggedHardwareInterface::getImuAngularVelocity() { return {{imu_gyx_, imu_gyy_, imu_gyz_}}; }
 
 std_msgs::msg::Header LeggedHardwareInterface::getImuHeader() { return imu_header_; }
 

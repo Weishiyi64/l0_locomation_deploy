@@ -7,10 +7,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace odin::sdk;
 
@@ -27,13 +29,19 @@ void SignalHandler(int) { g_running.store(false); }
 void ProgressCallback(OdinDeviceHandle device, float progress, void* client_data) {
   (void)device;
   (void)client_data;
-  // progress is already 0-100
-  std::cout << "\rProgress: " << std::fixed << std::setprecision(1) << progress << "%"
-            << std::flush;
+  // progress: 100.0 = success (both 0x41 and HTTP), <0 = failure,
+  //            0..99 = incremental (HTTP always; 0x41 multi-chunk only)
   if (progress >= 100.0f) {
-    std::cout << "\n";
+    std::cout << "\rProgress: 100.0%\n";
     g_transfer_done.store(true);
     g_transfer_success.store(true);
+  } else if (progress < 0.0f) {
+    std::cout << "\nTransfer failed.\n";
+    g_transfer_done.store(true);
+    g_transfer_success.store(false);
+  } else {
+    std::cout << "\rProgress: " << std::fixed << std::setprecision(1) << progress << "%"
+              << std::flush;
   }
 }
 
@@ -50,6 +58,9 @@ void PrintUsage(const char* program_name) {
             << "  --timeout <ms>    Discovery timeout in ms (default: 3000)\n"
             << "  --help            Show this help message\n"
             << "\n"
+            << "The SDK automatically prefers the active TCP connection (0x41 channel)\n"
+            << "and falls back to HTTP/HTTPS if the channel is unavailable.\n"
+            << "\n"
             << "Examples:\n"
             << "  " << program_name << " ./calibration.bin\n"
             << "  " << program_name << " ./calib.bin --device 192.168.1.200\n";
@@ -58,7 +69,9 @@ void PrintUsage(const char* program_name) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#ifndef _WIN32
   setvbuf(stdout, NULL, _IOLBF, 0);  // use line buffer
+#endif
   log_config(LOG_LEVEL_DEBUG, printf);
   if (argc < 2) {
     PrintUsage(argv[0]);
@@ -97,6 +110,7 @@ int main(int argc, char* argv[]) {
   std::cout << "ODIN Get Calibration File Tool\n";
   std::cout << "========================================\n";
   std::cout << "Save path: " << save_path << "\n";
+  std::cout << "Method: TCP (0x41 channel, HTTP fallback)\n";
 
   std::cout << "\n";
   std::cout << "========================================\n";
@@ -161,24 +175,24 @@ int main(int argc, char* argv[]) {
 
   // Set device to standby mode for file transfer
   std::cout << "Setting device to standby mode...\n";
-  if (SetOperatingMode(handle, OdinOperatingMode::kStandby) != OdinResult::kOk) {
+  if (SetDeviceMode(handle, OdinDeviceMode::kStandby) != OdinResult::kOk) {
     std::cerr << "Warning: Failed to set device mode.\n";
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-  // Get calibration file
-  std::cout << "Requesting calibration file...\n";
+  // Get calibration file (SDK prefers 0x41 channel, falls back to HTTP automatically).
+  std::cout << "Requesting calibration file (0x41 channel preferred, HTTP fallback)...\n";
+  OdinResult result = GetDeviceFile(handle, ProgressCallback, OdinFileType::kCalibrationFile,
+                                    save_path, 5000);
+  bool transfer_initiated = (result == OdinResult::kOk);
 
-  OdinResult result =
-      GetDeviceFile(handle, ProgressCallback, OdinFileType::kCalibrationFile, save_path);
-  std::cout << "finish Requesting calibration file...\n";
-  if (result != OdinResult::kOk) {
-    std::cerr << "Failed to get calibration file. Error code: " << static_cast<int>(result) << "\n";
+  if (!transfer_initiated) {
+    std::cerr << "Failed to initiate calibration file transfer.\n";
     DisconnectDevice(handle);
     return 1;
   }
 
-  // Wait for transfer to complete
+  // Wait for transfer to complete (same pattern for both HTTP and 0x41).
   auto start_time = std::chrono::steady_clock::now();
   constexpr int kTransferTimeoutSec = 60;
   while (!g_transfer_done.load() && g_running.load()) {

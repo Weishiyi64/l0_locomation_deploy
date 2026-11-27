@@ -1,8 +1,0 @@
-sequence:
-  base_vel_ramp_sec: 0.0
-  csv_entry_blend_sec: 0.5
-  csv_exit_blend_sec: 0.5
-  phases:
-    - name: Y1
-      mode: rl_with_csv
-      csv: csv/Y1_PhotoWithL0.csv

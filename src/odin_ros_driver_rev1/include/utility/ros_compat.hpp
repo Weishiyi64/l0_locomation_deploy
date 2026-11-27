@@ -12,7 +12,6 @@
 
 #pragma once
 
-#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -27,6 +26,10 @@
 #define ROS_VERSION_MAJOR 1
 #endif
 #endif
+
+// The RC_LOG_* macros live in their own header so that files needing nothing
+// but logging can include it directly instead of the full ROS API below.
+#include "utility/rc_log.hpp"
 
 // ============================================================================
 // ROS1 Implementation
@@ -69,8 +72,7 @@ class Publisher {
   void publish(const typename T::Ptr& msg) { pub_.publish(msg); }
   void publish(const typename T::ConstPtr& msg) { pub_.publish(msg); }
 
-  bool valid() const { return pub_.getNumSubscribers() >= 0; }
-  std::size_t subscriberCount() const { return pub_.getNumSubscribers(); }
+  bool valid() const { return static_cast<bool>(pub_); }
 
  private:
   ros::Publisher pub_;
@@ -130,13 +132,7 @@ class Node {
 inline Duration durationFromMs(int ms) { return ros::Duration(ms / 1000.0); }
 inline Duration absDiff(const Time& a, const Time& b) { return (a > b) ? (a - b) : (b - a); }
 
-// Logging (standalone, no node context needed)
-#define RC_LOG_INFO(...) ROS_INFO(__VA_ARGS__)
-#define RC_LOG_WARN(...) ROS_WARN(__VA_ARGS__)
-#define RC_LOG_ERROR(...) ROS_ERROR(__VA_ARGS__)
-#define RC_LOG_FATAL(...) ROS_FATAL(__VA_ARGS__)
-#define RC_LOG_INFO_STREAM(x) ROS_INFO_STREAM(x)
-#define RC_LOG_ERROR_STREAM(x) ROS_ERROR_STREAM(x)
+// Logging (standalone, no node context needed): see utility/rc_log.hpp
 
 // Spin
 inline void spin() { ros::spin(); }
@@ -210,9 +206,6 @@ class Publisher {
   void publish(const std::shared_ptr<const T>& msg) { pub_->publish(*msg); }
 
   bool valid() const { return pub_ != nullptr; }
-  std::size_t subscriberCount() const {
-    return pub_ ? pub_->get_subscription_count() + pub_->get_intra_process_subscription_count() : 0;
-  }
 
  private:
   typename rclcpp::Publisher<T>::SharedPtr pub_;
@@ -272,13 +265,7 @@ class Node : public rclcpp::Node {
 inline Duration durationFromMs(int ms) { return rclcpp::Duration(std::chrono::milliseconds(ms)); }
 inline Duration absDiff(const Time& a, const Time& b) { return (a > b) ? (a - b) : (b - a); }
 
-// Logging (standalone - uses default logger)
-#define RC_LOG_INFO(...) RCLCPP_INFO(rclcpp::get_logger("post_process"), __VA_ARGS__)
-#define RC_LOG_WARN(...) RCLCPP_WARN(rclcpp::get_logger("post_process"), __VA_ARGS__)
-#define RC_LOG_ERROR(...) RCLCPP_ERROR(rclcpp::get_logger("post_process"), __VA_ARGS__)
-#define RC_LOG_FATAL(...) RCLCPP_FATAL(rclcpp::get_logger("post_process"), __VA_ARGS__)
-#define RC_LOG_INFO_STREAM(x) RCLCPP_INFO_STREAM(rclcpp::get_logger("post_process"), x)
-#define RC_LOG_ERROR_STREAM(x) RCLCPP_ERROR_STREAM(rclcpp::get_logger("post_process"), x)
+// Logging (standalone - uses default logger): see utility/rc_log.hpp
 
 // Spin helper (for shared_ptr node)
 template <typename NodeT>

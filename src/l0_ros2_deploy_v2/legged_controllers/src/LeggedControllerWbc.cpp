@@ -2,81 +2,64 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <nlohmann/json.hpp>
 
-#include "legged_controllers/LeggedController.h"
+#include "LeggedController.h"
 
 namespace legged {
 
-namespace {
-
-constexpr int64_t kWbcActionMaxAgeMs = 5000;
-constexpr int64_t kWbcActionMaxFutureMs = 1000;
-constexpr std::size_t kMaxRecentWbcActionRequests = 256;
-
-int64_t unixTimeMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
-bool validActionId(const std::string& action_id) {
-  if (action_id.empty() || action_id.size() > 32) return false;
-  return std::all_of(action_id.begin(), action_id.end(), [](char value) {
-    const unsigned char c = static_cast<unsigned char>(value);
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
-  });
-}
-
-}  // namespace
-
-bool LeggedController::startPolicyHandoff(const PolicyInputs& start, double duration_sec, const char* label) {
-  if (duration_sec <= 1e-9 || start.q_snapshot.empty()) return false;
+bool LeggedController::startPolicyHandoff(double duration_sec, const char* label, bool include_legs) {
+  if (duration_sec <= 1e-9 || !robot_hw_) return false;
   const std::size_t count = jointNames_.size();
+  // Only complete validated frames enter this cache, including overlays and the previous blend.
+  const auto& previous = jointCommandComposer_.lastCommands();
+  if (count != 21 || previous.size() != count) return false;
   std::vector<bool> mask(count, false);
   std::vector<JointCommandSample> commands(count);
-  const std::size_t available = std::min(count, start.q_snapshot.size());
-  for (std::size_t joint = 0; joint < available; ++joint)
+  for (std::size_t joint = 0; joint < count; ++joint)
   {
-    mask[joint] = true;
-    commands[joint].q = start.q_snapshot[joint];
-    commands[joint].dq = 0.0;
-    commands[joint].kp = joint < start.gains.kps.size() ? start.gains.kps[joint] : 0.0;
-    commands[joint].kd = joint < start.gains.kds.size() ? start.gains.kds[joint] : 0.0;
-    commands[joint].tau_ff = 0.0;
+    if (include_legs || joint >= 12) mask[joint] = true;
+    const auto& from = previous[joint];
+    commands[joint].q = from.q_des;
+    commands[joint].dq = from.dq_des;
+    commands[joint].kp = from.kp;
+    commands[joint].kd = from.kd;
+    commands[joint].tau_ff = from.tau_ff;
   }
   double wall_sec = last_controller_wall_sec_;
   if (wall_sec <= 0.0) wall_sec = nh_->now().seconds();
-  JointCommandTransition& handoff = sequenceRuntime_.releaseHandoff();
+  JointCommandTransition& handoff = policy_handoff_;
   handoff.clear();
   if (!handoff.start(mask, commands, wall_sec, duration_sec)) return false;
-  RCLCPP_INFO(nh_->get_logger(), "[WBC] %s handoff blend %.3fs", label, duration_sec);
+  RCLCPP_DEBUG(nh_->get_logger(), "[WBC] %s blend %.3fs (%s)",
+              label, duration_sec, include_legs ? "full body" : "arms/head");
   return true;
 }
 
 bool LeggedController::startWbcMotion(
     const std::string& motion_id, int64_t timestamp_ms,
-    std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> response) {
+    std::shared_ptr<robot_interfaces::srv::ControlWbcMotion::Response> response) {
   if (!wbc_enabled_)
   {
     response->message = "WBC is disabled; launch with wbc_enabled:=true";
     return false;
   }
-  if (textMotionCtrl_.busy())
-  {
-    response->message = "text motion is preparing/playing/releasing";
-    return false;
-  }
   // Keep the preparation slot until cancellation is acknowledged, even after a timeout.
   const auto cancel_preparation = [this, &motion_id]() {
+    {
+      std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
+      if (wbc_preposition_pending_ || wbc_preposition_active_.load()) wbc_preposition_cancel_pending_ = true;
+    }
     const auto cancelled = policyMux_.prepareWbcMotion(
-        luvbot_control_interfaces::srv::ControlWbcMotion::Request::CANCEL, motion_id, wbc_command_timeout_sec_);
+        robot_interfaces::srv::ControlWbcMotion::Request::CANCEL, motion_id, wbc_command_timeout_sec_);
     wbc_cleanup_pending_ = !cancelled || !cancelled->success;
     if (wbc_cleanup_pending_)
       RCLCPP_WARN(nh_->get_logger(), "[WBC] Worker cancellation unconfirmed; refusing new preparation until cleanup");
   };
-  if (wbc_cleanup_pending_)
+  if (wbc_cleanup_pending_.load())
   {
     cancel_preparation();
-    if (wbc_cleanup_pending_)
+    if (wbc_cleanup_pending_.load())
     {
       response->message = "WBC worker cleanup has not been acknowledged";
       return false;
@@ -108,10 +91,9 @@ bool LeggedController::startWbcMotion(
     response->message = "current roll/pitch violates the safety posture limits";
     return false;
   }
-  if (!std::isfinite(velocity.linear.x) || !std::isfinite(velocity.linear.y) || !std::isfinite(velocity.angular.z) ||
-      std::abs(velocity.linear.x) > 0.05 || std::abs(velocity.linear.y) > 0.05 || std::abs(velocity.angular.z) > 0.10)
+  if (!std::isfinite(velocity.linear.x) || !std::isfinite(velocity.linear.y) || !std::isfinite(velocity.angular.z))
   {
-    response->message = "WBC requires |vx|<=0.05, |vy|<=0.05 and |wz|<=0.10";
+    response->message = "WBC requires finite velocity commands";
     return false;
   }
 
@@ -122,8 +104,56 @@ bool LeggedController::startWbcMotion(
     return false;
   }
   const uint64_t previous_wbc_revision = policyMux_.wbcCommandRevision();
-  auto prepared = policyMux_.prepareWbcMotion(luvbot_control_interfaces::srv::ControlWbcMotion::Request::START,
-                                              motion_id, wbc_command_timeout_sec_);
+  std::string request_id;
+  bool fixed_motion;
+  {
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    request_id = motion_request_id_;
+    fixed_motion = motion_source_ == "wbc";
+  }
+  if (fixed_motion)
+  {
+    const auto reference = policyMux_.prepareWbcMotion(
+        robot_interfaces::srv::ControlWbcMotion::Request::REFERENCE,
+        motion_id, wbc_command_timeout_sec_, request_id);
+    if (!reference || !reference->success || reference->joint_names != jointNames_ ||
+        jointNames_.size() != 21 || reference->reference_positions.size() != 21 ||
+        !std::all_of(reference->reference_positions.begin(), reference->reference_positions.end(),
+                     [](double value) { return std::isfinite(value); }))
+    {
+      cancel_preparation();
+      response->message = reference && !reference->success ? reference->message : "invalid/unavailable fixed WBC start reference";
+      return false;
+    }
+    std::unique_lock<std::mutex> lock(wbc_transition_mutex_);
+    if (generation != wbc_generation_ || !wbc_start_allowed_ || motion_cancelled_.load() ||
+        !policyMux_.selectInputs(true).valid)
+    {
+      lock.unlock();
+      cancel_preparation();
+      response->message = "controller state changed before upper-body preposition";
+      return false;
+    }
+    wbc_preposition_positions_ = reference->reference_positions;
+    wbc_preposition_pending_ = true;
+    wbc_preposition_ready_ = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(wbc_transition_sec_ + wbc_command_timeout_sec_));
+    const bool ready = wbc_transition_cv_.wait_until(lock, deadline, [this, generation]() {
+      return wbc_preposition_ready_ || generation != wbc_generation_ || motion_cancelled_.load();
+    });
+    if (!ready || generation != wbc_generation_ || motion_cancelled_.load() || !wbc_preposition_ready_ ||
+        !wbc_start_allowed_ || !policyMux_.selectInputs(true).valid)
+    {
+      lock.unlock();
+      cancel_preparation();
+      response->message = "upper-body preposition cancelled, unsafe or timed out";
+      return false;
+    }
+    RCLCPP_DEBUG(nh_->get_logger(), "[WBC] Arms/head start-reference preposition complete; preparing fresh WBC output");
+  }
+  auto prepared = policyMux_.prepareWbcMotion(robot_interfaces::srv::ControlWbcMotion::Request::START,
+                                              motion_id, wbc_command_timeout_sec_, request_id);
   if (!prepared)
   {
     cancel_preparation();
@@ -156,12 +186,11 @@ bool LeggedController::startWbcMotion(
     std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
     const PolicyInputs current_amp = policyMux_.selectInputs(true);
     if (generation == wbc_generation_ && wbc_start_allowed_ && policyMux_.source() == PolicyCmdSource::kRl &&
-        current_amp.valid && policyMux_.waitForWbcCommandAfter(previous_wbc_revision, 0.0))
+        !motion_cancelled_.load() && current_amp.valid && policyMux_.waitForWbcCommandAfter(previous_wbc_revision, 0.0))
     {
-      wbc_handoff_start_ = current_amp;
       wbc_handoff_pending_ = true;
       wbc_handoff_in_progress_.store(true);
-      policyMux_.publishWbcActive(true, "[WBC] Activate worker");
+      policyMux_.publishWbcActive(true);
       wbc_handoff_target_ = PolicyCmdSource::kWbc;
       std::lock_guard<std::mutex> state_lock(wbc_action_state_mutex_);
       wbc_action_active_ = true;
@@ -178,205 +207,295 @@ bool LeggedController::startWbcMotion(
   return false;
 }
 
-bool LeggedController::finishWbcMotion(const char* reason, std::string& message) {
-  uint64_t generation;
-  PolicyInputs wbc_start;
-  uint64_t previous_rl_revision;
+void LeggedController::softStopWbc(
+    const std::shared_ptr<robot_interfaces::srv::ControlWbcMotion::Request> request,
+    std::shared_ptr<robot_interfaces::srv::ControlWbcMotion::Response> response) {
+  using Service = robot_interfaces::srv::ControlWbcMotion;
+  if (request->command != Service::Request::STOP) {
+    response->message = "expected STOP (command=4)";
+    return;
+  }
+  std::string id;
+  std::string action;
   {
-    std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
-    if (!policyMux_.wbcActiveCommanded() && policyMux_.source() != PolicyCmdSource::kWbc)
-    {
-      message = "no WBC motion is active";
-      return false;
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (!motion_reserved_.load() || policyMux_.source() != PolicyCmdSource::kWbc) {
+      response->message = "no active WBC action";
+      return;
     }
-    generation = wbc_generation_;
-    wbc_start = policyMux_.selectInputs(true);
-    previous_rl_revision = policyMux_.rlCommandRevision();
-    wbc_return_pending_.store(true);
-    policyMux_.publishWbcActive(false, reason);
+    id = motion_request_id_;
+    action = motion_action_id_;
   }
-  if (!wbc_start.valid)
-  {
-    message = "WBC command expired; entering emergency damping";
-    triggerEmergencyStop();
-    return false;
+  if ((!request->request_id.empty() && request->request_id != id) ||
+      (!request->motion_id.empty() && request->motion_id != action)) {
+    response->message = "STOP execution does not match the active action";
+    return;
   }
-  const auto cancelled = policyMux_.prepareWbcMotion(
-      luvbot_control_interfaces::srv::ControlWbcMotion::Request::CANCEL, "", wbc_command_timeout_sec_);
-  wbc_cleanup_pending_ = !cancelled || !cancelled->success;
-  publishRlObsReset();
-  if (!policyMux_.waitForRlCommandAfter(previous_rl_revision, wbc_command_timeout_sec_))
-  {
-    message = "fresh AMP command timed out; entering emergency damping";
-    RCLCPP_ERROR(nh_->get_logger(), "[WBC] %s", message.c_str());
-    wbc_return_pending_.store(false);
-    triggerEmergencyStop();
-    return false;
-  }
+  const auto result = policyMux_.prepareWbcMotion(Service::Request::STOP,"",wbc_command_timeout_sec_,id);
+  if (result) *response = *result;
+  else response->message = "WBC STOP request was not acknowledged";
+}
+
+bool LeggedController::requestWbcReturn(const char* reason, std::string& message, bool failed, bool live_preview) {
   std::unique_lock<std::mutex> lock(wbc_transition_mutex_);
-  if (generation != wbc_generation_ || !wbc_controller_walking_ ||
-      !policyMux_.waitForRlCommandAfter(previous_rl_revision, 0.0))
+  if (!policyMux_.wbcActiveCommanded() && policyMux_.source() != PolicyCmdSource::kWbc)
   {
-    wbc_return_pending_.store(false);
-    message = "controller left Walking or AMP command expired while returning";
-    lock.unlock();
-    triggerEmergencyStop();
+    message = "no WBC motion is active";
     return false;
   }
-  wbc_handoff_start_ = wbc_start;
-  wbc_handoff_pending_ = true;
-  wbc_handoff_in_progress_.store(true);
-  wbc_handoff_target_ = PolicyCmdSource::kRl;
-  message = "WBC motion stopped; blending to AMP";
+  const auto outcome = failed ? WbcReturnOutcome::Failed :
+      (reason ? WbcReturnOutcome::Cancelled : WbcReturnOutcome::Completed);
+  if (wbc_return_pending_.load())
+  {
+    if (failed || (reason && wbc_return_outcome_ == WbcReturnOutcome::Completed)) wbc_return_outcome_ = outcome;
+    message = "WBC return is already pending";
+    return true;
+  }
+  wbc_cleanup_pending_.store(true);
+  if (policyMux_.source() == PolicyCmdSource::kRl && wbc_handoff_pending_ &&
+      wbc_handoff_target_ == PolicyCmdSource::kWbc)
+  {
+    // Keep AMP if completion/failure/cancellation arrives before the first control-thread switch.
+    wbc_handoff_pending_ = false;
+    wbc_handoff_in_progress_.store(false);
+    if (wbc_preposition_active_.load()) wbc_preposition_cancel_pending_ = true;
+    policyMux_.publishWbcActive(false, "[WBC] Stopped before handoff; AMP retained");
+    publishActiveWbcActionTerminal(reason && !failed ? "cancelled" : "failed", "AMP control retained");
+    message = "WBC stopped before handoff; AMP retained";
+    return true;
+  }
+  wbc_live_return_ = live_preview;
+  wbc_return_id_ = policyMux_.beginRlReturn(live_preview);
+  wbc_return_outcome_ = outcome;
+  wbc_return_pending_.store(true);
+  if (!live_preview) policyMux_.publishWbcActive(false, reason);
+  message = "WBC return requested; holding last validated command until fresh matching AMP output";
+  RCLCPP_DEBUG(nh_->get_logger(), "[WBC Return] %s; outcome=%s", message.c_str(),
+              failed ? "failed" : (reason ? "cancelled" : "completed"));
+  // The control thread completes the handoff. Worker CANCEL/retirement belongs to reservation cleanup after AMP takes over.
   return true;
 }
 
 void LeggedController::abortWbcImmediately(const char* reason) {
   std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
   ++wbc_generation_;
+  motion_cancelled_.store(true);
   wbc_start_allowed_ = false;
   wbc_controller_walking_ = false;
   wbc_handoff_pending_ = false;
   wbc_handoff_clear_pending_ = true;
   wbc_handoff_in_progress_.store(false);
+  {
+    std::lock_guard<std::mutex> reservation(motion_mutex_);
+    motion_head_pending_ = false;
+    text_capture_stamp_ns_ = 0;
+  }
+  wbc_preposition_pending_ = wbc_preposition_ready_ = wbc_preposition_cancel_pending_ = false;
+  wbc_preposition_active_.store(false);
+  wbc_transition_cv_.notify_all();
+  policyMux_.clearRlReturn();
+  wbc_live_return_ = false;
   if (!policyMux_.wbcActiveCommanded() && policyMux_.source() != PolicyCmdSource::kWbc && !wbc_return_pending_.load())
     return;
   policyMux_.publishWbcActive(false, reason);
   wbc_return_pending_.store(false);
-  setPolicySource(PolicyCmdSource::kRl, "[PolicyMux] WBC aborted; AMP source restored");
-  publishRlObsReset();
+  wbc_return_id_.clear();
+  policyMux_.setSource(PolicyCmdSource::kRl, "[PolicyMux] WBC aborted; AMP source restored");
+  policyMux_.publishRlObsReset();
   publishActiveWbcActionTerminal("failed");
 }
 
 void LeggedController::publishWbcActionFeedback(int64_t timestamp_ms, const std::string& action_id,
-                                                const char* status) {
+                                                const char* status, const char* detail) {
   if (!wbcActionFeedbackPub_) return;
   std_msgs::msg::String feedback;
-  feedback.data = "{\"timestamp_ms\":" + std::to_string(timestamp_ms) + ",\"action_id\":\"" + action_id +
-                  "\",\"status\":\"" + status + "\"}";
+  nlohmann::json event = {{"timestamp_ms", timestamp_ms}, {"action_id", action_id}, {"status", status}};
+  if (detail) event["detail"] = detail;
+  feedback.data = event.dump();
   wbcActionFeedbackPub_->publish(feedback);
 }
 
-void LeggedController::publishActiveWbcActionTerminal(const char* status) {
+void LeggedController::publishActiveWbcActionTerminal(const char* status, const char* detail) {
   std::lock_guard<std::mutex> lock(wbc_action_state_mutex_);
   if (!wbc_action_active_) return;
-  publishWbcActionFeedback(wbc_action_timestamp_ms_, wbc_action_id_, status);
+  publishWbcActionFeedback(wbc_action_timestamp_ms_, wbc_action_id_, status, detail);
   wbc_action_active_ = false;
   wbc_action_timestamp_ms_ = 0;
   wbc_action_id_.clear();
 }
 
-void LeggedController::wbcActionCommandCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
-  int64_t timestamp_ms = 0;
-  std::string action_id;
-  try
-  {
-    const YAML::Node command = YAML::Load(msg->data);
-    if (!command.IsMap() || !command["timestamp_ms"] || !command["action_id"])
-      throw std::runtime_error("expected timestamp_ms and action_id");
-    timestamp_ms = command["timestamp_ms"].as<int64_t>();
-    action_id = command["action_id"].as<std::string>();
-  } catch (const std::exception& exception)
-  {
-    RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected malformed command: %s", exception.what());
-    publishWbcActionFeedback(0, "", "rejected");
-    return;
-  }
-
-  if (!validActionId(action_id))
-  {
-    RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected invalid action_id");
-    publishWbcActionFeedback(timestamp_ms, "", "rejected");
-    return;
-  }
-
-  const int64_t now_ms = unixTimeMs();
-  if (timestamp_ms <= 0 || timestamp_ms < now_ms - kWbcActionMaxAgeMs || timestamp_ms > now_ms + kWbcActionMaxFutureMs)
-  {
-    RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected timestamp %lld at %lld", static_cast<long long>(timestamp_ms),
-                static_cast<long long>(now_ms));
-    publishWbcActionFeedback(timestamp_ms, action_id, "rejected");
-    return;
-  }
-
-  const auto received_at = std::chrono::steady_clock::now();
-  const std::string request_key = std::to_string(timestamp_ms) + ":" + action_id;
-  {
-    std::lock_guard<std::mutex> lock(wbc_action_state_mutex_);
-    while (!recent_wbc_action_requests_.empty() &&
-           received_at - recent_wbc_action_requests_.front().second > std::chrono::seconds(6))
-      recent_wbc_action_requests_.pop_front();
-    const auto duplicate = std::find_if(recent_wbc_action_requests_.begin(), recent_wbc_action_requests_.end(),
-                                        [&request_key](const auto& request) { return request.first == request_key; });
-    if (duplicate != recent_wbc_action_requests_.end())
-    {
-      RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected duplicate request %s", request_key.c_str());
-      publishWbcActionFeedback(timestamp_ms, action_id, "rejected");
-      return;
-    }
-    if (recent_wbc_action_requests_.size() >= kMaxRecentWbcActionRequests) recent_wbc_action_requests_.pop_front();
-    recent_wbc_action_requests_.emplace_back(request_key, received_at);
-  }
-
-  std::unique_lock<std::mutex> lock(auxiliary_action_trigger_mutex_, std::try_to_lock);
-  if (!lock.owns_lock())
-  {
-    publishWbcActionFeedback(timestamp_ms, action_id, "rejected");
-    RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected %s: another action request is being handled", action_id.c_str());
-    return;
-  }
-  auto response = std::make_shared<luvbot_control_interfaces::srv::ControlWbcMotion::Response>();
-  if (startWbcMotion(action_id, timestamp_ms, response)) return;
-  RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Rejected %s: %s", action_id.c_str(), response->message.c_str());
-  publishWbcActionFeedback(timestamp_ms, action_id, "rejected");
-}
-
-void LeggedController::wbcMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {
+void LeggedController::wbcMotionDoneCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
+  std::string request_id;
+  bool success;
+  bool soft_stop = false;
+  try {
+    if (msg->data.size() > 1024) return;
+    const auto event = YAML::Load(msg->data);
+    request_id = event["request_id"].as<std::string>();
+    success = event["success"].as<bool>();
+    soft_stop = event["soft_stop"].as<bool>(false);
+  } catch (const std::exception&) { return; }
   std::lock_guard<std::mutex> lock(auxiliary_action_trigger_mutex_);
-  if (!policyMux_.wbcActiveCommanded()) return;
-  if (!msg->data)
   {
-    RCLCPP_ERROR(nh_->get_logger(), "[WBC Action] Worker failed; entering emergency damping");
-    triggerEmergencyStop();
-    return;
+    std::lock_guard<std::mutex> reservation(motion_mutex_);
+    if (!motion_reserved_.load() || request_id != motion_request_id_) return;
+  }
+  if (!policyMux_.wbcActiveCommanded() && !wbc_return_pending_.load()) return;
+  if (!success)
+  {
+    RCLCPP_WARN(nh_->get_logger(), "[WBC Action] Worker failed; requesting AMP recovery");
   }
   std::string message;
-  const bool returned_to_amp = finishWbcMotion("[WBC] Motion completed", message);
-  if (!returned_to_amp) RCLCPP_WARN(nh_->get_logger(), "[WBC Action] %s", message.c_str());
-  publishActiveWbcActionTerminal(returned_to_amp ? "completed" : "failed");
+  const bool return_requested = requestWbcReturn(nullptr, message, !success, success && soft_stop);
+  if (!return_requested) RCLCPP_WARN(nh_->get_logger(), "[WBC Action] %s", message.c_str());
 }
 
 void LeggedController::updateWbcControlState() {
   if (!wbc_enabled_) return;
-  std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
-  if (!wbc_handoff_pending_ && !sequenceRuntime_.releaseHandoffActive(last_controller_wall_sec_))
-    wbc_handoff_in_progress_.store(false);
+  std::unique_lock<std::mutex> lock(wbc_transition_mutex_);
+  if (wbc_handoff_clear_pending_)
+  {
+    policy_handoff_.clear();
+    wbc_handoff_clear_pending_ = false;
+  }
   wbc_controller_walking_ = fsm_ && fsm_->isWalking();
-  wbc_start_allowed_ = wbc_controller_walking_ && !sequenceRuntime_.isActive() &&
-                       !policyMux_.imitationActiveCommanded() && !wbc_handoff_pending_ &&
-                       !sequenceRuntime_.releaseHandoffActive(last_controller_wall_sec_);
   const auto& q = policy_observation_.imu.orientation;
   const double roll = std::atan2(2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y));
   const double pitch = std::asin(std::max(-1.0, std::min(1.0, 2.0 * (q.w * q.y - q.z * q.x))));
   const auto& velocity = policy_observation_.velocity_command;
-  wbc_start_allowed_ = wbc_start_allowed_ && std::isfinite(roll) && std::isfinite(pitch) &&
+  const bool safe = wbc_controller_walking_ && !policyMux_.imitationActiveCommanded() &&
+                       std::isfinite(roll) && std::isfinite(pitch) &&
                        (!safetyChecker_ || safetyChecker_->checkOrientation(roll, pitch).ok) &&
                        std::isfinite(velocity.linear.x) && std::isfinite(velocity.linear.y) &&
-                       std::isfinite(velocity.angular.z) && std::abs(velocity.linear.x) <= 0.05 &&
-                       std::abs(velocity.linear.y) <= 0.05 && std::abs(velocity.angular.z) <= 0.10;
+                       std::isfinite(velocity.angular.z);
   wbc_orientation_ = policy_observation_.imu.orientation;
   wbc_velocity_ = policy_observation_.velocity_command;
-  if (wbc_handoff_clear_pending_)
+  if (wbc_controller_walking_ && policyMux_.source() == PolicyCmdSource::kWbc)
   {
-    sequenceRuntime_.releaseHandoff().clear();
-    wbc_handoff_clear_pending_ = false;
+    if (!wbc_return_pending_.load() && !policyMux_.selectInputs(true).valid)
+    {
+      lock.unlock();
+      std::string message;
+      requestWbcReturn("[WBC Recovery] WBC output unavailable; holding last command and requesting AMP", message, true);
+      lock.lock();
+      if (!fsm_->isWalking()) return;
+    }
+    if (wbc_return_pending_.load() && (!wbc_live_return_ || safe) &&
+        policyMux_.rlReturnCommandReady(wbc_return_id_))
+    {
+      wbc_handoff_pending_ = true;
+      wbc_handoff_in_progress_.store(true);
+      wbc_handoff_target_ = PolicyCmdSource::kRl;
+    }
   }
+  if ((wbc_preposition_pending_ || wbc_preposition_active_.load()) && !wbc_preposition_cancel_pending_ &&
+      (!safe || motion_cancelled_.load() || policyMux_.source() != PolicyCmdSource::kRl ||
+       !policyMux_.selectInputs(true).valid))
+  {
+    ++wbc_generation_;
+    wbc_preposition_cancel_pending_ = true;
+    wbc_transition_cv_.notify_all();
+  }
+  if (wbc_preposition_cancel_pending_)
+  {
+    if (wbc_handoff_pending_ && wbc_handoff_target_ == PolicyCmdSource::kWbc)
+    {
+      // A cancellation between activation publication and the control tick must not switch the legs to WBC.
+      wbc_handoff_pending_ = false;
+      policyMux_.publishWbcActive(false, "[WBC] Cancelled before policy switch; keeping AMP");
+      wbc_cleanup_pending_.store(true);
+      publishActiveWbcActionTerminal("failed");
+    }
+    const bool moved = wbc_preposition_active_.load();
+    if (moved && wbc_controller_walking_ && wbc_transition_sec_ > 1e-9 &&
+        !startPolicyHandoff(wbc_transition_sec_, "cancelled preposition -> AMP"))
+    {
+      policy_handoff_.clear();
+      RCLCPP_WARN(nh_->get_logger(), "[WBC] No valid upper-body blend origin; returning directly to AMP");
+    }
+    wbc_preposition_active_.store(false);
+    wbc_preposition_pending_ = wbc_preposition_ready_ = wbc_preposition_cancel_pending_ = false;
+    if (moved) wbc_handoff_in_progress_.store(true);
+    wbc_transition_cv_.notify_all();
+  }
+  if (wbc_preposition_pending_)
+  {
+    if (wbc_transition_sec_ > 1e-9 && !startPolicyHandoff(wbc_transition_sec_, "AMP upper-body preposition"))
+    {
+      ++wbc_generation_;
+      wbc_preposition_pending_ = false;
+      wbc_preposition_cancel_pending_ = true;
+      wbc_transition_cv_.notify_all();
+      RCLCPP_WARN(nh_->get_logger(), "[WBC] No valid preposition origin; rejecting preparation and keeping AMP");
+      return;
+    }
+    wbc_preposition_pending_ = false;
+    wbc_preposition_active_.store(true);
+    RCLCPP_DEBUG(nh_->get_logger(), "[WBC] Preposition arms/head to first reference; legs remain under AMP");
+  }
+  if (wbc_preposition_active_.load() && !wbc_preposition_ready_ &&
+      policy_handoff_.expired(last_controller_wall_sec_))
+  {
+    wbc_preposition_ready_ = true;
+    wbc_transition_cv_.notify_all();
+  }
+  const bool handoff_active = policy_handoff_.active() && !policy_handoff_.expired(last_controller_wall_sec_);
+  if (!wbc_handoff_pending_ && !handoff_active) {
+    wbc_handoff_in_progress_.store(false);
+    if (wbc_live_return_ && policyMux_.source() == PolicyCmdSource::kRl) {
+      policyMux_.finishRlReturnPreview();
+      wbc_live_return_ = false;
+    }
+  }
+  wbc_start_allowed_ = safe && !wbc_return_pending_.load() && !wbc_handoff_pending_ && !handoff_active &&
+                       !wbc_preposition_pending_ && !wbc_preposition_cancel_pending_ &&
+                       (!wbc_preposition_active_.load() || wbc_preposition_ready_);
   if (wbc_handoff_pending_)
   {
     if (wbc_controller_walking_)
     {
-      startPolicyHandoff(wbc_handoff_start_, wbc_transition_sec_, "policy switch");
-      setPolicySource(wbc_handoff_target_, "[PolicyMux] WBC handoff applied");
+      if (wbc_handoff_target_ == PolicyCmdSource::kWbc && !policyMux_.waitForWbcCommandAfter(0, 0.0))
+      {
+        lock.unlock();
+        std::string message;
+        requestWbcReturn("[WBC] Prepared output expired before handoff; keeping AMP", message, true);
+        return;
+      }
+      if (wbc_handoff_target_ == PolicyCmdSource::kRl &&
+          (!wbc_return_pending_.load() || (wbc_live_return_ && !safe) ||
+           !policyMux_.rlReturnCommandReady(wbc_return_id_)))
+      {
+        wbc_handoff_pending_ = false;
+        // A result can expire at this boundary; keep the held command while AMP retries.
+        return;
+      }
+      const bool soft_return = wbc_handoff_target_ == PolicyCmdSource::kRl && wbc_live_return_;
+      const double blend = soft_return ? .35 : wbc_transition_sec_;
+      if (blend > 1e-9 && !startPolicyHandoff(blend, "policy switch", soft_return))
+      {
+        policy_handoff_.clear();
+        if (wbc_handoff_target_ == PolicyCmdSource::kWbc)
+        {
+          lock.unlock();
+          std::string message;
+          requestWbcReturn("[WBC] No valid handoff origin; keeping AMP", message, true);
+          return;
+        }
+        RCLCPP_WARN(nh_->get_logger(), "[WBC] No valid upper-body blend origin; using fresh AMP directly");
+      }
+      policyMux_.setSource(wbc_handoff_target_);
+      wbc_preposition_active_.store(false);
+      wbc_preposition_pending_ = wbc_preposition_ready_ = false;
+      if (wbc_handoff_target_ == PolicyCmdSource::kRl)
+      {
+        if (soft_return) policyMux_.publishWbcActive(false,"[WBC] Soft STOP transferred to AMP");
+        const bool failed = wbc_return_outcome_ == WbcReturnOutcome::Failed;
+        const char* status = failed ? "failed" :
+            (wbc_return_outcome_ == WbcReturnOutcome::Cancelled ? "cancelled" : "completed");
+        publishActiveWbcActionTerminal(status, failed ? "WBC recovery completed; AMP control restored" : "AMP control restored");
+        RCLCPP_DEBUG(nh_->get_logger(), "[WBC Return] AMP control restored; action=%s; worker cleanup remains required", status);
+        wbc_return_id_.clear();
+      }
     }
     wbc_return_pending_.store(false);
     wbc_handoff_pending_ = false;

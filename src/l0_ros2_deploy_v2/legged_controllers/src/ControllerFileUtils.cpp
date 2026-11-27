@@ -1,8 +1,7 @@
-#include "legged_controllers/ControllerFileUtils.h"
+#include "ControllerFileUtils.h"
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 
 namespace legged {
 
@@ -25,11 +24,6 @@ std::string joinPath(const std::string& base, const std::string& leaf) {
 std::string resolvePackagePath(const std::string& raw_path, const std::string& package_share_dir) {
   if (raw_path.empty() || isAbsolutePath(raw_path)) return raw_path;
   return joinPath(package_share_dir, raw_path);
-}
-
-bool pathExists(const std::string& path) {
-  std::ifstream f(path);
-  return f.good();
 }
 
 }  // namespace legged

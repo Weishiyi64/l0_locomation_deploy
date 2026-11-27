@@ -1,0 +1,6 @@
+# Copyright (c) 2026 HPMicro
+# SPDX-License-Identifier: BSD-3-Clause
+# Generated from the workspace VERSION file.
+
+APP_PACKAGE_NAME = "@PROJECT_NAME@"
+APP_VERSION = "@APP_VERSION@"

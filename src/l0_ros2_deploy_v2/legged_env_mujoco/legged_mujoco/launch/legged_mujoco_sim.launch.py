@@ -30,23 +30,6 @@ def _legged_mujoco_sim_setup(context, *args, **kwargs):
 
     start_delay = float(cfg.get('start_delay', '1.0'))
 
-    command_arbiter_node = Node(
-        package='system_command_arbiter',
-        executable='system_command_arbiter_node',
-        name='system_command_arbiter_node',
-        namespace='system/command_arbiter',
-        output='screen',
-        on_exit=Shutdown(reason='system command arbiter exited'),
-        parameters=[{'mapping_file': mapping_file, 'pilot_mode': False}],
-        remappings=[
-            ('motor_command', '/actuator/motor/command'),
-            ('motor_state', '/actuator/motor/state'),
-            ('set_motor_enabled', '/actuator/motor/set_enabled'),
-            ('emergency_stop', '/system/safety/emergency_stop'),
-            ('hardware_fault', '/system/safety/hardware_fault'),
-        ],
-    )
-
     adapter_node = Node(
         package='legged_real',
         executable='topic_hardware_adapter',
@@ -61,26 +44,10 @@ def _legged_mujoco_sim_setup(context, *args, **kwargs):
             {'joy_cfg_path': joy_cfg_path},
             {'isSim': True},
             {'wbc_enabled': cfg['wbc_enabled'] == 'true'},
-            {'text_motion_enabled': cfg.get('text_motion_enabled', 'false') == 'true'},
             {'/RobotHw/imu_enabled': True},
             {'motor_lifecycle_period_ms': 1},
             {'rviz': cfg['rviz'] == 'true'},
-            {'head_script_enabled': cfg['head_script_enabled'] == 'true'},
-            {'head_script_config': cfg['head_script_config']},
-            {'joystick_imitation_enabled': cfg.get('joystick_imitation_enabled', 'false') == 'true'},
-            {'joystick_imitation_config_path': cfg.get('joystick_imitation_config_path', '')},
-            {'joystick_sequence_enabled': cfg.get('joystick_sequence_enabled', 'false') == 'true'},
-            {'joystick_sequence_config_path': cfg.get('joystick_sequence_config_path', '')},
             {'emergency.damping_kd': float(cfg.get('emergency_damping_kd', '5.0'))},
-            {
-                'joystick_back_emergency_sequence_enabled': cfg.get('joystick_back_emergency_sequence_enabled', 'true')
-                == 'true'
-            },
-            {
-                'joystick_back_emergency_sequence_path': cfg.get(
-                    'joystick_back_emergency_sequence_path', 'action_sequences/walking_back_emergency.yaml'
-                )
-            },
             {'arm_swing.enabled': cfg.get('arm_swing_enabled', 'true') == 'true'},
             {'arm_swing.stop_vx_threshold': float(cfg.get('arm_swing_stop_vx_threshold', '0.05'))},
             {'arm_swing.high_vx_threshold': float(cfg.get('arm_swing_high_vx_threshold', '0.8'))},
@@ -95,7 +62,6 @@ def _legged_mujoco_sim_setup(context, *args, **kwargs):
     )
 
     return [
-        command_arbiter_node,
         TimerAction(
             period=start_delay,
             actions=[adapter_node],
@@ -110,20 +76,8 @@ def generate_launch_description():
             DeclareLaunchArgument('subpolicy', default_value='l0_v3_amp_06152'),
             DeclareLaunchArgument('start_delay', default_value='1.0'),
             DeclareLaunchArgument('rviz', default_value='false'),
-            DeclareLaunchArgument('head_script_enabled', default_value='false'),
-            DeclareLaunchArgument('head_script_config', default_value=''),
-            DeclareLaunchArgument('joystick_imitation_enabled', default_value='false'),
-            DeclareLaunchArgument('joystick_imitation_config_path', default_value=''),
             DeclareLaunchArgument('wbc_enabled', default_value='false'),
-            DeclareLaunchArgument('text_motion_enabled', default_value='false'),
-            DeclareLaunchArgument('joystick_sequence_enabled', default_value='false'),
-            DeclareLaunchArgument('joystick_sequence_config_path', default_value=''),
             DeclareLaunchArgument('emergency_damping_kd', default_value='5.0'),
-            DeclareLaunchArgument('joystick_back_emergency_sequence_enabled', default_value='true'),
-            DeclareLaunchArgument(
-                'joystick_back_emergency_sequence_path',
-                default_value='action_sequences/walking_back_emergency.yaml',
-            ),
             DeclareLaunchArgument('arm_swing_enabled', default_value='true'),
             DeclareLaunchArgument('arm_swing_stop_vx_threshold', default_value='0.05'),
             DeclareLaunchArgument('arm_swing_high_vx_threshold', default_value='0.8'),

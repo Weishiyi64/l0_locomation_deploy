@@ -1,0 +1,7 @@
+# Request - get/set device operating mode
+uint8 mode  # 0=Standby 1=Normal 2=Upgrade 3=SLAM 4=Relocation 5=ReMap
+---
+# Response
+bool success
+int32 error_code  # 0=OK, other values from OdinResult enum
+string message

@@ -9,6 +9,15 @@
 #include "../discovery/IDiscovery/IDiscovery.h"
 
 #ifdef _WIN32
+// Keep windows.h (pulled in transitively by iphlpapi.h and friends) from
+// defining the min/max macros that break std::min/std::max calls, and strip
+// the rarely-used Win32 baggage (winsock v1 would clash with winsock2.h).
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
@@ -55,11 +64,41 @@ void CloseSocket(SocketHandle sock);
 // If host_port is 0, OS will choose an available port
 SocketHandle CreateBroadcastSocket(const std::string& host_ip, uint16_t host_port = 0);
 
+// Create a UDP broadcast socket bound to INADDR_ANY (so it can receive
+// limited-broadcast replies whose destination is 255.255.255.255) while
+// pinning outbound datagrams to the network interface that owns host_ip via
+// SO_BINDTODEVICE. This is required when the target device is reachable only
+// through a non-default-route interface. On Linux, SO_BINDTODEVICE needs the
+// CAP_NET_RAW capability (run as root or grant cap_net_raw). If the interface
+// cannot be resolved or the option cannot be set, the socket still works but
+// falls back to default-route egress. Returns kInvalidSocket on failure.
+SocketHandle CreateBroadcastSocketForInterface(const std::string& host_ip, uint16_t host_port = 0);
+
 // =============================================================================
 // IP Address Utilities
 // =============================================================================
 
 std::vector<std::string> GetLocalIPAddresses();
+
+// Return the network interface name (e.g. "eth0") that owns host_ip, or an
+// empty string if it cannot be resolved. Always empty on Windows.
+std::string GetInterfaceNameForIp(const std::string& host_ip);
+
+// Return the directed subnet broadcast address (e.g. "192.168.1.255") of the
+// network that host_ip belongs to, or an empty string when it cannot be
+// determined or degenerates (a /32 point-to-point route or the /0 default
+// route). A datagram sent to a directed broadcast routes to the on-link
+// interface that owns host_ip — the only reliable egress selector on Windows,
+// where SO_BINDTODEVICE is unavailable and a 255.255.255.255 limited broadcast
+// leaves only through the default-route interface.
+std::string GetDirectedBroadcastAddress(const std::string& host_ip);
+
+// Return true when ip and local_ip belong to the same IPv4 subnet, judged by
+// the netmask of the interface address that owns local_ip (never assumes a
+// fixed prefix such as /24).
+// Fail-open: returns true when either address cannot be parsed or the netmask
+// cannot be resolved, so a transient lookup failure never rejects a device.
+bool IsIpInSameSubnet(const std::string& ip, const std::string& local_ip);
 
 bool IpStringToBytes(const std::string& ip, uint8_t* bytes_out);
 
@@ -75,14 +114,27 @@ constexpr uint16_t kCmdIdDeviceQuery = 0x01;
 bool BuildDiscoveryPacket(const std::string& host_ip, uint16_t seq,
                           std::vector<uint8_t>& frame_out);
 
-bool ParseDiscoveryResponse(const uint8_t* data, size_t length, DiscoveredDevice& device_out);
-
-// Send discovery broadcast on socket, returns true on success
-// Uses provided discovery or default if nullptr
-// context: Transport-specific parameters (will be passed to discovery)
+// Send discovery probes on socket, returns true when at least one frame was
+// sent. Uses provided discovery or default if nullptr. context carries
+// transport-specific parameters (passed through to the discovery). One frame
+// is emitted per protocol epoch declared by the discovery (see
+// IDiscovery::GetProbeVersions).
+// broadcast_ip: destination address; defaults to the 255.255.255.255 limited
+// broadcast. Pass a directed subnet broadcast (e.g. "192.168.1.255") so the
+// datagram egresses through the on-link interface that owns it.
 bool SendDiscoveryBroadcast(SocketHandle sock, uint16_t target_port,
                             const IDiscovery::Context& context,
-                            std::shared_ptr<IDiscovery> discovery = nullptr);
+                            std::shared_ptr<IDiscovery> discovery = nullptr,
+                            const std::string& broadcast_ip = "255.255.255.255");
+
+// Send discovery probes on behalf of the interface that owns host_ip: first
+// to its directed subnet broadcast address (egress pinned to that NIC), then
+// to the 255.255.255.255 limited broadcast as a fallback. Returns true if at
+// least one datagram was sent. Uses provided discovery or default if nullptr.
+bool SendDiscoveryBroadcastForInterface(SocketHandle sock, uint16_t target_port,
+                                        const IDiscovery::Context& context,
+                                        std::shared_ptr<IDiscovery> discovery,
+                                        const std::string& host_ip);
 
 // =============================================================================
 // Device Discovery

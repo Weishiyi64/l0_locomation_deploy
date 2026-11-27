@@ -1,23 +1,19 @@
 #include <yaml-cpp/yaml.h>
 
-#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cmath>
-#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "legged_controllers/ControllerFileUtils.h"
-#include "legged_controllers/JointGroups.h"
-#include "legged_controllers/LeggedController.h"
-#include "legged_controllers/ParameterManager.h"
+#include "ControllerFileUtils.h"
+#include "LeggedController.h"
+#include "ParameterManager.h"
 
 namespace legged {
 
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr const char* kDefaultBackEmergencySequencePath = "action_sequences/walking_back_emergency.yaml";
 
 double degreesToRadians(double degrees) { return degrees * kPi / 180.0; }
 
@@ -58,19 +54,10 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   declare_if_absent("rviz", false);
   declare_if_absent("radar_control_enabled", false);
   declare_if_absent("face_follow_enabled", false);
-  declare_if_absent("head_script_enabled", false);
-  declare_if_absent("head_script_config", std::string(""));
-  declare_if_absent("joystick_imitation_enabled", false);
-  declare_if_absent("joystick_imitation_config_path", std::string(""));
-  declare_if_absent("joystick_sequence_enabled", false);
-  declare_if_absent("joystick_sequence_config_path", std::string(""));
-  declare_if_absent("joystick_back_emergency_sequence_enabled", true);
-  declare_if_absent("joystick_back_emergency_sequence_path", std::string(kDefaultBackEmergencySequencePath));
   declare_if_absent("policy_root_path", std::string(""));
   declare_if_absent("imitation_policy_switch_timeout_sec", 120.0);
   declare_if_absent("imitation_return_blend_sec", 0.35);
   declare_if_absent("wbc_enabled", false);
-  declare_if_absent("text_motion_enabled", false);
   declare_if_absent("wbc_transition_sec", 0.35);
   declare_if_absent("wbc_command_timeout_sec", 0.5);
   declare_if_absent("arm_swing.enabled", true);
@@ -80,7 +67,7 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   declare_if_absent("arm_swing.blend_sec", 0.35);
   declare_if_absent("safety.orientation.roll_limit_deg", 30.0);
   declare_if_absent("safety.orientation.pitch_limit_deg", 30.0);
-  declare_if_absent("safety.orientation.consecutive_violation_count", 3);
+  declare_if_absent("safety.orientation.consecutive_violation_count", 50);
   declare_if_absent("emergency.damping_kd", 5.0);
 
   std::vector<std::string> joint_names;
@@ -129,16 +116,9 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   controller_nh->get_parameter("radar_control_enabled", radarControlEnabled_);
   controller_nh->get_parameter("face_follow_enabled", faceFollowEnabled_);
 
-  bool head_script_enabled = false;
-  controller_nh->get_parameter("head_script_enabled", head_script_enabled);
-  RCLCPP_INFO(controller_nh->get_logger(), "head_script_enabled: %d", head_script_enabled);
-  controller_nh->get_parameter("joystick_imitation_enabled", joystick_imitation_enabled_);
-  controller_nh->get_parameter("joystick_sequence_enabled", joystick_sequence_enabled_);
-  controller_nh->get_parameter("joystick_back_emergency_sequence_enabled", joystick_back_emergency_sequence_enabled_);
   controller_nh->get_parameter("imitation_policy_switch_timeout_sec", imitation_policy_switch_timeout_sec_);
   controller_nh->get_parameter("imitation_return_blend_sec", imitation_return_blend_sec_);
   controller_nh->get_parameter("wbc_enabled", wbc_enabled_);
-  controller_nh->get_parameter("text_motion_enabled", text_motion_enabled_);
   controller_nh->get_parameter("wbc_transition_sec", wbc_transition_sec_);
   controller_nh->get_parameter("wbc_command_timeout_sec", wbc_command_timeout_sec_);
   controller_nh->get_parameter("emergency.damping_kd", emergency_damping_kd_);
@@ -158,10 +138,6 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
     RCLCPP_WARN(controller_nh->get_logger(), "emergency.damping_kd %.3f < 0, clamping to 0", emergency_damping_kd_);
     emergency_damping_kd_ = 0.0;
   }
-  RCLCPP_INFO(controller_nh->get_logger(), "joystick_imitation_enabled: %d", joystick_imitation_enabled_);
-  RCLCPP_INFO(controller_nh->get_logger(), "joystick_sequence_enabled: %d", joystick_sequence_enabled_);
-  RCLCPP_INFO(controller_nh->get_logger(), "joystick_back_emergency_sequence_enabled: %d",
-              joystick_back_emergency_sequence_enabled_);
   RCLCPP_INFO(controller_nh->get_logger(), "imitation_return_blend_sec: %.3f", imitation_return_blend_sec_);
   RCLCPP_INFO(controller_nh->get_logger(), "wbc_enabled: %d transition=%.3fs timeout=%.3fs", wbc_enabled_,
               wbc_transition_sec_, wbc_command_timeout_sec_);
@@ -174,16 +150,6 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   controller_nh->get_parameter("arm_swing.vx_hysteresis", arm_swing_params.vx_hysteresis);
   controller_nh->get_parameter("arm_swing.blend_sec", arm_swing_params.blend_sec);
 
-  std::string head_script_config_path;
-  controller_nh->get_parameter("head_script_config", head_script_config_path);
-  controller_nh->get_parameter("joystick_imitation_config_path", joystick_imitation_config_path_);
-  controller_nh->get_parameter("joystick_sequence_config_path", joystick_sequence_config_path_);
-  controller_nh->get_parameter("joystick_back_emergency_sequence_path", joystick_back_emergency_sequence_path_);
-  joystick_imitation_config_path_ = trimCopy(joystick_imitation_config_path_);
-  joystick_sequence_config_path_ = trimCopy(joystick_sequence_config_path_);
-  joystick_back_emergency_sequence_path_ = trimCopy(joystick_back_emergency_sequence_path_);
-  sequence_engine_enabled_ = joystick_sequence_enabled_ || joystick_back_emergency_sequence_enabled_;
-
   bool ok = true;
   policy_frequency = rc["policy_frequency"].as<int>(0);
   if (policy_frequency == 0)
@@ -193,7 +159,7 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   }
   policyMux_.init(controller_nh, joint_names);
   JointGainProfile rl_walking_gains;
-  if (!loadWalkingGainProfile(rc, "RobotCfg", joint_names.size(), rl_walking_gains))
+  if (!policyMux_.loadWalkingGainProfile(rc, "RobotCfg", joint_names.size(), rl_walking_gains))
   {
     return false;
   }
@@ -201,14 +167,8 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
                               imitation_policy_switch_timeout_sec_, policy_root_path, robot_type);
 
   RCLCPP_INFO(controller_nh->get_logger(), "Loaded RL walking gains from: %s", robot_cfg_path.c_str());
-  RCLCPP_INFO(controller_nh->get_logger(), "Dynamic imitation gains will be loaded when a sequence switches policy");
-
-  try
-  {
-    legged_controllers_share_ = ament_index_cpp::get_package_share_directory("legged_controllers");
-  } catch (const std::exception& e)
-  { RCLCPP_WARN(controller_nh->get_logger(), "Failed to resolve legged_controllers share dir: %s", e.what()); }
-  sequenceRuntime_.init(controller_nh->get_logger(), legged_controllers_share_);
+  RCLCPP_INFO(controller_nh->get_logger(),
+              "Dynamic imitation gains will be loaded when an imitation action switches policy");
 
   if (!ok)
   {
@@ -234,123 +194,12 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
   }
 
   dataInit(joint_names);
-  if (text_motion_enabled_)
-  {
-    std::string mapping_file, error;
-    if (robot_type != "l0_v5" || !controller_nh->get_parameter("mapping_file", mapping_file) ||
-        !textMotionCtrl_.configure(joint_names, mapping_file, error))
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(), "Text motion requires L0 v5 and its valid mapping_file: %s", error.c_str());
-      return false;
-    }
-  }
   armSwingCtrl_.configure(arm_swing_params, controller_nh->get_logger());
 
-  headCtrl_.setScriptEnabled(head_script_enabled);
   headCtrl_.setTopicEnabled(faceFollowEnabled_);
   headCtrl_.setTopicBlendSec(0.1);
-  headCtrl_.setFallbackBlendSec(0.2);
   RCLCPP_INFO(controller_nh->get_logger(), "face_follow_enabled: %d topic=/algorithm/em/follow_face",
               faceFollowEnabled_);
-  if (head_script_enabled)
-  {
-    RCLCPP_INFO(controller_nh->get_logger(), "Head script enabled: timeline will drive head");
-    if (!headCtrl_.loadConfig(head_script_config_path))
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(), "Head script config failed to load: %s",
-                   head_script_config_path.c_str());
-      return false;
-    }
-    RCLCPP_INFO(controller_nh->get_logger(), "Head script loaded from config: %s (%zu segments, duration %.1fs)",
-                head_script_config_path.c_str(), headCtrl_.numSegments(), headCtrl_.duration());
-  }
-  else
-  {
-    RCLCPP_INFO(controller_nh->get_logger(), "Head script disabled by parameter");
-  }
-
-  sequenceRuntime_.setEnabled(sequence_engine_enabled_);
-  if (joystick_back_emergency_sequence_enabled_)
-  {
-    if (joystick_back_emergency_sequence_path_.empty())
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(),
-                   "Back emergency sequence enabled but joystick_back_emergency_sequence_path is empty");
-      return false;
-    }
-    if (!loadActionSequenceForPlayback(joystick_back_emergency_sequence_path_, "[BackEmergency] Init"))
-    {
-      return false;
-    }
-    if (!sequenceRuntime_.usesFullCsv() || sequenceRuntime_.usesRlImitation())
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(),
-                   "Back emergency sequence must use full_csv and must not use rl_imitation: %s",
-                   joystick_back_emergency_sequence_path_.c_str());
-      return false;
-    }
-    RCLCPP_INFO(controller_nh->get_logger(), "Back emergency sequence enabled: %s",
-                joystick_back_emergency_sequence_path_.c_str());
-  }
-
-  if (joystick_imitation_enabled_)
-  {
-    if (joystick_imitation_config_path_.empty())
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(),
-                   "Joystick imitation enabled but joystick_imitation_config_path is empty");
-      return false;
-    }
-
-    JoystickImitationActions::LoadOptions options;
-    options.package_share_dir = legged_controllers_share_;
-    options.policy_root_path = policy_root_path;
-    options.robot_type = robot_type;
-    options.validate_policy_assets = true;
-    if (!joystickImitationActions_.load(joystick_imitation_config_path_, options, controller_nh->get_logger()))
-    {
-      return false;
-    }
-    if (joystickImitationActions_.empty())
-    {
-      joystick_imitation_enabled_ = false;
-      RCLCPP_WARN(controller_nh->get_logger(),
-                  "Joystick imitation disabled: no usable actions loaded from %s for robot_type=%s (skipped=%zu)",
-                  joystick_imitation_config_path_.c_str(), robot_type.c_str(),
-                  joystickImitationActions_.skippedBindingCount());
-    }
-    else if (joystickImitationActions_.skippedBindingCount() > 0)
-    {
-      RCLCPP_WARN(
-          controller_nh->get_logger(), "Joystick imitation skipped %zu unavailable action(s) from %s for robot_type=%s",
-          joystickImitationActions_.skippedBindingCount(), joystick_imitation_config_path_.c_str(), robot_type.c_str());
-    }
-    if (joystick_imitation_enabled_)
-    {
-      RCLCPP_INFO(
-          controller_nh->get_logger(), "Joystick imitation enabled: config=%s robot_type=%s enabled_actions=%zu",
-          joystick_imitation_config_path_.c_str(), robot_type.c_str(), joystickImitationActions_.bindingCount());
-    }
-  }
-
-  if (joystick_sequence_enabled_)
-  {
-    if (joystick_sequence_config_path_.empty())
-    {
-      RCLCPP_ERROR(controller_nh->get_logger(), "Joystick sequence enabled but joystick_sequence_config_path is empty");
-      return false;
-    }
-
-    JoystickSequenceActions::LoadOptions options;
-    options.package_share_dir = legged_controllers_share_;
-    options.validate_sequence_files = true;
-    if (!joystickSequenceActions_.load(joystick_sequence_config_path_, options, controller_nh->get_logger()))
-    {
-      return false;
-    }
-    RCLCPP_INFO(controller_nh->get_logger(), "Joystick sequence enabled: config=%s enabled_actions=%zu",
-                joystick_sequence_config_path_.c_str(), joystickSequenceActions_.bindingCount());
-  }
 
   velLimiter_ = std::make_unique<VelocityLimiter>(controller_nh);
 
@@ -384,19 +233,15 @@ bool LeggedController::init(rclcpp::Node::SharedPtr controller_nh) {
       sp.consecutive_violation_count = defaults.consecutive_violation_count;
     }
 
-    safetyChecker_ = std::make_unique<SafetyChecker>(sp);
+    safetyChecker_ = std::make_shared<SafetyChecker>(sp);
+    robot_hw_->setImuSafetyChecker(safetyChecker_);
     RCLCPP_INFO(controller_nh->get_logger(),
                 "Orientation safety always active on real robot: roll_limit=%.1f deg, pitch_limit=%.1f deg, "
-                "consecutive_violation_count=%d",
+                "consecutive_violation_count=%d IMU frames",
                 radiansToDegrees(sp.roll_limit), radiansToDegrees(sp.pitch_limit), sp.consecutive_violation_count);
   }
 
   fsm_ = std::make_unique<StateMachine>(controller_nh->get_logger());
-  if (!isSim_ && wbc_enabled_)
-  {
-    fsm_->emergencyStop();
-    RCLCPP_INFO(controller_nh->get_logger(), "[WBC startup] Starting in EmergencyStop");
-  }
 
   ModeSubscribe(controller_nh);
   ModePublish(controller_nh);
@@ -419,12 +264,7 @@ void LeggedController::dataInit(const std::vector<std::string>& joint_names) {
 
   headCtrl_.initJoints(joint_names, nh_->get_logger());
   armSwingCtrl_.initJoints(joint_names, nh_->get_logger());
-  sequenceRuntime_.initJoints(joint_names);
-
-  const JointGroups groups = classifyJointGroups(joint_names);
-  is_leg_joint_ = groups.leg;
-  is_arm_joint_ = groups.arm;
-  is_head_joint_ = groups.head;
+  policy_handoff_.resize(joint_names.size());
 
   joyFeedbackArray_.array.resize(2);
   joyFeedbackArray_.array[0].type = sensor_msgs::msg::JoyFeedback::TYPE_RUMBLE;

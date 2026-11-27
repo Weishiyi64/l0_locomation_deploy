@@ -1,35 +1,36 @@
-#include "legged_controllers/JointCommandComposer.h"
+#include "JointCommandComposer.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace legged {
 
-void JointCommandComposer::composeAll(const Context& ctx) const {
-  if (ctx.robot_hw == nullptr) return;
+bool JointCommandComposer::composeAll(const Context& ctx) {
+  if (ctx.robot_hw == nullptr) return false;
 
   const int joint_motor_commands_size = ctx.robot_hw->getJointMotorCommandsSize();
+  if (joint_motor_commands_size <= 0) return false;
+  next_commands_.resize(static_cast<size_t>(joint_motor_commands_size));
   const auto& q_snapshot = ctx.policy_inputs.q_snapshot;
   const auto& active_gains = ctx.policy_inputs.gains;
+  if (ctx.walking && !ctx.emergency &&
+      (q_snapshot.size() != next_commands_.size() || active_gains.kps.size() != next_commands_.size() ||
+       active_gains.kds.size() != next_commands_.size())) return false;
 
   if (ctx.release_handoff != nullptr)
   {
     ctx.release_handoff->clearIfExpired(ctx.wall_sec);
   }
   const bool release_handoff_available =
-      ctx.release_handoff != nullptr && ctx.release_handoff->active() && !ctx.action_sequence_active;
+      ctx.release_handoff != nullptr && ctx.release_handoff->active();
 
   for (size_t j = 0; j < static_cast<size_t>(joint_motor_commands_size); ++j)
   {
     double q_j, dq_j, kp_j, kd_j, tau_ff_j;
-    const bool is_leg_joint = ctx.is_leg_joint != nullptr && j < ctx.is_leg_joint->size() && (*ctx.is_leg_joint)[j];
-    bool csv_selected = false;
-
-    const bool csv_allowed_for_joint = ctx.action_sequence_full_csv || !is_leg_joint;
-    if (csv_allowed_for_joint && ctx.joint_csv != nullptr && ctx.joint_csv->isEnabled() &&
-        ctx.joint_csv->getJointCmd(j, q_j, dq_j, kp_j, kd_j, tau_ff_j))
+    if (ctx.head_hold_positions != nullptr && j >= 18 && j < 21)
     {
-      // Joint CSV timeline (auxiliary joints normally; full body only for back-emergency full_csv).
-      csv_selected = true;
+      q_j = (*ctx.head_hold_positions)[j - 18];
+      dq_j = kp_j = kd_j = tau_ff_j = 0.0;
     }
     else if (ctx.arm_swing_ctrl != nullptr && ctx.arm_swing_ctrl->getJointCmd(j, q_j, dq_j, kp_j, kd_j, tau_ff_j))
     {
@@ -45,12 +46,6 @@ void JointCommandComposer::composeAll(const Context& ctx) const {
       q_j = (j < q_snapshot.size()) ? q_snapshot[j] : 0.0;
       dq_j = 0.0;
       kp_j = kd_j = tau_ff_j = 0.0;
-    }
-
-    if (ctx.allow_auxiliary_overlays && !ctx.emergency && !csv_selected && ctx.text_motion != nullptr &&
-        ctx.text_motion->getJointPosition(j, q_j))
-    {
-      dq_j = tau_ff_j = 0.0;
     }
 
     if (release_handoff_available && !ctx.emergency && !ctx.blend_policy_gains)
@@ -82,16 +77,36 @@ void JointCommandComposer::composeAll(const Context& ctx) const {
 
     if (ctx.emergency)
     {
-      q_j = (j < ctx.motor_states.size()) ? ctx.motor_states[j].q : q_j;
+      q_j = (ctx.motor_states != nullptr && j < ctx.motor_states->size()) ? (*ctx.motor_states)[j].q : q_j;
+      if (!std::isfinite(q_j)) q_j = 0.0;
       dq_j = 0.0;
       kp_j = 0.0;
       kd_j = std::max(0.0, ctx.emergency_damping_kd);
       tau_ff_j = 0.0;
     }
 
-    legged::JointMotorCommand cmd(q_j, dq_j, kp_j, kd_j, tau_ff_j);
-    ctx.robot_hw->set_joint_motor_commands(static_cast<int>(j), cmd);
+    if (!std::isfinite(q_j) || !std::isfinite(dq_j) || !std::isfinite(kp_j) ||
+        !std::isfinite(kd_j) || !std::isfinite(tau_ff_j) || kp_j < 0.0 || kd_j < 0.0) return false;
+    next_commands_[j] = JointMotorCommand(q_j, dq_j, kp_j, kd_j, tau_ff_j);
   }
+  // Validate the complete frame before replacing any part of the last usable command.
+  for (size_t j = 0; j < next_commands_.size(); ++j)
+  {
+    if (ctx.upper_position_snapshot != nullptr && j >= 12 && j < 21)
+      (*ctx.upper_position_snapshot)[j - 12] = next_commands_[j].q_des;
+    ctx.robot_hw->set_joint_motor_commands(static_cast<int>(j), next_commands_[j]);
+  }
+  if (!ctx.emergency) last_commands_ = next_commands_;
+  else last_commands_.clear();
+  return true;
+}
+
+bool JointCommandComposer::holdLastCommand(IHardwareLayer* robot_hw) const {
+  if (robot_hw == nullptr || last_commands_.empty() ||
+      last_commands_.size() != static_cast<size_t>(robot_hw->getJointMotorCommandsSize())) return false;
+  for (size_t j = 0; j < last_commands_.size(); ++j)
+    robot_hw->set_joint_motor_commands(static_cast<int>(j), last_commands_[j]);
+  return true;
 }
 
 }  // namespace legged

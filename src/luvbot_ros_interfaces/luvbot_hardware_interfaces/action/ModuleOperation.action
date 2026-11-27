@@ -1,0 +1,16 @@
+string module
+---
+bool success
+string error_code
+string message
+string failed_phase
+int32 failed_index -1
+string log_path
+---
+string module
+string joint_name
+int32 motor_index -1
+string phase
+uint32 completed
+uint32 total
+float64 elapsed_s

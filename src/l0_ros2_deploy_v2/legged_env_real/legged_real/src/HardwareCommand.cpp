@@ -1,11 +1,11 @@
-#include <legged_controllers/JointGroups.h>
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <thread>
 #include <unordered_set>
 
-#include "legged_real/LeggedReal.h"
+#include "LeggedReal.h"
 
 namespace legged {
 namespace {
@@ -13,17 +13,16 @@ constexpr double kZeroPositionTolerance = 0.005;
 }  // namespace
 
 bool LeggedReal::zeroMotors(const std::vector<std::string>& joint_names) {
-  using SetZero = robot_interfaces::srv::MotorSetZero;
   std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-  if (!calibration_mode_.load() || motors_enabled_.load() || lifecycle_active_ || lifecycle_fault_.load() ||
+  if (!calibration_mode_.load() || lifecycle_active_ || lifecycle_fault_.load() ||
       zero_pending_ || zero_failed_ || !motor_mapping_)
   {
     RCLCPP_ERROR(nh_->get_logger(),
-                 "[CALIBRATION] Zeroing blocked: enter calibration, wait for disable publication, "
+                 "[CALIBRATION] Zeroing blocked: enter calibration, wait for motor lifecycle completion, "
                  "and resolve any pending/failed batch");
     return false;
   }
-  auto request = std::make_shared<SetZero::Request>();
+  std::vector<uint8_t> indices;
   std::unordered_set<std::string> seen;
   for (const auto& name : joint_names)
   {
@@ -34,53 +33,82 @@ bool LeggedReal::zeroMotors(const std::vector<std::string>& joint_names) {
       RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Invalid, duplicate or disabled joint: %s", name.c_str());
       return false;
     }
-    request->motor_types.push_back(static_cast<uint8_t>(index));
+    indices.push_back(static_cast<uint8_t>(index));
   }
-  if (request->motor_types.empty() || !zero_client_->service_is_ready())
+  if (indices.empty() || !zero_client_->service_is_ready())
   {
     RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] No enabled joints selected or HPM service %s is unavailable",
                  zero_client_->get_service_name());
     return false;
   }
 
+  zero_pending_indices_ = indices;
+  zero_queued_indices_ = std::move(indices);
+  // Unsent motors cannot be confirmed by feedback arriving during the queue delay.
+  zero_feedback_after_ns_.assign(motor_mapping_->size(), std::numeric_limits<int64_t>::max());
   zero_pending_ = true;
-  zero_pending_indices_ = request->motor_types;
+  RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Queued zero for %zu motors, at least 100 ms apart; zero-gain MIT continues",
+              zero_queued_indices_.size());
+  return true;
+}
+
+void LeggedReal::zeroTick() {
+  using SetZero = luvbot_hardware_interfaces::srv::MotorSetZero;
+  std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+  if (!zero_pending_ || zero_failed_ || !calibration_mode_.load() ||
+      lifecycle_active_ || lifecycle_fault_.load() || zero_request_pending_)
+    return;
+  if (zero_queued_indices_.empty())
+  {
+    if (zero_pending_indices_.empty())
+    {
+      zero_pending_ = false;
+      zero_failed_ = false;
+      RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Batch position confirmed from raw motor feedback");
+    }
+    return;
+  }
+  if (std::chrono::steady_clock::now() < zero_next_send_) return;
+
+  const auto i = zero_queued_indices_.front();
   try
   {
+    if (!zero_client_->service_is_ready()) throw std::runtime_error("HPM set_zero service is unavailable");
+    auto request = std::make_shared<SetZero::Request>();
+    request->motor_types.push_back(i);
     {
       // Recompute turns from feedback after the motor has reset its encoder position.
       std::lock_guard<std::mutex> feedback_lock(feedback_mutex_);
-      for (const auto i : request->motor_types)
-      {
-        feedback_wrap_[i] = system_command_arbiter::FeedbackWrapState{};
-        feedback_updated_[i] = false;
-        latest_feedback_[i].valid = false;
-      }
+      feedback_wrap_[i] = system_command_arbiter::FeedbackWrapState{};
+      feedback_updated_[i] = false;
+      latest_feedback_[i].valid = false;
     }
-    // HPM response codes do not establish the encoder zero; verify subsequent raw q instead.
-    auto pending = zero_client_->async_send_request(request);
-    zero_request_id_ = pending.request_id;
-    zero_feedback_after_ns_ = nh_->now().nanoseconds();
+    // The response releases HPM's single-batch slot; only raw q confirms the zero.
+    zero_client_->async_send_request(request, [this](rclcpp::Client<SetZero>::SharedFuture) {
+      std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+      zero_request_pending_ = false;
+    });
+    zero_request_pending_ = true;
+    zero_feedback_after_ns_[i] = nh_->now().nanoseconds();
+    zero_next_send_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    zero_queued_indices_.erase(zero_queued_indices_.begin());
   } catch (const std::exception& error)
   {
     zero_pending_ = false;
     zero_failed_ = true;
     zero_pending_indices_.clear();
-    RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Request failed: %s; inspect before restarting", error.what());
-    return false;
+    zero_queued_indices_.clear();
+    RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Request failed for %s (HPM index %u): %s; inspect before restarting",
+                 joint_names_[i].c_str(), static_cast<unsigned>(i), error.what());
+    return;
   }
-  for (const auto i : request->motor_types)
-  {
-    RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Requested zero for %s (HPM index %u)", joint_names_[i].c_str(),
-                static_cast<unsigned>(i));
-    if (motor_mapping_->entries()[i].route.motor_type ==
-        luvbot_hardware_interfaces::msg::MotorRoute::MOTOR_TYPE_LS)
-      RCLCPP_WARN(nh_->get_logger(), "[CALIBRATION] %s (HPM index %u): LS电机需要重启来保存参数",
-                  joint_names_[i].c_str(), static_cast<unsigned>(i));
-  }
+  RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Requested zero for %s (HPM index %u)", joint_names_[i].c_str(),
+              static_cast<unsigned>(i));
+  if (motor_mapping_->entries()[i].family == system_command_arbiter::MotorFamily::LS)
+    RCLCPP_WARN(nh_->get_logger(), "[CALIBRATION] %s (HPM index %u): LS电机需要重启来保存参数",
+                joint_names_[i].c_str(), static_cast<unsigned>(i));
   RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Waiting for new raw motor q=0 within %.6f rad; zero-gain MIT continues",
               kZeroPositionTolerance);
-  return true;
 }
 
 bool LeggedReal::zeroMotorsByTag(const std::string& tag) {
@@ -91,17 +119,21 @@ bool LeggedReal::zeroMotorsByTag(const std::string& tag) {
     RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Unknown joint group: %s", tag.c_str());
     return false;
   }
-  const auto groups = classifyJointGroups(joint_names_);
   std::vector<std::string> selected;
   for (std::size_t i = 0; i < joint_names_.size(); ++i)
   {
     const auto& name = joint_names_[i];
     const bool left = name.compare(0, 5, "left_") == 0;
     const bool right = name.compare(0, 6, "right_") == 0;
+    const bool leg = name.find("hip") != std::string::npos || name.find("knee") != std::string::npos ||
+                     name.find("ankle") != std::string::npos;
+    const bool arm = name.find("shoulder") != std::string::npos || name.find("elbow") != std::string::npos ||
+                     name.find("wrist") != std::string::npos;
+    const bool head = name.find("neck") != std::string::npos || name.find("head") != std::string::npos;
     const bool matches =
-        (tag == "left_leg" && left && groups.leg[i]) || (tag == "right_leg" && right && groups.leg[i]) ||
-        (tag == "left_arm" && left && groups.arm[i]) || (tag == "right_arm" && right && groups.arm[i]) ||
-        (tag == "neck" && groups.head[i]) || (tag == "waist" && name.find("waist") != std::string::npos);
+        (tag == "left_leg" && left && leg) || (tag == "right_leg" && right && leg) ||
+        (tag == "left_arm" && left && arm) || (tag == "right_arm" && right && arm) ||
+        (tag == "neck" && head) || (tag == "waist" && name.find("waist") != std::string::npos);
     if (matches && motor_mapping_->entries()[i].enabled) selected.push_back(name);
   }
   if (selected.empty())
@@ -112,14 +144,19 @@ bool LeggedReal::zeroMotorsByTag(const std::string& tag) {
   return zeroMotors(selected);
 }
 
-void LeggedReal::verifyZeroFeedback(const robot_interfaces::msg::MotorStateArray& msg) {
+void LeggedReal::verifyZeroFeedback(const luvbot_hardware_interfaces::msg::MotorStateArray& msg) {
   if (!calibration_mode_.load()) return;
   std::lock_guard<std::mutex> lock(lifecycle_mutex_);
   if (!zero_pending_ || msg.stamp.sec < 0 || msg.stamp.nanosec >= 1000000000U) return;
-  if (rclcpp::Time(msg.stamp).nanoseconds() <= zero_feedback_after_ns_) return;
+  const auto stamp_ns = rclcpp::Time(msg.stamp).nanoseconds();
   for (auto it = zero_pending_indices_.begin(); it != zero_pending_indices_.end();)
   {
     const auto i = *it;
+    if (stamp_ns <= zero_feedback_after_ns_[i])
+    {
+      ++it;
+      continue;
+    }
     const auto state = std::find_if(msg.states.begin(), msg.states.end(), [i](const auto& sample) {
       return sample.route.motor_type == i;
     });
@@ -144,13 +181,6 @@ void LeggedReal::verifyZeroFeedback(const robot_interfaces::msg::MotorStateArray
       ++it;
     }
   }
-  if (zero_pending_indices_.empty())
-  {
-    zero_pending_ = false;
-    zero_failed_ = false;
-    zero_client_->remove_pending_request(zero_request_id_);
-    RCLCPP_INFO(nh_->get_logger(), "[CALIBRATION] Batch position confirmed from raw motor feedback");
-  }
 }
 
 bool LeggedReal::resetAllMotors() {
@@ -167,7 +197,15 @@ bool LeggedReal::disableMotorsBeforeShutdown() {
   RCLCPP_INFO(nh_->get_logger(),
                "Stopping hardware bridge: disabling all configured motors; zero-gain MIT continues until process exit");
   if (!disableAllMotors()) return false;
-  lifecycleTick();
+  while (true)
+  {
+    lifecycleTick();
+    {
+      std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+      if (!lifecycle_active_ || enable_publisher_->get_subscription_count() == 0U) break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
   if (lifecycle_active_ || enable_publisher_->get_subscription_count() == 0U)
   {
     RCLCPP_ERROR(nh_->get_logger(), "Shutdown disable delivery unconfirmed: HPM enable subscriber unavailable");
@@ -183,21 +221,14 @@ bool LeggedReal::disableMotorsBeforeShutdown() {
 }
 
 bool LeggedReal::set_calibration_mode(bool enabled) {
+  std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+  if (!enabled && (zero_pending_ || zero_failed_))
   {
-    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    if (!enabled && (zero_pending_ || zero_failed_))
-    {
-      RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Exit blocked by pending or failed zeroing");
-      return false;
-    }
-    calibration_mode_.store(enabled);
+    RCLCPP_ERROR(nh_->get_logger(), "[CALIBRATION] Exit blocked by pending or failed zeroing");
+    return false;
   }
-  if (enabled ? disableAllMotors() : enableAllMotors()) return true;
-  {
-    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    calibration_mode_.store(true);
-  }
-  return false;
+  calibration_mode_.store(enabled);
+  return true;
 }
 
 }  // namespace legged

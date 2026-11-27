@@ -4,7 +4,7 @@
 // Copyright (c) 2024, Shibo Mu (Modifications)
 // All rights reserved.
 
-#include <legged_controllers/LeggedControlloop.h>
+#include <LeggedControlloop.h>
 
 #include <chrono>
 #include <csignal>
@@ -12,8 +12,9 @@
 #include <memory>
 #include <stdexcept>
 
-#include "legged_real/LeggedReal.h"
+#include "LeggedReal.h"
 #include "rclcpp/rclcpp.hpp"
+#include "AppVersion.h"
 
 namespace {
 volatile std::sig_atomic_t stop_requested = 0;
@@ -22,6 +23,7 @@ void request_stop(int) { stop_requested = 1; }
 }  // namespace
 
 int main(int argc, char** argv) {
+  l0::printAppVersion("topic_hardware_adapter");
   std::signal(SIGINT, request_stop);
   std::signal(SIGTERM, request_stop);
   // Keep DDS alive until the final disable command has been sent.

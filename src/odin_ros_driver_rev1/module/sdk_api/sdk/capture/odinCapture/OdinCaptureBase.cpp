@@ -7,7 +7,8 @@
 namespace odin {
 namespace sdk {
 
-NetworkCapture::NetworkCapture(bool use_tcp) : use_tcp_(use_tcp) {}
+NetworkCapture::NetworkCapture(OdinTransportMode transport)
+    : transport_mode_(transport) {}
 
 NetworkCapture::~NetworkCapture() {
   Stop();
@@ -26,11 +27,17 @@ bool NetworkCapture::Start(const ITransportAddress& address, RawDataCallback cal
 
   callback_ = callback;
 
-  // Create transport based on type
-  if (use_tcp_) {
-    transport_.reset(new TcpTransport());
-  } else {
-    transport_.reset(new UdpTransport());
+  // Create transport based on the requested transport mode. New variants
+  // (e.g. KCP, USB-bulk) should add a case here without leaking the choice
+  // back up to the device layer.
+  switch (transport_mode_) {
+    case OdinTransportMode::kTcp:
+      transport_.reset(new TcpTransport());
+      break;
+    case OdinTransportMode::kUdp:
+    default:
+      transport_.reset(new UdpTransport());
+      break;
   }
 
   if (!transport_->Open(address)) {
@@ -53,8 +60,10 @@ bool NetworkCapture::Start(const ITransportAddress& address, RawDataCallback cal
   }
 
   running_ = true;
-  LOG_INFO("NetworkCapture::Start: %s, %s\n", 
-           address.ToString().c_str(), use_tcp_ ? "TCP" : "UDP");
+  const char* mode_name =
+      (transport_mode_ == OdinTransportMode::kTcp) ? "TCP" : "UDP";
+  LOG_INFO("NetworkCapture::Start: %s, %s\n",
+           address.ToString().c_str(), mode_name);
   return true;
 }
 
@@ -72,7 +81,7 @@ void NetworkCapture::Stop() {
   }
 
   callback_ = nullptr;
-  LOG_INFO("NetworkCapture::Stop\n");
+  LOG_DEBUG("NetworkCapture::Stop\n");
 }
 
 bool NetworkCapture::IsRunning() const {

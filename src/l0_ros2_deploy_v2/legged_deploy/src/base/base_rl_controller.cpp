@@ -1,9 +1,14 @@
 #include "base/base_rl_controller.h"
 
 #include <signal.h>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 
 namespace {
@@ -91,26 +96,119 @@ bool parseFrameStackConfig(const rclcpp::Logger& logger, const YAML::Node& frame
 }
 }  // namespace
 
-BaseRLController::~BaseRLController() {
-  // signal any running thread to stop and join
-  try
-  { quit.store(true); } catch (...)
+void BaseRLController::spinUntilShutdown() {
+  rclcpp::WallRate rate(10.0);
+  while (rclcpp::ok() && !g_shutdown_request)
   {
-    // swallow exceptions in destructor
+    rate.sleep();
   }
 }
 
-void BaseRLController::spinUntilShutdown() {
-  RCLCPP_INFO(this->nh->get_logger(), "BaseRLController spinUntilShutdown start");
-  rclcpp::Rate rate(10.0);
-  while (rclcpp::ok() && !g_shutdown_request)
+void BaseRLController::finishPolicyCycle(SteadyClock::time_point started, int frequency) {
+  const auto finished = SteadyClock::now();
+  const double period_ms = 1000.0 / frequency;
+  const double work_ms = std::chrono::duration<double, std::milli>(finished - started).count();
+  auto& timing = cycle_timing_;
+  if (timing.frequency != frequency)
   {
-    /* code */
-    rate.sleep();
+    timing = CycleTiming{};
+    timing.frequency = frequency;
+    timing.window_start = started;
   }
+  const double interval_ms = timing.previous_start == SteadyClock::time_point{} ? 0.0 :
+      std::chrono::duration<double, std::milli>(started - timing.previous_start).count();
+  timing.previous_start = started;
+  ++timing.samples;
+  if (work_ms > period_ms || interval_ms > period_ms * 1.2) ++timing.late;
+  timing.interval_max_ms = std::max(timing.interval_max_ms, interval_ms);
+  timing.work_max_ms = std::max(timing.work_max_ms, work_ms);
+  if (finished - timing.window_start >= std::chrono::seconds(5))
+  {
+    if (timing.late > 0)
+      RCLCPP_WARN(nh->get_logger(), "[Policy Timing] target=%d Hz samples=%llu late=%llu "
+                   "interval_max=%.3f ms work_max=%.3f ms; missed cycles are not replayed",
+                   frequency, static_cast<unsigned long long>(timing.samples),
+                   static_cast<unsigned long long>(timing.late), timing.interval_max_ms, timing.work_max_ms);
+    timing.window_start = finished;
+    timing.samples = timing.late = 0;
+    timing.interval_max_ms = timing.work_max_ms = 0.0;
+  }
+  // Anchor each deadline to the actual start, so a late wakeup never causes catch-up cycles.
+  std::this_thread::sleep_until(started +
+      std::chrono::duration_cast<SteadyClock::duration>(std::chrono::duration<double>(1.0 / frequency)));
+}
 
-  quit.store(true);
-  RCLCPP_INFO(this->nh->get_logger(), "BaseRLController spinUntilShutdown exiting");
+bool BaseRLController::isPolicyInputFresh(const robot_interfaces::msg::PolicyObservation& observation,
+                                         SteadyClock::time_point received_at) const {
+  const auto now = nh->get_clock()->now();
+  const rclcpp::Time stamp(observation.header.stamp, now.get_clock_type());
+  const double stamp_age_ms = (now - stamp).seconds() * 1000.0;
+  const double receive_age_ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - received_at).count();
+  if (!observation.inference_enabled || received_at == SteadyClock::time_point{} || stamp.nanoseconds() <= 0 ||
+      stamp_age_ms < 0.0 || stamp_age_ms >= command_validity_ms_ || receive_age_ms >= command_validity_ms_)
+  {
+    RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 1000,
+                         "Policy observation is disabled or stale: stamp_age=%.3f ms receive_age=%.3f ms",
+                         stamp_age_ms, receive_age_ms);
+    return false;
+  }
+  return true;
+}
+
+bool BaseRLController::isPolicyResultTimely(SteadyClock::time_point started, int frequency) const {
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - started).count();
+  const double budget_ms = std::min(1000.0 / frequency, command_validity_ms_);
+  if (elapsed_ms > budget_ms)
+  {
+    RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 1000,
+                         "Discarding late policy result: work=%.3f ms budget=%.3f ms", elapsed_ms, budget_ms);
+    return false;
+  }
+  return true;
+}
+
+void BaseRLController::configureThreadScheduler(pthread_t thread, const LeggedDeployParams& params,
+                                                const char* thread_name) {
+#ifdef __linux__
+  const int name_result = pthread_setname_np(thread, thread_name);
+  if (name_result != 0)
+    RCLCPP_WARN(nh->get_logger(), "%s: failed to name loop thread: %s (%d)", thread_name,
+                std::strerror(name_result), name_result);
+#endif
+
+  if (params.set_realtime_priority)
+  {
+    sched_param scheduler{};
+    scheduler.sched_priority = params.thread_priority;
+    const int policy = getSchedulerPolicy(params.thread_scheduling_method);
+    // pthread functions return the error number directly, rather than setting errno.
+    const int result = pthread_setschedparam(thread, policy, &scheduler);
+    if (result != 0)
+    {
+      RCLCPP_ERROR(nh->get_logger(), "%s: failed to set scheduler=%s priority=%d: %s (%d); "
+                   "continuing with the existing scheduler", thread_name,
+                   params.thread_scheduling_method.c_str(), params.thread_priority, std::strerror(result), result);
+#ifdef __linux__
+      if (result == EPERM)
+      {
+        struct rlimit limit{};
+        if (getrlimit(RLIMIT_RTPRIO, &limit) == 0)
+        {
+          const std::string soft = limit.rlim_cur == RLIM_INFINITY ? "unlimited" : std::to_string(limit.rlim_cur);
+          const std::string hard = limit.rlim_max == RLIM_INFINITY ? "unlimited" : std::to_string(limit.rlim_max);
+          RCLCPP_ERROR(nh->get_logger(), "%s: RLIMIT_RTPRIO soft=%s hard=%s; check the launching session's "
+                       "rtprio limit or CAP_SYS_NICE. Updated login limits require a new login and node restart.",
+                       thread_name, soft.c_str(), hard.c_str());
+        }
+      }
+#endif
+    }
+  }
+  else
+  {
+    RCLCPP_INFO(nh->get_logger(), "%s: realtime scheduling disabled by configuration", thread_name);
+  }
+  printThreadSchedulerInfo(thread, thread_name);
 }
 
 void BaseRLController::initBaseTopic(rclcpp::Node::SharedPtr nh_) {
@@ -121,23 +219,27 @@ void BaseRLController::initBaseTopic(rclcpp::Node::SharedPtr nh_) {
   nh_->get_parameter("policy_command_validity_ms", command_validity_ms_);
   if (!std::isfinite(command_validity_ms_) || command_validity_ms_ <= 0.0)
     throw std::runtime_error("policy_command_validity_ms must be finite and positive");
-  subState_ = nh_->create_subscription<luvbot_control_interfaces::msg::PolicyObservation>(
+  subState_ = nh_->create_subscription<robot_interfaces::msg::PolicyObservation>(
       "control/policy/observation", rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile(),
       std::bind(&BaseRLController::stateCallback, this, std::placeholders::_1));
-  pubCmd_ov = nh_->create_publisher<luvbot_control_interfaces::msg::PolicyCommand>(
+  pubCmd_ov = nh_->create_publisher<robot_interfaces::msg::PolicyCommand>(
       cmd_topic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile());
   posCmd_.source_id = cmd_topic.find("imitation") == std::string::npos ? "rl" : "imitation";
 }
 
-void BaseRLController::publishPolicyCommand() {
+bool BaseRLController::publishPolicyCommand(const rclcpp::Time& input_time) {
   const auto now = nh->get_clock()->now();
+  const auto valid_until = input_time + rclcpp::Duration::from_seconds(command_validity_ms_ / 1000.0);
+  if (input_time > now || valid_until <= now) return false;
   posCmd_.header.stamp = now;
   posCmd_.sequence_id = command_sequence_id_++;
-  posCmd_.valid_until = now + rclcpp::Duration::from_seconds(std::max(0.001, command_validity_ms_ / 1000.0));
+  // Inference and queueing consume the input's validity budget; publishing must not renew it.
+  posCmd_.valid_until = valid_until;
   pubCmd_ov->publish(posCmd_);
+  return true;
 }
 
-bool BaseRLController::validatePolicyObservation(const luvbot_control_interfaces::msg::PolicyObservation& message,
+bool BaseRLController::validatePolicyObservation(const robot_interfaces::msg::PolicyObservation& message,
                                                  const std::vector<std::string>& expected_joint_names,
                                                  const char* consumer_name) const {
   const auto& joints = message.joints;
@@ -205,6 +307,8 @@ bool BaseRLController::loadRobotCfgFromYaml(const std::string& yaml_path, RLBase
     out_params.num_actions = rc["num_actions"].as<int>(0);
     out_params.policy_name = rc["policy_name"].as<std::string>("");
     out_params.policy_frequency = rc["policy_frequency"].as<int>(0);
+    if (out_params.policy_frequency <= 0)
+      throw std::runtime_error("RobotCfg.policy_frequency must be positive");
     out_params.lowlevel_frequency = rc["lowlevel_frequency"].as<int>(0);
     out_params.gait_frequency = rc["gait_frequency"].as<double>(0);
     if (out_params.gait_frequency == 0.0 && rc["gait_config"] && rc["gait_config"]["params"])
@@ -281,18 +385,6 @@ bool BaseRLController::readCommonParams(RLBaseModelParams& out_params, std::vect
 bool BaseRLController::readDeployParams(LeggedDeployParams& out_params) {
   try
   {
-    // int error = 0;
-    //  Read RLController configuration parameters
-    // error +=
-    // static_cast<int>(!nh.getParam("/RLController/set_realtime_priority",
-    // out_params.set_realtime_priority)); error +=
-    // static_cast<int>(!nh.getParam("/RLController/thread_scheduling_method",
-    // out_params.thread_scheduling_method)); error +=
-    // static_cast<int>(!nh.getParam("/RLController/thread_priority",
-    // out_params.thread_priority)); error +=
-    // static_cast<int>(!nh.getParam("/RLController/skip_infer_on_overrun",
-    // out_params.skip_infer_on_overrun));
-
     std::string yaml_path = "";
     bool get_path_error = nh->get_parameter("rl_controller_config_path", yaml_path);
     if (get_path_error == false)
@@ -307,12 +399,22 @@ bool BaseRLController::readDeployParams(LeggedDeployParams& out_params) {
     out_params.set_realtime_priority = rc["set_realtime_priority"].as<bool>(false);
     out_params.thread_scheduling_method = rc["thread_scheduling_method"].as<std::string>("");
     out_params.thread_priority = rc["thread_priority"].as<int>(0);
-    out_params.skip_infer_on_overrun = rc["skip_infer_on_overrun"].as<bool>(false);
 
-    // if (error > 0) {
-    //     ("Failed to get all deployment parameters");
-    //     return false;
-    // }
+    RCLCPP_INFO(nh->get_logger(), "RL deployment config: %s; set_realtime_priority=%s scheduler=%s priority=%d",
+                yaml_path.c_str(), out_params.set_realtime_priority ? "true" : "false",
+                out_params.thread_scheduling_method.c_str(), out_params.thread_priority);
+    if (out_params.set_realtime_priority)
+    {
+      const int policy = getSchedulerPolicy(out_params.thread_scheduling_method);
+      if (getSchedulerPolicyName(policy) != out_params.thread_scheduling_method)
+        throw std::runtime_error("Unknown thread_scheduling_method: " + out_params.thread_scheduling_method);
+      const int min_priority = sched_get_priority_min(policy);
+      const int max_priority = sched_get_priority_max(policy);
+      if (min_priority < 0 || max_priority < 0 || out_params.thread_priority < min_priority ||
+          out_params.thread_priority > max_priority)
+        throw std::runtime_error("Invalid thread_priority=" + std::to_string(out_params.thread_priority) +
+                                 " for " + out_params.thread_scheduling_method);
+    }
 
     return true;
   } catch (const std::exception& e)

@@ -1,0 +1,23 @@
+# Request - enable/disable SDK data channels (hot-switch)
+# Each channel: 0=disable, 1=enable, -1=keep unchanged
+int8 enable_raw_point
+int8 enable_slam_point
+int8 enable_image0
+int8 enable_image1
+int8 enable_imu
+int8 enable_odom_lf
+int8 enable_odom_hf
+int8 enable_tf
+---
+# Response
+bool success
+string message
+# Current state after applying changes
+bool raw_point_enabled
+bool slam_point_enabled
+bool image0_enabled
+bool image1_enabled
+bool imu_enabled
+bool odom_lf_enabled
+bool odom_hf_enabled
+bool tf_enabled

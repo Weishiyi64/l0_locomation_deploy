@@ -5,8 +5,7 @@
 #include <memory>
 #include <utility>
 
-#include "legged_controllers/ControllerFileUtils.h"
-#include "legged_controllers/LeggedController.h"
+#include "LeggedController.h"
 
 namespace legged {
 
@@ -18,46 +17,40 @@ constexpr const char* kPlannerCommandFrame = "device0/base_link";
 }  // namespace
 
 void LeggedController::ModeSubscribe(rclcpp::Node::SharedPtr /* controller_nh */) {
-  if (!sequence_trigger_callback_group_)
+  if (!wbc_callback_group_)
   {
-    sequence_trigger_callback_group_ = nh_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    wbc_callback_group_ = nh_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
   }
 
   subJoy_ = nh_->create_subscription<sensor_msgs::msg::Joy>(
       "/joy", rclcpp::QoS(10), std::bind(&LeggedController::JoyCallback, this, std::placeholders::_1));
-  if (text_motion_enabled_)
-  {
-    text_motion_callback_group_ = nh_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-    rclcpp::SubscriptionOptions options;
-    options.callback_group = text_motion_callback_group_;
-    subTextMotion_ = nh_->create_subscription<std_msgs::msg::String>(
-        "/text_motion/trajectory", rclcpp::QoS(1).reliable().durability_volatile(),
-        std::bind(&LeggedController::textMotionCallback, this, std::placeholders::_1), options);
-    subTextMotionCancel_ = nh_->create_subscription<std_msgs::msg::String>(
-        "/text_motion/cancel", rclcpp::QoS(10).reliable().durability_volatile(),
-        std::bind(&LeggedController::textMotionCancelCallback, this, std::placeholders::_1));
-  }
   subEmgstop_ = nh_->create_subscription<std_msgs::msg::Bool>(
       "emergency_stop", rclcpp::QoS(1),
       std::bind(&LeggedController::EmergencyStopCallback, this, std::placeholders::_1));
   const auto latest_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-  subCmdRl_ = nh_->create_subscription<luvbot_control_interfaces::msg::PolicyCommand>(
+  subCmdRl_ = nh_->create_subscription<robot_interfaces::msg::PolicyCommand>(
       "control/policy/command/rl", latest_qos,
       std::bind(&LeggedController::lowCmdRlCallback, this, std::placeholders::_1));
-  subCmdImitation_ = nh_->create_subscription<luvbot_control_interfaces::msg::PolicyCommand>(
+  subCmdImitation_ = nh_->create_subscription<robot_interfaces::msg::PolicyCommand>(
       "control/policy/command/imitation", latest_qos,
       std::bind(&LeggedController::lowCmdImitationCallback, this, std::placeholders::_1));
-  subCmdWbc_ = nh_->create_subscription<luvbot_control_interfaces::msg::PolicyCommand>(
+  subCmdWbc_ = nh_->create_subscription<robot_interfaces::msg::PolicyCommand>(
       "control/policy/command/wbc", rclcpp::QoS(1).best_effort().durability_volatile(),
       std::bind(&LeggedController::lowCmdWbcCallback, this, std::placeholders::_1));
   rclcpp::SubscriptionOptions wbc_options;
-  wbc_options.callback_group = sequence_trigger_callback_group_;
-  subWbcMotionDone_ = nh_->create_subscription<std_msgs::msg::Bool>(
+  wbc_options.callback_group = wbc_callback_group_;
+  subWbcMotionDone_ = nh_->create_subscription<std_msgs::msg::String>(
       "control/policy/wbc/done", rclcpp::QoS(10),
       std::bind(&LeggedController::wbcMotionDoneCallback, this, std::placeholders::_1), wbc_options);
-  subWbcActionCommand_ = nh_->create_subscription<std_msgs::msg::String>(
-      "/algorithm/brain/wbc_action_cmd", rclcpp::QoS(10).reliable().durability_volatile(),
-      std::bind(&LeggedController::wbcActionCommandCallback, this, std::placeholders::_1), wbc_options);
+  if (wbc_enabled_) {
+    joystick_soft_stop_client_ = nh_->create_client<robot_interfaces::srv::ControlWbcMotion>(
+        "control/wbc/stop", rmw_qos_profile_services_default, wbc_callback_group_);
+    soft_stop_wbc_service_ = nh_->create_service<robot_interfaces::srv::ControlWbcMotion>(
+        "control/wbc/stop",
+        std::bind(&LeggedController::softStopWbc,this,std::placeholders::_1,std::placeholders::_2),
+        rmw_qos_profile_services_default,wbc_callback_group_);
+  }
+  initializeMotionAdmission();
   if (radarControlEnabled_)
   {
     plannerCommandSub_ = nh_->create_subscription<geometry_msgs::msg::TwistStamped>(
@@ -77,52 +70,34 @@ void LeggedController::ModeSubscribe(rclcpp::Node::SharedPtr /* controller_nh */
 }
 
 void LeggedController::ModePublish(rclcpp::Node::SharedPtr controller_nh) {
-  pubState_ = nh_->create_publisher<luvbot_control_interfaces::msg::PolicyObservation>(
+  pubState_ = nh_->create_publisher<robot_interfaces::msg::PolicyObservation>(
       "control/policy/observation", rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile());
 
   joyFeedbackPub_ = nh_->create_publisher<sensor_msgs::msg::JoyFeedbackArray>("/joy/set_feedback", rclcpp::QoS(1));
   policyMux_.createRosInterfaces();
-  if (text_motion_enabled_)
-  {
-    textMotionStatusPub_ = nh_->create_publisher<std_msgs::msg::String>(
-        "/text_motion/playback_status", rclcpp::QoS(20).reliable().durability_volatile());
-    textMotionStatusTimer_ = nh_->create_wall_timer(
-        std::chrono::milliseconds(20), std::bind(&LeggedController::flushTextMotionEvents, this));
-  }
+  controller_status_pub_ = nh_->create_publisher<std_msgs::msg::String>(
+      "/system/motion_controller/status", rclcpp::QoS(1).reliable().durability_volatile());
+  controller_status_timer_ = nh_->create_wall_timer(std::chrono::seconds(1),
+      [this] { publishControllerStatus(); });
   wbcActionFeedbackPub_ = nh_->create_publisher<std_msgs::msg::String>(
       "/system/state_machine/wbc_action_fdb", rclcpp::QoS(10).reliable().durability_volatile());
 
-  if (joystick_imitation_enabled_)
-  {
-    shotIdPub_ = nh_->create_publisher<std_msgs::msg::Int64>("/shot_id", rclcpp::QoS(10));
-  }
-
-  if (enableRviz_)
-  {
-    RCLCPP_INFO(nh_->get_logger(),
-                "RViz visualization enabled - creating publishers for "
-                "/joint_states and /joint_rad_text");
-    VisualizationPublisher::Params vp;
-    vizPub_ = std::make_unique<VisualizationPublisher>(controller_nh, vp);
-  }
-  else
-  {
-    RCLCPP_INFO(nh_->get_logger(),
-                "RViz visualization disabled - skipping /joint_states and "
-                "/joint_rad_text publishers");
-  }
+  VisualizationPublisher::Params vp;
+  vizPub_ = std::make_unique<VisualizationPublisher>(controller_nh, vp, enableRviz_);
+  RCLCPP_INFO(nh_->get_logger(), "Publishing /system/joint/jointstates independently of RViz; /joint_rad_text %s",
+              enableRviz_ ? "enabled" : "disabled");
 }
 
-void LeggedController::lowCmdRlCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
+void LeggedController::lowCmdRlCallback(const robot_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
   policyMux_.setRlCommand(*msg);
 }
 
 void LeggedController::lowCmdImitationCallback(
-    const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
+    const robot_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
   policyMux_.setImitationCommand(*msg);
 }
 
-void LeggedController::lowCmdWbcCallback(const luvbot_control_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
+void LeggedController::lowCmdWbcCallback(const robot_interfaces::msg::PolicyCommand::ConstSharedPtr msg) {
   policyMux_.setWbcCommand(*msg);
 }
 
@@ -188,18 +163,6 @@ void LeggedController::followFaceCallback(const std_msgs::msg::String::ConstShar
 void LeggedController::imitationMotionDoneCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {
   if (!msg->data) return;
 
-  if (sequence_engine_enabled_)
-  {
-    const ActiveSequencePhaseSnapshot snapshot = sequenceRuntime_.activePhaseSnapshot(last_controller_wall_sec_);
-    if (snapshot.active && snapshot.phase.mode == ActionSequenceMode::kRlImitation)
-    {
-      const double t_wall = last_controller_wall_sec_;
-      bool next_phase_is_imitation = false;
-      sequenceRuntime_.completeImitationPhaseByExternalEvent(t_wall, next_phase_is_imitation);
-      return;
-    }
-  }
-
   if (policyMux_.source() != PolicyCmdSource::kImitation) return;
 
   if (policyMux_.singleNodePublishesImitationCommand())
@@ -214,9 +177,29 @@ void LeggedController::JoyCallback(const sensor_msgs::msg::Joy::ConstSharedPtr m
   const JoystickCommand command = joystickInput_.decode(*msg);
   lastJoystickCommand_ = command;
   processJoystickActions(command);
-  processJoystickBackEmergencySequence(command);
-  processJoystickImitationActions(*msg);
-  processJoystickSequenceActions(*msg);
+  if (!command.wbc_soft_stop_pressed || command.emergency_stop_pressed ||
+      policyMux_.source() != PolicyCmdSource::kWbc || !policyMux_.wbcActiveCommanded() ||
+      wbc_return_pending_.load() || !joystick_soft_stop_client_ ||
+      !joystick_soft_stop_client_->service_is_ready())
+    return;
+
+  using Service = robot_interfaces::srv::ControlWbcMotion;
+  auto request = std::make_shared<Service::Request>();
+  {
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (!motion_reserved_.load() || motion_cancelled_.load() || motion_request_id_.empty()) return;
+    request->request_id = motion_request_id_;
+  }
+  request->command = Service::Request::STOP;
+  const auto logger = nh_->get_logger();
+  joystick_soft_stop_client_->async_send_request(request,
+      [logger](rclcpp::Client<Service>::SharedFuture future) {
+        const auto response = future.get();
+        if (response->success)
+          RCLCPP_INFO(logger, "[Joystick] LT+D-pad left queued soft STOP for %s", response->motion_id.c_str());
+        else
+          RCLCPP_DEBUG(logger, "[Joystick] Soft STOP ignored: %s", response->message.c_str());
+      });
 }
 
 void LeggedController::EmergencyStopCallback(const std_msgs::msg::Bool::ConstSharedPtr msg) {

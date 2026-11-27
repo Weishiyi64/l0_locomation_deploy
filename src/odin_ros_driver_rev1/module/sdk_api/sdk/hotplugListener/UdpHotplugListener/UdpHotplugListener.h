@@ -5,9 +5,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,10 +53,14 @@ class UdpHotplugListener : public IHotplugListener {
   // Handle a discovered device (update state and fire callbacks)
   void HandleDiscoveredDevice(const DiscoveredDevice& device);
   
-  // Note: CheckOfflineDevices() removed - offline detection now handled by heartbeat
+  // Detect devices that stopped responding to discovery probes and fire
+  // on_detach for them. This covers network devices that were discovered but
+  // never connected (no heartbeat running), which heartbeat cannot observe.
+  void CheckOfflineDevices();
 
-  // Mark a device as offline (called when heartbeat fails)
-  void MarkDeviceOffline(const DiscoveredDevice& device) override;
+  // Refresh a device's last_seen timestamp from an external keep-alive signal
+  // (heartbeat success). See IHotplugListener::RefreshDeviceAlive.
+  void RefreshDeviceAlive(const DiscoveredDevice& device) override;
 
   // Thread safety
   mutable std::mutex mutex_;
@@ -62,8 +68,10 @@ class UdpHotplugListener : public IHotplugListener {
   std::atomic<bool> running_{false};
 
   // Configuration
-  uint32_t polling_interval_ms_ = 1000;  // Default 1 second polling
+  uint32_t polling_interval_ms_ = 500;  // Default 1 second polling
   uint32_t offline_timeout_ms_ = 3000;   // Default 3 seconds offline threshold
+                                         // (discovery-only devices have no heartbeat,
+                                         //  so UDP probe loss may cause flapping)
 
   // Discovery (default will be created on first use)
   std::shared_ptr<IDiscovery> discovery_;
@@ -77,6 +85,16 @@ class UdpHotplugListener : public IHotplugListener {
 
   // Device tracking (key: device IP or SN)
   std::map<std::string, DeviceState> devices_;
+
+  // Device IPs whose discovery replies came from a different subnet than the
+  // probe's host IP. Used to warn only on the first occurrence so a
+  // permanently cross-subnet device does not flood the log every cycle.
+  std::set<std::string> cross_subnet_warned_;
+
+  // Host IPs whose probes were skipped because no known online device shares
+  // their subnet. Used to warn only on the first occurrence per host IP so
+  // the log is not flooded every cycle.
+  std::set<std::string> probe_skipped_warned_;
 };
 
 }  // namespace sdk

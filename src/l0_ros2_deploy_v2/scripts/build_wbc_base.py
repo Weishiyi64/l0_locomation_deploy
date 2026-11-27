@@ -69,6 +69,12 @@ def main():
     if not ids or len(set(ids)) != len(ids):
         raise ValueError('Empty/duplicate action catalog')
     jobs = [(graph['model']['onnx'], graph['model']['rknn'], graph['model']['sha256'], 'policy')]
+    if 'ila_adapter' in graph:
+        ila = graph['ila_adapter']
+        if ila.get('format') != 'sonic_ila_arm_window_v1':
+            raise ValueError('Unsupported ILA adapter')
+        jobs.append((ila.get('onnx', str(Path(ila['rknn']).with_suffix('.onnx'))),
+                     ila['rknn'], ila['sha256'], 'ila'))
     first_robot = None
     for item in actions:
         config = asset(root, item['config'])
@@ -81,12 +87,12 @@ def main():
             raise ValueError('All actions must use identical fixed-actor RobotCfg')
         first_robot = data['RobotCfg']
         jobs.append((item['reference_onnx'], item['reference_rknn'], item['reference_onnx_sha256'], 'reference'))
-    scripts = Path(__file__).resolve().parent
+    scripts = Path(__file__).resolve().parent.parent
     counts = {'existing': 0, 'reused': 0, 'compiled': 0}
     for source_name, target_name, fingerprint, kind in jobs:
-        source = asset(root, source_name)
+        source = asset(root, source_name, exists=False)
         target = asset(root, target_name, exists=False)
-        if sha(source) != fingerprint:
+        if source.exists() and sha(source) != fingerprint:
             raise ValueError('Source hash mismatch: ' + source_name)
         if compiled(target, fingerprint):
             counts['existing'] += 1
@@ -98,7 +104,10 @@ def main():
                 shutil.copy2(Path(str(cache[fingerprint]) + '.json'), Path(str(target) + '.json'))
             continue
         counts['compiled'] += 1
-        command = [sys.executable, '-B', str(scripts / ('convert_onnx_to_rknn_rk3588_wbc_' + kind + '.py')),
+        if not source.is_file():
+            raise ValueError('Recompilation needs original ONNX: ' + str(source))
+        tool_dir = scripts / 'scripts' if kind == 'ila' else scripts
+        command = [sys.executable, '-B', str(tool_dir / ('convert_onnx_to_rknn_rk3588_wbc_' + kind + '.py')),
                    str(source), '--output', str(target), '--build-only']
         print('compile', kind, source_name, flush=True)
         if args.dry_run:
@@ -113,6 +122,17 @@ def main():
     print(json.dumps(counts), flush=True)
     if args.dry_run:
         return
+    inventory = root / 'INSTALLATION.json'
+    if inventory.is_file() and counts['existing'] == len(jobs):
+        existing = json.loads(inventory.read_text())
+        recorded = existing.get('files', {})
+        if (existing.get('format') == 'wbc_base_installation_v1' and recorded and
+                all(sha(asset(root, name)) == expected for name, expected in recorded.items())):
+            # A validated board bundle already has its deployment and runtime history.
+            if args.install_to:
+                shutil.copytree(root, args.install_to)
+                print('installed', args.install_to, flush=True)
+            return
     files = {str(p.relative_to(root)): sha(p) for p in sorted(root.rglob('*'))
              if p.is_file() and p.name != 'INSTALLATION.json'}
     record = {'format': 'wbc_base_installation_v1', 'mode': 'base', 'files': files,

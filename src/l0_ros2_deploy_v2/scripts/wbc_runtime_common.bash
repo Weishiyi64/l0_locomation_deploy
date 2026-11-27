@@ -28,7 +28,7 @@ wbc_ros_environment() {
   source /opt/ros/humble/setup.bash
   source "$wbc_workspace/install/setup.bash"
   wbc_prefix=$(ros2 pkg prefix legged_deploy)
-  [[ "$wbc_prefix" == "$wbc_workspace/install" || "$wbc_prefix" == "$wbc_workspace/install/"* ]] ||
+  [[ "$(realpath "$wbc_prefix")" == "$(realpath "$wbc_workspace/install")/"* ]] ||
     wbc_die 'legged_deploy 来自其他工作空间'
 }
 
@@ -76,6 +76,16 @@ PY
 }
 
 wbc_current_run() {
+  if $wbc_dry_run && [[ ! -f "$wbc_run_root/current_run_dir" ]]; then
+    wbc_ros_environment
+    local preview
+    preview=$(bash "$wbc_script_dir/start_sim2real.sh" --workspace "$wbc_workspace" --dry-run) || return 1
+    mapfile -t fields < <(/usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["robot_type"], d["wbc_lora_bundle"], d["wbc_policies"], sep="\n")' <<< "$preview")
+    robot_type=${fields[0]}; wbc_bundle=${fields[1]}; wbc_actions=${fields[2]}
+    wbc_installed="$wbc_prefix/share/legged_deploy/policy/$robot_type/$wbc_bundle"
+    wbc_run_dir="$wbc_run_root/preview"
+    return
+  fi
   wbc_run_dir=$(/usr/bin/python3 -B - "$wbc_run_root" <<'PY'
 from pathlib import Path
 import sys

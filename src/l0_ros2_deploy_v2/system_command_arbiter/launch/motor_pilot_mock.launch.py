@@ -27,8 +27,8 @@ def generate_launch_description():
                         "pilot_mode": True,
                         "allow_actuation": True,
                         "pilot_motor_type": 4,
-                        "pilot_bus_index": 4,
-                        "pilot_motor_id": 1,
+                        "pilot_bus_index": 0,
+                        "pilot_motor_id": 5,
                     }
                 ],
                 remappings=[

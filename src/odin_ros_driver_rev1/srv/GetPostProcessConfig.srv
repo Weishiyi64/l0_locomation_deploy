@@ -1,0 +1,12 @@
+# Request - empty, query current post-processing flags
+---
+# Response
+bool success
+string message
+# Current post-process flag states
+bool image_raw_enabled
+bool image2_raw_enabled
+bool cloud_render_enabled
+bool undistort_enabled
+bool rectify_enabled
+bool opencv_undistort_enabled

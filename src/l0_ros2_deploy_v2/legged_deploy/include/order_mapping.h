@@ -17,6 +17,9 @@ class OrderMapper {
 
   void transformMjToIsaac(const Eigen::VectorXd& mj_vec, Eigen::VectorXd& isaac_vec) const;
 
+  void mapJointObservation(const std::vector<double>& positions, const std::vector<double>& velocities,
+                           const std::vector<double>& default_angles, Eigen::VectorXd& q, Eigen::VectorXd& dq) const;
+
   void transformIsaacToMj(const Eigen::VectorXd& isaac_vec, Eigen::VectorXd& mj_vec) const;
 
  private:

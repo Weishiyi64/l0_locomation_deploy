@@ -6,6 +6,7 @@
 
 #include "../ICapture.hpp"
 #include "ITransport.hpp"
+#include "odin_lidar_def.h"
 
 namespace odin {
 namespace sdk {
@@ -23,9 +24,10 @@ class NetworkCapture : public ICapture {
  public:
   /**
    * @brief Constructor
-   * @param use_tcp true for TCP transport, false for UDP
+   * @param transport Transport mode driving capture instantiation
+   *                  (e.g. UDP / TCP; future variants extend this enum).
    */
-  explicit NetworkCapture(bool use_tcp = false);
+  explicit NetworkCapture(OdinTransportMode transport = OdinTransportMode::kUdp);
   ~NetworkCapture() override;
 
   // ICapture interface
@@ -37,7 +39,7 @@ class NetworkCapture : public ICapture {
   std::unique_ptr<ITransport> transport_;
   std::atomic<bool> running_{false};
   RawDataCallback callback_;
-  bool use_tcp_;
+  OdinTransportMode transport_mode_;
 };
 
 }  // namespace sdk

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>odin_ros_driver_rev1</name>
-  <version>1.0.0</version>
+  <version>0.1.0</version>
   <description>ROS driver that connects an odin lidar via the vendor SDK and publishes all five data streams.</description>
 
   <maintainer email="todo@example.com">TODO</maintainer>
@@ -22,9 +22,12 @@
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>point_cloud_transport</depend>
   <depend>cv_bridge</depend>
   <buildtool_depend condition="$ROS_VERSION == 2">rosidl_default_generators</buildtool_depend>
   <exec_depend condition="$ROS_VERSION == 2">rosidl_default_runtime</exec_depend>
@@ -34,7 +37,8 @@
   <exec_depend condition="$ROS_VERSION == 2">rviz2</exec_depend>
 
   <export>
-    <!-- Enable only for ROS2 symlink-install builds. Keep disabled for ROS1 catkin_make builds. -->
-	<build_type>ament_cmake</build_type>
+    <!-- Without a build type, colcon uses catkin and skips the ROS2 environment hooks. -->
+    <build_type condition="$ROS_VERSION == 2">ament_cmake</build_type>
+    <build_type condition="$ROS_VERSION == 1">catkin</build_type>
   </export>
 </package>

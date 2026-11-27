@@ -3,7 +3,6 @@
 #ifdef USE_RK_DECODER
 
 #include <cstring>
-#include <cstdio>
 
 #include <rockchip/mpp_meta.h>     // mpp_meta_set_frame / KEY_OUTPUT_FRAME / KEY_INPUT_PACKET
 #include <rockchip/mpp_task.h>     // MppTask + mpp_task_meta_set_* + MPP_PORT_INPUT/OUTPUT
@@ -12,7 +11,11 @@
 #include <rga/im2d.h>  // imcvtcolor / wrapbuffer_fd / IM_STATUS / imStrError
 #include <rga/rga.h>   // RK_FORMAT_YCbCr_420_SP / RK_FORMAT_BGR_888 / RK_FORMAT_RGB_888
 
-#include "utility/ros_compat.hpp"
+#include <fcntl.h>           // ioctl
+#include <sys/ioctl.h>       // ioctl
+#include <linux/dma-buf.h>   // DMA_BUF_IOCTL_SYNC / dma_buf_sync
+
+#include "utility/rc_log.hpp"
 
 // MPP_ALIGN: round x up to a multiple of a (a must be a power of two).
 // The original definition lives in mpp_common.h, which is an internal header
@@ -24,6 +27,35 @@
 namespace odin_decoder {
 
 namespace {
+
+// ============================================================================
+// DMA buffer cache sync helpers
+// ============================================================================
+// mpp_buffer_sync_begin/end are only available in newer librk_mpp (Ubuntu
+// 22.04+). On older versions (Ubuntu 20.04) they are not declared. But the
+// underlying mechanism is the standard Linux DMA_BUF_IOCTL_SYNC ioctl, which
+// is available on all kernels >= 3.18. So we fall back to calling the ioctl
+// directly when the MPP wrapper is missing.
+//
+//   sync_end  (after CPU write, before device read):  flush CPU cache → RAM
+//   sync_begin (after device write, before CPU read): invalidate CPU cache
+// ============================================================================
+#if !defined(MPP_HAS_BUFFER_SYNC)
+void mpp_buffer_sync_end(MppBuffer buffer) {
+  int fd = mpp_buffer_get_fd(buffer);
+  struct dma_buf_sync sync = {};
+  sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
+  int ret = ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+  (void)ret;
+}
+void mpp_buffer_sync_begin(MppBuffer buffer) {
+  int fd = mpp_buffer_get_fd(buffer);
+  struct dma_buf_sync sync = {};
+  sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+  int ret = ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+  (void)ret;
+}
+#endif
 
 // Minimal JPEG header parser: extract width/height from the SOF0/1/2/3 segment.
 //
@@ -136,8 +168,8 @@ RkHardwareDecoder::RkHardwareDecoder(RkOutputFormat fmt) : outputFormat_(fmt) {
   mpp_dec_cfg_deinit(cfgHandle);
 
   initialized_ = true;
-  RC_LOG_INFO("[RkDecoder] init OK (codec=MJPEG, decode=NV12 -> RGA -> %s, advanced+MppTask)",
-              (outputFormat_ == RkOutputFormat::kRGB888) ? "RGB888" : "BGR888");
+  RC_LOG_DEBUG("[RkDecoder] init OK (codec=MJPEG, decode=NV12 -> RGA -> %s, advanced+MppTask)",
+               (outputFormat_ == RkOutputFormat::kRGB888) ? "RGB888" : "BGR888");
 }
 
 RkHardwareDecoder::~RkHardwareDecoder() {
@@ -160,11 +192,7 @@ bool RkHardwareDecoder::LazyInitAdvanced(int width, int height) {
   const size_t outBufSize = static_cast<size_t>(jpegHorStride_) * jpegVerStride_ * 4;
 
   // ---- 1) output: frame_group + DMA buffer + MppFrame + bind ----
-  // CACHABLE: a plain DRM buffer is uncached for the CPU and reading it back is
-  // extremely slow. RGA reads NV12 here via DMA (no CPU read), but keeping it
-  // cacheable is harmless and matches the validated sample.
-  MPP_RET ret = mpp_buffer_group_get_internal(
-      &frameGroup_, MPP_BUFFER_TYPE_DRM | MPP_BUFFER_FLAGS_CACHABLE);
+  MPP_RET ret = mpp_buffer_group_get_internal(&frameGroup_, MPP_BUFFER_TYPE_DRM);
   if (ret != MPP_OK) {
     RC_LOG_ERROR("[RkDecoder] frame_group get_internal failed ret=%d", static_cast<int>(ret));
     return false;
@@ -192,12 +220,11 @@ bool RkHardwareDecoder::LazyInitAdvanced(int width, int height) {
     return false;
   }
 
-  // ---- 3) color side: cacheable DMA buffer for RGA's BGR/RGB output ----
+  // ---- 3) color side: DMA buffer for RGA's BGR/RGB output ----
   // RGA (DMA) writes the packed 24-bit image here; the returned cv::Mat wraps
-  // it zero-copy. CACHABLE so the downstream CPU clone() reads through cache.
+  // it zero-copy.
   const size_t colorBytes = static_cast<size_t>(width) * height * 3;
-  ret = mpp_buffer_group_get_internal(
-      &colorGroup_, MPP_BUFFER_TYPE_DRM | MPP_BUFFER_FLAGS_CACHABLE);
+  ret = mpp_buffer_group_get_internal(&colorGroup_, MPP_BUFFER_TYPE_DRM);
   if (ret != MPP_OK) {
     RC_LOG_ERROR("[RkDecoder] color_group get_internal failed ret=%d", static_cast<int>(ret));
     return false;
@@ -210,8 +237,6 @@ bool RkHardwareDecoder::LazyInitAdvanced(int width, int height) {
   }
 
   advancedInited_ = true;
-  RC_LOG_INFO("[RkDecoder] LazyInitAdvanced: jpeg=%dx%d stride=[%d:%d] outBuf=%zu bytes",
-              width, height, jpegHorStride_, jpegVerStride_, outBufSize);
   return true;
 }
 

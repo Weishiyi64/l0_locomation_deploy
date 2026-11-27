@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Convert a MimicLite WBC reference-motion ONNX to non-quantized RK3588 RKNN."""
+"""Convert a WBC reference ONNX to RK3588 RKNN, automatically normalizing FP16/FP32 tables."""
 
 import argparse
+import copy
+
+import numpy as np
 import math
 import sys
 import tempfile
@@ -9,14 +12,31 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from wbc_lora_assets import conversion_record, rknn_build_config, runtime_options
-
 REFERENCE_OUTPUTS = {
     "joint_pos": (1, 21), "joint_vel": (1, 21),
     "body_pos_w": (1, 23, 3), "body_quat_w": (1, 23, 4),
     "body_lin_vel_w": (1, 23, 3), "body_ang_vel_w": (1, 23, 3),
 }
 RKNN_MAX_ONNX_OPSET = 19
+
+
+def runtime_options(args):
+    if getattr(args, "build_only", False) and (args.target or getattr(args, "device_id", None)):
+        raise ValueError("--build-only cannot be combined with --target/--device-id")
+    options = {"target": args.target} if args.target else {}
+    if getattr(args, "device_id", None):
+        if not args.target:
+            raise ValueError("--device-id requires --target rk3588")
+        options["device_id"] = args.device_id
+    return options
+
+
+def rknn_build_config():
+    # Toolkit2 2.3.2 exNorm Add fusion reads dynamic FP16 beta as FP32.
+    # Keep the affine Add separate; shared policy and reference converters use
+    # this same default.
+    return {"target_platform": "rk3588", "float_dtype": "float16",
+            "disable_rules": ["fuse_exnorm_add"]}
 
 
 def parse_args():
@@ -28,8 +48,10 @@ def parse_args():
         "--target", help="runtime target platform, e.g. rk3588; select a board with --device-id"
     )
     parser.add_argument("--device-id", help="connected device ID; requires --target rk3588")
-    parser.add_argument("--build-only", action="store_true",
-                        help="export FP16 RKNN without loading a Python Runtime; C++ deployment validation remains pending")
+    parser.add_argument("--build-only", action="store_true", default=True,
+                        help="default: compile without Python Runtime verification")
+    parser.add_argument("--verify", dest="build_only", action="store_false",
+                        help="explicitly compare RKNN with ONNX Runtime after conversion")
     return parser.parse_args()
 
 
@@ -69,6 +91,137 @@ def check_reference_model(path):
             "base_link" not in bodies:
         raise ValueError("invalid reference joint/body metadata")
     return [("time_step", (1, 1))], [(item.name, REFERENCE_OUTPUTS[item.name]) for item in outputs], meta
+
+
+def load_embedded_model(path):
+    import onnx
+
+    model = onnx.load(str(path), load_external_data=False)
+    if any(t.data_location == onnx.TensorProto.EXTERNAL for t in model.graph.initializer):
+        raise ValueError(f"External ONNX tensor data is not supported: {path}")
+    if any(a.type in (onnx.AttributeProto.GRAPH, onnx.AttributeProto.GRAPHS)
+           for n in model.graph.node for a in n.attribute):
+        raise ValueError(f"Subgraphs are not supported by this preprocessing contract: {path}")
+    onnx.checker.check_model(model, full_check=True)
+    return model
+
+
+def normalize_reference(path):
+    """Only rewrite constant-table -> Gather -> Cast/Identity output paths."""
+    import onnx
+
+    model = load_embedded_model(path)
+    _, _, meta = check_reference_model(path)
+    meta["source_table_dtype"] = "/".join(sorted({
+        {onnx.TensorProto.FLOAT16: "float16", onnx.TensorProto.FLOAT: "float32"}[tensor.data_type]
+        for tensor in model.graph.initializer
+        if len(tensor.dims) >= 2 and tensor.data_type in (onnx.TensorProto.FLOAT16, onnx.TensorProto.FLOAT)
+    }))
+    return normalize_reference_graph(model, meta), meta
+
+
+def normalize_reference_graph(model, meta):
+    import onnx
+    from onnx import helper, numpy_helper
+
+    count = int(meta["num_frames"])
+    nodes = list(model.graph.node)
+    producers = {name: (i, node) for i, node in enumerate(nodes) for name in node.output if name}
+    tensors = {t.name: t for t in model.graph.initializer}
+    allowed_types = {onnx.TensorProto.FLOAT: np.float32, onnx.TensorProto.FLOAT16: np.float16}
+
+    def unwrap(value):
+        casts, visited = [], set()
+        while value in producers:
+            index, node = producers[value]
+            if node.op_type not in ("Identity", "Cast"):
+                break
+            if index in visited or node.domain not in ("", "ai.onnx") or \
+                    len(node.input) != 1 or len(node.output) != 1:
+                raise ValueError(f"Unsupported or cyclic reference wrapper: {value}")
+            visited.add(index)
+            attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}
+            if node.op_type == "Identity":
+                if attrs:
+                    raise ValueError("Unexpected reference Identity attributes")
+            else:
+                if set(attrs) != {"to"} or attrs["to"] not in allowed_types:
+                    raise ValueError("Reference table/output Cast must only convert FP16/FP32")
+                casts.append(allowed_types[attrs["to"]])
+            value = node.input[0]
+        return value, list(reversed(casts))
+
+    tables, gather_indices, frame_index = {}, set(), None
+    for name, shape in REFERENCE_OUTPUTS.items():
+        value, output_casts = unwrap(name)
+        if value not in producers:
+            raise ValueError(f"{name}: expected a Gather producer")
+        index, node = producers[value]
+        attrs = {a.name: helper.get_attribute_value(a) for a in node.attribute}
+        if node.domain not in ("", "ai.onnx") or node.op_type != "Gather" or \
+                len(node.input) != 2 or len(node.output) != 1 or \
+                set(attrs) - {"axis"} or attrs.get("axis", 0) != 0:
+            raise ValueError(f"{name}: expected one axis-0 table Gather")
+        gather_indices.add(index)
+        if frame_index is None:
+            frame_index = node.input[1]
+        if frame_index != node.input[1]:
+            raise ValueError("All reference outputs must share the same frame-index tensor")
+        table_name, input_casts = unwrap(node.input[0])
+        if table_name not in tensors or tensors[table_name].data_type not in allowed_types:
+            raise ValueError(f"{name}: expected an embedded FP16/FP32 reference table")
+        table = numpy_helper.to_array(tensors[table_name])
+        if table.shape != (count,) + shape[1:] or not np.isfinite(table).all():
+            raise ValueError(f"{name}: invalid reference table shape or value")
+        # Float Cast commutes with Gather. Materialize only the declared data
+        # casts; leave all computation of the frame index unchanged.
+        for dtype in input_casts + output_casts:
+            table = table.astype(dtype)
+        if table.dtype != np.float32:
+            raise ValueError(f"{name}: the table/output path does not produce the required FP32 interface")
+        tables[name] = table
+    if len(gather_indices) != 6 or sum(n.op_type == "Gather" for n in nodes) != 6:
+        raise ValueError("Expected six distinct native reference table Gather branches")
+
+    # Keep the exact original subgraph feeding the common frame index.
+    retained_nodes, retained_values, pending = set(), set(), [frame_index]
+    graph_inputs = {v.name for v in model.graph.input}
+    while pending:
+        value = pending.pop()
+        if not value or value in retained_values:
+            continue
+        retained_values.add(value)
+        if value in producers:
+            index, node = producers[value]
+            if index in gather_indices:
+                raise ValueError("Reference frame index must not depend on a trajectory Gather")
+            retained_nodes.add(index)
+            pending.extend(node.input)
+        elif value not in tensors and value not in graph_inputs:
+            raise ValueError(f"Unresolved reference frame-index input: {value}")
+
+    prefix = "wbc_preprocess_reference_"
+    names = retained_values
+    if any(name.startswith(prefix) for name in names):
+        raise ValueError("Reference frame-index names collide with normalized table names")
+    retained = [node for i, node in enumerate(nodes) if i in retained_nodes]
+    initializers = [t for t in model.graph.initializer if t.name in retained_values]
+    for name in REFERENCE_OUTPUTS:
+        table_name = prefix + name + "_table"
+        initializers.append(numpy_helper.from_array(tables[name], table_name))
+        retained.append(helper.make_node("Gather", [table_name, frame_index], [name],
+                                         axis=0, name=prefix + name + "_gather"))
+    del model.graph.node[:]
+    model.graph.node.extend(retained)
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(initializers)
+    del model.graph.value_info[:]
+    onnx.checker.check_model(model, full_check=True)
+    # Exercise the existing converter's graph rewrite, without RKNN or inference.
+    packed = copy.deepcopy(model)
+    pack_reference_gathers(packed)
+    onnx.checker.check_model(packed, full_check=True)
+    return model
 
 
 def pack_reference_gathers(model):
@@ -129,7 +282,7 @@ def rknn_compatible_model(path):
     import onnx
     from onnx import version_converter
 
-    model = onnx.load(str(path))
+    model, _ = normalize_reference(path)
     default_opsets = [item.version for item in model.opset_import if item.domain in ("", "ai.onnx")]
     if len(default_opsets) != 1:
         raise ValueError(f"expected one ai.onnx opset, got {default_opsets}")
@@ -198,6 +351,8 @@ def main():
         raise ValueError("output filename must end with .rknn")
     if not math.isfinite(args.max_abs_error) or args.max_abs_error <= 0:
         raise ValueError("--max-abs-error must be finite and positive")
+    if output_path.exists() or output_path.is_symlink():
+        raise ValueError("RKNN output already exists; use a new source/output directory")
     runtime_options(args)
     input_specs, output_specs, reference_meta = check_reference_model(onnx_path)
     print("inputs: " + ", ".join(f"{name}{shape}" for name, shape in input_specs))
@@ -224,9 +379,9 @@ def main():
                 ret = rknn.export_rknn(str(candidate))
                 if ret != 0:
                     raise RuntimeError(f"rknn.export_rknn failed, ret={ret}")
-                verification = None if args.build_only else verify_reference(rknn, onnx_path, output_specs, reference_meta, args)
+                if not args.build_only:
+                    verify_reference(rknn, onnx_path, output_specs, reference_meta, args)
                 candidate.replace(output_path)
-                conversion_record(onnx_path, output_path, args, verification)
             print(f"exported: {output_path}; validation={'pending C++ deployment' if args.build_only else 'Python verification completed'}")
         finally:
             rknn.release()

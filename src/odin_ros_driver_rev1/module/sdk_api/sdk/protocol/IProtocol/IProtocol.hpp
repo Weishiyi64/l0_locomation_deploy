@@ -43,8 +43,6 @@ class IPacket {
   virtual uint32_t GetAttribute(uint32_t key) const { return 0; }
   virtual void SetAttribute(uint32_t key, uint32_t value) {}
 
-  // Clone for polymorphic copy
-  virtual std::unique_ptr<IPacket> Clone() const = 0;
 };
 
 /* ============================================================================
@@ -82,10 +80,6 @@ class IProtocol {
    */
   virtual std::unique_ptr<IPacket> CreatePacket() = 0;
 
-  // Protocol metadata
-  virtual size_t GetHeaderSize() const = 0;
-  virtual const char* GetProtocolName() const = 0;
-  virtual uint32_t GetProtocolVersion() const = 0;
 };
 
 /* ============================================================================
@@ -96,14 +90,10 @@ namespace PacketAttr {
 constexpr uint32_t kCmdType = 0x01;   // Command type (req/ack)
 constexpr uint32_t kSendType = 0x02;  // Sender type (host/device)
 constexpr uint32_t kVersion = 0x03;   // Protocol version
-constexpr uint32_t kCrc16 = 0x10;     // CRC16 checksum
-constexpr uint32_t kCrc32 = 0x11;     // CRC32 checksum
-
 // Common attribute values
 constexpr uint32_t kCmdTypeReq = 0x00;      // Request
 constexpr uint32_t kCmdTypeAck = 0x01;      // Acknowledgement
 constexpr uint32_t kSendTypeHost = 0x00;    // From host
-constexpr uint32_t kSendTypeDevice = 0x01;  // From device
 }  // namespace PacketAttr
 
 }  // namespace sdk

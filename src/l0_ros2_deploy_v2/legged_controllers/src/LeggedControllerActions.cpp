@@ -1,12 +1,121 @@
+#include <algorithm>
+#include <cstddef>
 #include <mutex>
+#include <string>
 
-#include "legged_controllers/ControllerBanners.h"
-#include "legged_controllers/LeggedController.h"
+#include "LeggedController.h"
 
 namespace legged {
+namespace {
+
+constexpr std::size_t kBoxInnerWidth = 42;
+constexpr const char* kBoxBorder = "+------------------------------------------+";
+
+void logBlank(rclcpp::Logger logger) { RCLCPP_INFO(logger, " "); }
+
+void logBorder(rclcpp::Logger logger) { RCLCPP_INFO(logger, "%s", kBoxBorder); }
+
+void logBoxLine(rclcpp::Logger logger, const std::string& text = std::string(), bool centered = true) {
+  std::string content = text;
+  if (content.size() > kBoxInnerWidth)
+  {
+    content.resize(kBoxInnerWidth);
+  }
+
+  std::size_t left = 0;
+  if (centered)
+  {
+    left = (kBoxInnerWidth - content.size()) / 2;
+  }
+  else
+  {
+    left = content.empty() ? (kBoxInnerWidth / 2) : 2;
+    if (left + content.size() > kBoxInnerWidth) left = 0;
+  }
+  const std::size_t right = kBoxInnerWidth - content.size() - left;
+  const std::string left_pad(left, ' ');
+  const std::string right_pad(right, ' ');
+  RCLCPP_INFO(logger, "|%s%s%s|", left_pad.c_str(), content.c_str(), right_pad.c_str());
+}
+
+void printCalibrationBanner(rclcpp::Logger logger, const std::string& banner) {
+  logBlank(logger);
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, banner);
+  logBoxLine(logger);
+  logBorder(logger);
+  logBlank(logger);
+}
+
+void printEmergencyStopBanner(rclcpp::Logger logger) {
+  logBlank(logger);
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, "EMERGENCY STOP ACTIVATED");
+  logBoxLine(logger);
+  logBorder(logger);
+  logBlank(logger);
+}
+
+void printWalkModeBanner(rclcpp::Logger logger) {
+  logBlank(logger);
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, "WALK MODE ACTIVATED");
+  logBoxLine(logger);
+  logBorder(logger);
+  logBlank(logger);
+}
+
+void printCalibrationEnabledBanner(rclcpp::Logger logger) {
+  logBlank(logger);
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, "CALIBRATION MODE ENABLED");
+  logBoxLine(logger);
+  logBoxLine(logger, "Use controller buttons to calibrate:", false);
+  logBoxLine(logger, "- LB+LT: Left Arm", false);
+  logBoxLine(logger, "- RB+RT: Right Arm", false);
+  logBoxLine(logger, "- A+X: Left Leg", false);
+  logBoxLine(logger, "- B+Y: Right Leg", false);
+  logBoxLine(logger, "- BACK: Waist (if configured)", false);
+  logBoxLine(logger, "- START: Neck", false);
+  logBoxLine(logger, "Press LS+RS again to exit calibration", false);
+  logBoxLine(logger);
+  logBorder(logger);
+  logBlank(logger);
+}
+
+void printCalibrationDisabledBanner(rclcpp::Logger logger) {
+  logBlank(logger);
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, "CALIBRATION MODE DISABLED");
+  logBoxLine(logger);
+  logBoxLine(logger, "Returning to Emergency Stop mode");
+  logBoxLine(logger);
+  logBorder(logger);
+  logBlank(logger);
+}
+
+void logResetBanner(rclcpp::Logger logger) {
+  RCLCPP_INFO(logger, " ");
+  logBorder(logger);
+  logBoxLine(logger);
+  logBoxLine(logger, "CONTROLLER RESET");
+  logBoxLine(logger);
+  logBoxLine(logger, "Emergency cleared - System ready");
+  logBoxLine(logger, "Policy state reset for walk");
+  logBoxLine(logger);
+  logBorder(logger);
+  RCLCPP_INFO(logger, " ");
+}
+
+}  // namespace
 
 void LeggedController::processJoystickActions(const JoystickCommand& command) {
-  if (command.emergency_stop_pressed) triggerEmergencyStop();
+  if (command.emergency_stop_pressed) triggerEmergencyStop(ManualStop);
   if (command.set_walk_pressed) enterWalkMode();
   if (command.reset_pressed) resetController();
   if (command.kp_add_pressed) adjustStandbyKp(2.0);
@@ -20,39 +129,6 @@ void LeggedController::processJoystickActions(const JoystickCommand& command) {
   if (command.calibrate_neck_pressed) calibrateByTag("neck", "CALIBRATING NECK");
 }
 
-void LeggedController::processJoystickBackEmergencySequence(const JoystickCommand& command) {
-  if (!joystick_back_emergency_sequence_enabled_ || !command.back_emergency_sequence_pressed) return;
-  if (!fsm_ || !fsm_->isWalking()) return;
-
-  const std::string action_label = "Back emergency sequence";
-  std::lock_guard<std::mutex> lock(auxiliary_action_trigger_mutex_);
-  if (!canStartAmpDerivedAction("[BackEmergency]", action_label, true, true))
-  {
-    return;
-  }
-
-  if (joystick_back_emergency_sequence_path_.empty())
-  {
-    RCLCPP_ERROR(nh_->get_logger(), "[BackEmergency] Ignoring trigger: sequence path is empty");
-    return;
-  }
-
-  if (!fullCsvVelocityAllowed())
-  {
-    logFullCsvVelocityBlocked("[BackEmergency]", joystick_back_emergency_sequence_path_);
-    return;
-  }
-
-  const auto log_trigger = [this]() {
-    RCLCPP_WARN(nh_->get_logger(), "[BackEmergency] Back button -> %s; EmergencyStop after finish",
-                displayControllerPath(joystick_back_emergency_sequence_path_).c_str());
-  };
-  if (triggerSequenceFromPath(joystick_back_emergency_sequence_path_, "[BackEmergency] Trigger", log_trigger))
-  {
-    sequence_finish_emergency_pending_ = true;
-  }
-}
-
 void LeggedController::updateSpeedMultiplier(double lt_axis_value) {
   if (velLimiter_)
   {
@@ -64,25 +140,20 @@ void LeggedController::updateSpeedMultiplier(double lt_axis_value) {
   }
 }
 
-void LeggedController::triggerEmergencyStop() {
+void LeggedController::triggerEmergencyStop(StopReason reason) {
   if (fsm_->isCalibration())
   {
     RCLCPP_WARN(nh_->get_logger(), "[EMERGENCY] Ignored while hardware calibration mode is active");
     return;
   }
 
-  const bool had_active_sequence = sequenceRuntime_.isActive();
-  sequence_finish_emergency_pending_ = false;
-  sequenceRuntime_.resetForAbort();
-  if (had_active_sequence)
-  {
-    RCLCPP_WARN(nh_->get_logger(), "[EMERGENCY] Active action sequence aborted");
-  }
-  publishImitationActive(false, "[EMERGENCY] Deactivate imitation worker");
+  stop_reasons_.fetch_or(static_cast<uint32_t>(reason));
+  policy_handoff_.clear();
+  policyMux_.publishImitationActive(false, "[EMERGENCY] Deactivate imitation worker");
   abortWbcImmediately("[EMERGENCY] Deactivate WBC worker");
-  setPolicySource(walkStartPolicySource(), "[EMERGENCY] Policy source restored to default");
+  policyMux_.setSource(policyMux_.walkStartPolicySource(), "[EMERGENCY] Policy source restored to default");
 
-  if (!fsm_->isEmergency()) fsm_->emergencyStop();
+  fsm_->emergencyStop();
 
   kp_standby_ = 0;
   printEmergencyStopBanner(nh_->get_logger());
@@ -92,7 +163,7 @@ void LeggedController::triggerEmergencyStop() {
 void LeggedController::enterWalkMode() {
   if (!fsm_->isStandby()) return;
 
-  clearSequenceReleaseHandoff();
+  policy_handoff_.clear();
   fsm_->setWalk();
   startingTime_ = rclcpp::Clock().now();
   printWalkModeBanner(nh_->get_logger());
@@ -103,15 +174,16 @@ void LeggedController::resetController() {
   if (!fsm_->isEmergency()) return;
 
   fsm_->resetFromEmergency();
+  stop_reasons_.store(0);
   kp_standby_ = 0;
-  orientation_violation_count_ = 0;
-  sequenceRuntime_.resetForAbort();
-  publishImitationActive(false, "[RESET] Deactivate imitation worker");
+  if (safetyChecker_) safetyChecker_->setOrientationMonitoring(false);
+  policy_handoff_.clear();
+  policyMux_.publishImitationActive(false, "[RESET] Deactivate imitation worker");
   abortWbcImmediately("[RESET] Deactivate WBC worker");
   policyMux_.clearCommands(0.0);
   RCLCPP_INFO(nh_->get_logger(), "[RESET] Standby targets cleared to zero pose");
-  setPolicySource(walkStartPolicySource(), "[RESET] Policy source restored to startup default");
-  publishRlObsReset();
+  policyMux_.setSource(policyMux_.walkStartPolicySource(), "[RESET] Policy source restored to startup default");
+  policyMux_.publishRlObsReset();
 
   logResetBanner(nh_->get_logger());
 
@@ -189,7 +261,7 @@ void LeggedController::calibrateByTag(const std::string& tag, const std::string&
 }
 
 bool LeggedController::imitationActionActive() const {
-  return policyMux_.source() != PolicyCmdSource::kRl || policyMux_.imitationActiveCommanded() ||
+  return motion_reserved_.load() || policyMux_.source() != PolicyCmdSource::kRl || policyMux_.imitationActiveCommanded() ||
          policyMux_.wbcActiveCommanded() || wbc_return_pending_.load() || wbc_handoff_in_progress_.load();
 }
 
@@ -197,11 +269,6 @@ bool LeggedController::canStartAmpDerivedAction(const char* context, const std::
                                                 bool require_walking, bool block_imitation_active) const {
   const char* tag = context != nullptr ? context : "[ActionTrigger]";
   const std::string label = action_label.empty() ? "unnamed" : action_label;
-  if (textMotionCtrl_.busy())
-  {
-    RCLCPP_WARN(nh_->get_logger(), "%s Ignoring action '%s': text motion owns auxiliary joints", tag, label.c_str());
-    return false;
-  }
 
   if (require_walking && (!fsm_ || !fsm_->isWalking()))
   {
@@ -213,11 +280,6 @@ bool LeggedController::canStartAmpDerivedAction(const char* context, const std::
     RCLCPP_WARN(nh_->get_logger(), "%s Ignoring action '%s': controller is not in a safe state", tag, label.c_str());
     return false;
   }
-  if (sequenceRuntime_.isActive())
-  {
-    RCLCPP_WARN(nh_->get_logger(), "%s Ignoring action '%s': action sequence is already active", tag, label.c_str());
-    return false;
-  }
   if (block_imitation_active && imitationActionActive())
   {
     RCLCPP_WARN(nh_->get_logger(), "%s Ignoring action '%s': another policy action or WBC handoff is already active",
@@ -225,6 +287,117 @@ bool LeggedController::canStartAmpDerivedAction(const char* context, const std::
     return false;
   }
   return true;
+}
+
+bool LeggedController::startImitationAction(const std::string& policy) {
+  std::lock_guard<std::mutex> lock(auxiliary_action_trigger_mutex_);
+  if (!canStartAmpDerivedAction("[Imitation]", policy, true, true))
+  {
+    return false;
+  }
+
+  if (!policyMux_.switchImitationPolicy(policy, "[Imitation]"))
+  {
+    return false;
+  }
+
+  policyMux_.setSource(PolicyCmdSource::kImitation);
+  policyMux_.publishImitationReset();
+  policyMux_.publishImitationActive(true);
+  applyJoystickMotion(lastJoystickCommand_);
+  return true;
+}
+
+void LeggedController::returnToRlWithoutGainRamp(const char* reason) {
+  if (imitation_return_blend_sec_ > 1e-9 && policyMux_.source() == PolicyCmdSource::kImitation)
+  {
+    const bool walking = fsm_ && fsm_->isWalking();
+    const PolicyInputs inputs = policyMux_.selectInputs(walking);
+    if (inputs.using_imitation && !inputs.q_snapshot.empty())
+    {
+      const size_t n = jointNames_.size();
+      std::vector<bool> joint_mask(n, false);
+      std::vector<JointCommandSample> start_cmd(n);
+      const size_t q_count = std::min(n, inputs.q_snapshot.size());
+      for (size_t j = 0; j < q_count; ++j)
+      {
+        joint_mask[j] = true;
+        start_cmd[j].q = inputs.q_snapshot[j];
+        start_cmd[j].dq = 0.0;
+        start_cmd[j].kp = (j < inputs.gains.kps.size()) ? inputs.gains.kps[j] : 0.0;
+        start_cmd[j].kd = (j < inputs.gains.kds.size()) ? inputs.gains.kds[j] : 0.0;
+        start_cmd[j].tau_ff = 0.0;
+      }
+
+      double wall_sec = last_controller_wall_sec_;
+      if (wall_sec <= 0.0 && nh_)
+      {
+        wall_sec = nh_->get_clock()->now().seconds();
+      }
+
+      JointCommandTransition& handoff = policy_handoff_;
+      handoff.clear();
+      if (handoff.start(joint_mask, start_cmd, wall_sec, imitation_return_blend_sec_))
+      {
+        RCLCPP_INFO(nh_->get_logger(), "[PolicyMux] Imitation -> RL handoff blend %.3fs", imitation_return_blend_sec_);
+      }
+    }
+  }
+
+  policyMux_.returnToRlWithoutGainRamp(reason);
+}
+
+geometry_msgs::msg::Twist LeggedController::computeJoystickTrim(const JoystickCommand& command) {
+  geometry_msgs::msg::Twist input;
+  input.linear.x = command.vx;
+  input.linear.y = command.vy;
+  input.angular.z = command.wz;
+
+  updateSpeedMultiplier(command.lt_axis);
+  return velLimiter_ ? velLimiter_->filter(input) : input;
+}
+
+geometry_msgs::msg::Twist LeggedController::selectedOperatorVelocity(
+    const geometry_msgs::msg::Twist& joystick_velocity) {
+  if (!radarControlEnabled_)
+  {
+    return joystick_velocity;
+  }
+
+  if (!fsm_ || !fsm_->isWalking())
+  {
+    return geometry_msgs::msg::Twist();
+  }
+
+  std::lock_guard<std::mutex> lock(plannerCommandMutex_);
+  if (!plannerCommandSeen_)
+  {
+    RCLCPP_DEBUG_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
+                          "Planner velocity command has not been received; commanding zero velocity");
+    return geometry_msgs::msg::Twist();
+  }
+
+  if (!plannerCommandValid_)
+  {
+    RCLCPP_DEBUG_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
+                          "Planner velocity command is invalid; commanding zero velocity");
+    return geometry_msgs::msg::Twist();
+  }
+
+  const bool fresh =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - plannerCommandReceiveTime_).count() <= 0.5;
+  if (fresh)
+  {
+    return plannerCommand_;
+  }
+
+  RCLCPP_DEBUG_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
+                        "Planner velocity command is stale; commanding zero velocity");
+  return geometry_msgs::msg::Twist();
+}
+
+void LeggedController::applyJoystickMotion(const JoystickCommand& command) {
+  policy_observation_.velocity_command = selectedOperatorVelocity(computeJoystickTrim(command));
 }
 
 }  // namespace legged

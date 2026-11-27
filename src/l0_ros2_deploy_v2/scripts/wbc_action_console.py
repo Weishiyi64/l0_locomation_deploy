@@ -40,7 +40,8 @@ def load_actions(bundle, selected):
         if hashlib.sha256(data).hexdigest() != entry['config_sha256']:
             raise ValueError('动作配置哈希不符：' + action)
         cfg = yaml.safe_load(data)['WbcCfg']
-        duration = float(cfg['reference_num_frames']) * float(cfg['control_dt']) + float(cfg.get('start_hold_sec', 0))
+        frames = int(cfg['reference_num_frames']) - int(cfg.get('first_reference_frame', 0))
+        duration = frames * float(cfg['control_dt']) + float(cfg.get('start_hold_sec', 0))
         if cfg['motion_id'] != action or not math.isfinite(duration) or duration <= 0:
             raise ValueError('动作 ID 或时长无效：' + action)
         durations[action] = duration
@@ -89,8 +90,6 @@ def run_console(args, actions, durations):
     from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
     from std_msgs.msg import Bool, String
 
-    graph = json.loads((args.bundle / 'base_manifest.json').read_text())
-    expected_mode = {'wbc_base_graph_v1': 'base', 'wbc_lora_graph_v1': 'lora'}[graph['format']]
     if not sys.stdin.isatty():
         raise ValueError('动作控制台需要交互终端，不接受管道或批量输入')
     rclpy.init(args=[])
@@ -139,22 +138,22 @@ def run_console(args, actions, durations):
         if names.count(WORKER) != 1:
             raise ValueError('必须只有一个 /rl_controller_wbc')
         request = GetParameters.Request()
-        request.names = ['wbc_mode', 'wbc_lora_manifest', 'available_wbc_policies']
+        request.names = ['wbc_lora_manifest', 'available_wbc_policies']
         future = client.call_async(request)
         rclpy.spin_until_future_complete(node, future, timeout_sec=3)
         if not future.done():
             future.cancel()
             raise ValueError('读取 worker 参数超时，未发送动作')
         response = future.result()
-        if response is None or len(response.values) != 3:
+        if response is None or len(response.values) != 2:
             raise ValueError('无法读取 worker 参数')
-        mode, manifest, loaded = [parameter_value_to_python(v) for v in response.values]
-        if (mode != expected_mode or not isinstance(manifest, str) or
-                Path(manifest).resolve() != (args.bundle / 'base_manifest.json').resolve() or
+        manifest, loaded = [parameter_value_to_python(v) for v in response.values]
+        if (not isinstance(manifest, str) or
+                Path(manifest).resolve() not in {(args.bundle / name).resolve() for name in ('base_manifest.json', 'deployment.json')} or
                 not isinstance(loaded, list) or loaded != actions):
             raise ValueError('运行中的 worker 与控制台加载的配置不一致，请核对启动参数并重启部署/控制台')
         services = dict(node.get_service_names_and_types())
-        if 'luvbot_control_interfaces/srv/ControlWbcMotion' not in services.get('/control/policy/wbc/prepare', []):
+        if 'robot_interfaces/srv/ControlWbcMotion' not in services.get('/control/policy/wbc/prepare', []):
             raise ValueError('prepare 服务未就绪，未发送动作')
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:

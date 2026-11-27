@@ -1,33 +1,21 @@
 #!/usr/bin/env python3
-from pathlib import Path
-import sys
-
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, SetEnvironmentVariable, LogInfo
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-_launch_dir = str(Path(__file__).resolve().parent)
-if _launch_dir not in sys.path:
-    sys.path.insert(0, _launch_dir)
+
+import sys
+from pathlib import Path
+
+launch_dir = str(Path(__file__).parent)
+if launch_dir not in sys.path:
+    sys.path.insert(0, launch_dir)
 from deployment_config import apply_settings, prepare_deployment
-
-
-def _configure_environment(context):
-    mode = context.launch_configurations['hpm_mode']
-    if mode not in ('real', 'isolated'):
-        raise RuntimeError('hpm_mode must be real or isolated')
-    if mode == 'isolated':
-        domain = int(context.launch_configurations['isolated_ros_domain'])
-        if not 1 <= domain <= 232:
-            raise RuntimeError('isolated_ros_domain must be between 1 and 232')
-        return [SetEnvironmentVariable('ROS_DOMAIN_ID', str(domain)),
-                SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '1'),
-                LogInfo(msg=f'HPM isolated endpoints; ROS_DOMAIN_ID={domain}, ROS_LOCALHOST_ONLY=1')]
-    return []
+from launch.actions import OpaqueFunction
 
 
 def generate_launch_description():
@@ -35,23 +23,19 @@ def generate_launch_description():
     subpolicy = LaunchConfiguration('subpolicy')
     radar_control_enabled = LaunchConfiguration('radar_control_enabled')
     nav_planner_model_path = LaunchConfiguration('nav_planner_model_path')
-    planner_depth_input_enabled = LaunchConfiguration('planner_depth_input_enabled')
-    raw_depth_preview_enabled = LaunchConfiguration('raw_depth_preview_enabled')
-    wbc_enabled = LaunchConfiguration('wbc_enabled')
-    wbc_policies = LaunchConfiguration('wbc_policies')
+    nav_check_sensor_timestamps = LaunchConfiguration('nav_check_sensor_timestamps')
+    nav_reference_receive_timeout = LaunchConfiguration('nav_reference_receive_timeout')
+    wbc_frontend_enabled = LaunchConfiguration('wbc_enabled')
+    txt2motion_enabled = LaunchConfiguration('txt2motion_enabled')
+    wbc_enabled = PythonExpression([
+        "str('", LaunchConfiguration('wbc_enabled'), "'.lower() == 'true' or '",
+        txt2motion_enabled, "'.lower() == 'true').lower()"])
     bag_enabled = LaunchConfiguration('bag_enabled')
     bag_name = LaunchConfiguration('bag_name')
     rviz = LaunchConfiguration('rviz')
     battery_enabled = LaunchConfiguration('battery_enabled')
     imu_enabled = LaunchConfiguration('imu_enabled')
-    head_script_enabled = LaunchConfiguration('head_script_enabled')
-    head_script_config = LaunchConfiguration('head_script_config')
-    joystick_imitation_enabled = LaunchConfiguration('joystick_imitation_enabled')
-    joystick_imitation_config_path = LaunchConfiguration('joystick_imitation_config_path')
-    joystick_sequence_enabled = LaunchConfiguration('joystick_sequence_enabled')
-    joystick_sequence_config_path = LaunchConfiguration('joystick_sequence_config_path')
-    joystick_back_emergency_sequence_enabled = LaunchConfiguration('joystick_back_emergency_sequence_enabled')
-    joystick_back_emergency_sequence_path = LaunchConfiguration('joystick_back_emergency_sequence_path')
+    imitation_policies = LaunchConfiguration('imitation_policies')
     emergency_damping_kd = LaunchConfiguration('emergency_damping_kd')
     arm_swing_enabled = LaunchConfiguration('arm_swing_enabled')
     arm_swing_stop_vx_threshold = LaunchConfiguration('arm_swing_stop_vx_threshold')
@@ -66,7 +50,7 @@ def generate_launch_description():
 
     args = [
         DeclareLaunchArgument('robot_type', default_value='l0_v5'),
-        DeclareLaunchArgument('subpolicy', default_value='l0_v5_amp_07090'),
+        DeclareLaunchArgument('subpolicy', default_value='l0_v5_amp_1124'),
         DeclareLaunchArgument('radar_control_enabled', default_value='false'),
         DeclareLaunchArgument(
             'nav_planner_model_path',
@@ -76,68 +60,42 @@ def generate_launch_description():
                     'policy',
                     robot_type,
                     'local_planner',
-                    'planner_09090.onnx',
+                    'model_1600_dense.onnx',
                 ]
             ),
         ),
-        DeclareLaunchArgument('planner_depth_input_enabled', default_value='false'),
-        DeclareLaunchArgument('raw_depth_preview_enabled', default_value='true'),
-        DeclareLaunchArgument('cloud_voltage_test_enabled', default_value='false'),
-        DeclareLaunchArgument('cloud_device_id', default_value='LUV2026090001'),
+        DeclareLaunchArgument('nav_check_sensor_timestamps', default_value='false'),
+        DeclareLaunchArgument('nav_reference_receive_timeout', default_value='true'),
+        DeclareLaunchArgument('cloud_enabled', default_value='false'),
+        DeclareLaunchArgument('cloud_device_id', default_value='RUMI-TEST-007'),
         DeclareLaunchArgument('cloud_host', default_value='mqtt.luvbotics.com'),
         DeclareLaunchArgument('cloud_cert_dir', default_value=''),
+        DeclareLaunchArgument('cloud_wake_timeout_sec', default_value='10.0'),
+        DeclareLaunchArgument('cloud_health_overheat_c', default_value='85.0'),
+        DeclareLaunchArgument('cloud_health_recover_c', default_value='80.0'),
+        DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora_fp16'),
+        DeclareLaunchArgument('wbc_mode', default_value='auto'),
+        DeclareLaunchArgument('wbc_policies', default_value='[]'),
         DeclareLaunchArgument('wbc_enabled', default_value='true'),
-        DeclareLaunchArgument('text_motion_enabled', default_value='false'),
-        DeclareLaunchArgument('wbc_mode', default_value='static'),
-        DeclareLaunchArgument('wbc_lora_bundle', default_value='wbc_lora'),
-        DeclareLaunchArgument('hpm_mode', default_value='real'),
-        DeclareLaunchArgument('isolated_ros_domain', default_value='97'),
-        DeclareLaunchArgument('wbc_policies', default_value='[L0_excited_1, L0_sad_1, L0_sad_7, L0_sad_8, L0_sad_9, L0_sad_10, L0_sad_new_1, L0_sad_new_2, L0_sad_new_3, L0_sad_new_4, L0_sad_wanyao, L0_14_satisfied, L0_Approve_8, L0_Approve_24, L0_Approve_26, L0_delicious, L0_satisfied_7, L0_satisfied_8, L0_satisfied_9, L0_satisfied_10, L0_satisfied_new_1]'),
+        DeclareLaunchArgument('txt2motion_enabled', default_value='true'),
         DeclareLaunchArgument('bag_enabled', default_value='false'),
         DeclareLaunchArgument(
             'bag_name',
             default_value=PythonExpression(["'", subpolicy, "_real'"]),
         ),
-        DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('battery_enabled', default_value='false'),
         DeclareLaunchArgument('imu_enabled', default_value='true'),
-        DeclareLaunchArgument('head_script_enabled', default_value='false'),
-        DeclareLaunchArgument(
-            'head_script_config',
-            default_value=PathJoinSubstitution(
-                [FindPackageShare('legged_controllers'), 'pcmd_yaml', 'l0_keepalone.yaml']
-            ),
-        ),
-        DeclareLaunchArgument('joystick_imitation_enabled', default_value='false'),
-        DeclareLaunchArgument(
-            'joystick_imitation_config_path',
-            default_value=PathJoinSubstitution(
-                [FindPackageShare('legged_controllers'), 'config', 'joystick_imitation_actions.yaml']
-            ),
-        ),
-        DeclareLaunchArgument('joystick_sequence_enabled', default_value='false'),
-        DeclareLaunchArgument(
-            'joystick_sequence_config_path',
-            default_value=PathJoinSubstitution(
-                [FindPackageShare('legged_controllers'), 'config', 'joystick_sequence_actions.yaml']
-            ),
-        ),
-        DeclareLaunchArgument('joystick_back_emergency_sequence_enabled', default_value='false'),
-        DeclareLaunchArgument(
-            'joystick_back_emergency_sequence_path',
-            default_value=PathJoinSubstitution(
-                [FindPackageShare('legged_controllers'), 'action_sequences', 'walking_back_emergency.yaml']
-            ),
-        ),
-        DeclareLaunchArgument('emergency_damping_kd', default_value='0.2'),
+        DeclareLaunchArgument('imitation_policies', default_value='[]'),
+        DeclareLaunchArgument('emergency_damping_kd', default_value='0.1'),
         DeclareLaunchArgument('arm_swing_enabled', default_value='false'),
         DeclareLaunchArgument('arm_swing_stop_vx_threshold', default_value='0.1'),
         DeclareLaunchArgument('arm_swing_high_vx_threshold', default_value='0.8'),
         DeclareLaunchArgument('arm_swing_vx_hysteresis', default_value='0.03'),
         DeclareLaunchArgument('arm_swing_blend_sec', default_value='0.5'),
-        DeclareLaunchArgument('safety_orientation_roll_limit_deg', default_value='30.0'),
-        DeclareLaunchArgument('safety_orientation_pitch_limit_deg', default_value='30.0'),
-        DeclareLaunchArgument('safety_orientation_consecutive_violation_count', default_value='10'),
+        DeclareLaunchArgument('safety_orientation_roll_limit_deg', default_value='45.0'),
+        DeclareLaunchArgument('safety_orientation_pitch_limit_deg', default_value='45.0'),
+        DeclareLaunchArgument('safety_orientation_consecutive_violation_count', default_value='200'),
     ]
 
     # 调用 sequential_launch_real.sh：按顺序启动话题硬件桥和主控制器
@@ -153,10 +111,7 @@ def generate_launch_description():
             rviz,
             battery_enabled,
             imu_enabled,
-            head_script_enabled,
-            head_script_config,
-            joystick_imitation_enabled,
-            joystick_imitation_config_path,
+            imitation_policies,
             arm_swing_enabled,
             arm_swing_stop_vx_threshold,
             arm_swing_high_vx_threshold,
@@ -165,45 +120,41 @@ def generate_launch_description():
             safety_orientation_roll_limit_deg,
             safety_orientation_pitch_limit_deg,
             safety_orientation_consecutive_violation_count,
-            joystick_sequence_enabled,
-            joystick_sequence_config_path,
-            joystick_back_emergency_sequence_enabled,
-            joystick_back_emergency_sequence_path,
             emergency_damping_kd,
             radar_control_enabled,
             nav_planner_model_path,
-            planner_depth_input_enabled,
-            raw_depth_preview_enabled,
             wbc_enabled,
-            wbc_policies,
-            LaunchConfiguration('wbc_mode'),
+            LaunchConfiguration('wbc_policies'),
+            nav_check_sensor_timestamps,
+            nav_reference_receive_timeout,
             LaunchConfiguration('wbc_lora_bundle'),
-            LaunchConfiguration('hpm_mode'),
-            LaunchConfiguration('text_motion_enabled'),
+            wbc_frontend_enabled,
+            txt2motion_enabled,
         ],
         output='screen',
-        # Allow the sequential launcher to retire all owned groups in reverse order.
-        sigterm_timeout='35',
+        sigterm_timeout='15',
         sigkill_timeout='5',
     )
 
-    cloud_voltage_test = IncludeLaunchDescription(
+    cloud_bridge = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
                 [
                     FindPackageShare('luvbot_cloud_bridge'),
                     'launch',
-                    'voltage_test.launch.py',
+                    'cloud_bridge.launch.py',
                 ]
             )
         ),
-        condition=IfCondition(LaunchConfiguration('cloud_voltage_test_enabled')),
+        condition=IfCondition(LaunchConfiguration('cloud_enabled')),
         launch_arguments={
             'device_id': LaunchConfiguration('cloud_device_id'),
             'host': LaunchConfiguration('cloud_host'),
             'cert_dir': LaunchConfiguration('cloud_cert_dir'),
+            'wake_timeout_sec': LaunchConfiguration('cloud_wake_timeout_sec'),
+            'health_overheat_c': LaunchConfiguration('cloud_health_overheat_c'),
+            'health_recover_c': LaunchConfiguration('cloud_health_recover_c'),
         }.items(),
     )
 
-    return LaunchDescription(apply_settings(args) + [OpaqueFunction(function=_configure_environment),
-        OpaqueFunction(function=prepare_deployment), sequential_launch, cloud_voltage_test])
+    return LaunchDescription(apply_settings(args) + [OpaqueFunction(function=prepare_deployment), sequential_launch, cloud_bridge])

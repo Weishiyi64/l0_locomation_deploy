@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "ITransport.hpp"
+#include "SocketHandle.hpp"
 
 namespace odin {
 namespace sdk {
@@ -53,8 +54,8 @@ class TcpTransport : public ITransport {
   void AcceptLoop();
   void ReceiveLoop();
 
-  int listen_socket_ = -1;
-  int client_socket_ = -1;
+  SocketHandle listen_socket_ = kInvalidSocketHandle;
+  SocketHandle client_socket_ = kInvalidSocketHandle;
   std::atomic<bool> running_{false};
   std::atomic<bool> connected_{false};
   std::thread accept_thread_;

@@ -1,0 +1,548 @@
+# Copyright (c) 2026 HPMicro
+# SPDX-License-Identifier: BSD-3-Clause
+# null means REQUIRED, except max_temperature_c: null disables the host cutoff.
+# These are not commissioned drive settings.
+# Angles: motor positive == URDF positive, feedback is output-shaft radians.
+# A confirmed direction does NOT certify current limits, the fixture or watchdog.
+# true: seek, SETZERO and return; false: seek-only diagnosis.
+write_zero: true
+# false: skip knee 135-degree assistance during leg module calibration.
+hip_pitch_assist_enabled: true
+
+# Pause between module joints; keep streaming control. 0 disables the pause.
+module_joint_pause_s: 0.5
+
+defaults:
+  motion_test_cycles: 3
+  motion_test_timeout_s: 10.0  # Fault timeout only; two command direction changes per configured cycle.
+  motion_test_reverse_margin_deg: 2.0  # Reverse inward before the measured position reaches a test endpoint.
+  motion_test_speed_limit_rad_s: 2.9  # All joints: sine-only sustained overspeed.
+  motion_test_emergency_speed_rad_s: 3.0  # Sine-only immediate exit.
+  motion_test_torque_source: fixed
+  motion_test_speed_rad_s: 0.5
+  motion_test_torque_rate_nm_s: 0.25
+  motion_test_torque_ff_nm: 0.8
+  motion_test_arrival_tolerance_deg: 15.0  # Post-test return only; capped by joint arrival tolerance. Position guard is independent.
+  ls_zero_retry_until_success: true
+  # After module calibration: type yes to test selected motors sequentially.
+  motion_test_amplitude_deg: 15.0  # Half amplitude: 30 degrees peak-to-peak before joint-limit clipping.
+  motion_test_position_margin_deg: 5.0
+  motion_test_use_seek_feedforward: true
+  brake_overspeed_confirm_s: 0.05
+  brake_emergency_speed_ratio: 2.0
+  motion_settle_position_deg: 0.1
+  brake_kd: 0.4
+  brake_max_torque_nm: 0.7
+  brake_speed_ratio: 1.5
+  brake_speed_margin_rad_s: 0.2
+  brake_position_error_deg: 10.0
+  brake_confirm_s: 0.1
+  brake_velocity_rad_s: 0.02
+  brake_settle_s: 0.2
+  brake_timeout_s: 10.0
+  max_brake_attempts: 10
+  final_mode: position  # damping or position, per-joint overrides supported.
+  zero_max_attempts: 20
+  # LS only: dedicated ACK plus fresh zero coordinates, bounded retries.
+  ls_zero_attempt_timeout_s: 4.0
+  ls_zero_total_timeout_s: 10.0
+  rate_hz: 500.0
+  feedback_timeout_s: 0.5
+  feedback_start_timeout_s: 2.0
+  minimum_motion_rad: 0.01  # Wrong-direction displacement tolerance only; no minimum forward travel.
+  stall_window_s: 0.5
+  stall_confirm_s: 0.3
+  position_epsilon_rad: 0.002
+  stall_velocity_rad_s: 0.02  # Covers PA35 MR quantized standstill (~0.01588 rad/s).
+  stop_settle_s: 0.2
+  stop_timeout_s: 2.0
+  zero_reference_tolerance_rad: 0.01  # Contact movement before SETZERO.
+  post_zero_static_check: true
+  post_zero_tolerance_deg: 1.15  # Static offset from drive zero after SETZERO.
+  arrival_tolerance_deg: 10.0  # 10 degrees
+  arrival_velocity_rad_s: 0.02
+  arrival_settle_s: 0.3
+  hold_error_deg: 10.0  # 10 degrees
+
+  seek_speed_rad_s: 0.3
+  return_speed_rad_s: 0.3
+  return_max_lead_deg: 8.0  # Reference waits for slow tracking; below brake threshold.
+  damping_kd: 0.2  # Completed joint: pure damping, no position/feedforward hold.
+
+  contact_torque_nm: 0.05
+  max_torque_nm: 3.0
+  max_temperature_c: null
+  max_seek_time_s: 30.0
+  max_seek_travel_rad: 3.3
+  max_return_time_s: 25.0
+  max_feedback_step_rad: 0.04
+
+modules:
+  left_arm: [left_elbow_roll_joint, left_shoulder_roll_joint, left_shoulder_pitch_joint]
+  right_arm: [right_elbow_roll_joint, right_shoulder_roll_joint, right_shoulder_pitch_joint]
+  left_leg: [left_ankle_roll_joint, left_ankle_pitch_joint, left_knee_joint, left_hip_yaw_joint, left_hip_roll_joint, left_hip_pitch_joint]
+  right_leg: [right_ankle_roll_joint, right_ankle_pitch_joint, right_knee_joint, right_hip_yaw_joint, right_hip_roll_joint, right_hip_pitch_joint]
+  neck: [neck_roll_joint, neck_pitch_joint, neck_yaw_joint]
+
+
+# Per-joint gains: kd = seek/pre-zero preload (kp is fixed at 0).
+# bck_kp/bck_kd = return and HOLD recovery; hold_kp/hold_kd = position hold.
+# Brake and knee-assist damping retain their separate settings.
+joints:
+  left_elbow_roll_joint:  # motor_index: 14 (display only)
+    motion_settle_position_deg: 1.0
+    motion_test_speed_rad_s: 0.55
+    motion_test_turn_extension_s: 0.25
+    motion_test_torque_rate_nm_s: 0.4
+    motion_test_torque_ff_nm: 0.3
+    max_torque_nm: 3.0
+    seek_direction: 1
+    home_angle_deg: 90.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 4.0
+    bck_kd: 0.3
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: 0.2
+    move_torque_ff_nm: 0.2
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  left_shoulder_roll_joint:  # motor_index: 13 (display only)
+    motion_test_torque_ff_nm: 0.25
+    max_torque_nm: 3.0
+    seek_direction: -1
+    home_angle_deg: -90.0
+    direction_confirmed: true
+    kd: 0.2
+    bck_kp: 5.0
+    bck_kd: 0.2
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: 0.18
+    hold_torque_ff_nm: 0.2
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  left_shoulder_pitch_joint:  # motor_index: 12 (display only)
+    zero_max_attempts: 3
+    motion_test_timeout_s: 15.0
+    motion_test_amplitude_deg: 20.0
+    motion_test_speed_rad_s: 0.8
+    motion_test_smooth_reverse: true
+    motion_test_turn_extension_s: 0.25
+    motion_test_torque_rate_nm_s: 0.4
+    max_feedback_step_rad: 0.06
+    motion_test_decel_kd: 0.2
+    motion_test_torque_ff_nm: 0.3
+    post_zero_static_check: false  # Hand moving feedback directly to return/brake.
+    max_torque_nm: 3.0
+    max_seek_travel_rad: 5.4
+    seek_direction: 1
+    home_angle_deg: 150.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 1.5
+    bck_kd: 0.2
+
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: 0.4
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+    return_overspeed_kd: 0.05
+    return_overspeed_torque_limit_nm: 0.05
+    return_speed_rad_s: 0.7
+  right_elbow_roll_joint:  # motor_index: 17 (display only)
+    motion_settle_position_deg: 1.0
+    motion_test_speed_rad_s: 0.55
+    motion_test_turn_extension_s: 0.25
+    motion_test_torque_rate_nm_s: 0.4
+    motion_test_torque_ff_nm: 0.3
+    max_torque_nm: 3.0
+    seek_direction: -1
+    home_angle_deg: -90.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 4.0
+    bck_kd: 0.3
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.2
+    move_torque_ff_nm: -0.2
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  right_shoulder_roll_joint:  # motor_index: 16 (display only)
+    motion_test_torque_ff_nm: 0.25
+    max_torque_nm: 3.0
+    seek_direction: 1
+    home_angle_deg: 90.0
+    direction_confirmed: true
+    kd: 0.2
+    bck_kp: 5.0
+    bck_kd: 0.2
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: 0.5
+    move_torque_ff_nm: -0.18
+    hold_torque_ff_nm: -0.2
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  right_shoulder_pitch_joint:  # motor_index: 15 (display only)
+    zero_max_attempts: 3
+    motion_test_timeout_s: 15.0
+    motion_test_amplitude_deg: 20.0
+    motion_test_speed_rad_s: 0.8
+    motion_test_smooth_reverse: true
+    motion_test_turn_extension_s: 0.25
+    motion_test_torque_rate_nm_s: 0.4
+    max_feedback_step_rad: 0.06
+    motion_test_decel_kd: 0.2
+    motion_test_torque_ff_nm: 0.3
+    post_zero_static_check: false  # Hand moving feedback directly to return/brake.
+    max_torque_nm: 3.0
+    max_seek_travel_rad: 5.4
+    seek_direction: -1
+    home_angle_deg: -150.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 1.5
+    bck_kd: 0.2
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.4
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+    return_overspeed_kd: 0.05
+    return_overspeed_torque_limit_nm: 0.05
+    return_speed_rad_s: 0.7
+
+  left_ankle_roll_joint:  # motor_index: 5 (display only)
+    feedback_timeout_s: 0.75
+    max_torque_nm: 9.0
+    seek_direction: -1
+    home_angle_deg: -25.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 8.0
+    bck_kd: 0.3
+    hold_kp: 20.0
+    hold_kd: 1.0
+    seek_torque_ff_nm: -1.0
+    move_torque_ff_nm: -1.2
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  left_ankle_pitch_joint:  # motor_index: 4 (display only)
+    return_overspeed_kd: 1.0
+    return_overspeed_torque_limit_nm: 0.5
+    max_torque_nm: 9.0
+    seek_direction: -1
+    home_angle_deg: -40.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 8.0
+    bck_kd: 0.3
+    hold_kp: 6.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: -1.0
+    move_torque_ff_nm: -1.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+    motion_test_torque_ff_nm: 0.7
+
+  left_knee_joint:  # motor_index: 3 (display only)
+    motion_test_reverse_margin_deg: 3.0
+    # Knee pure damping during same-side HipPitch calibration; no pre-bend.
+    hip_pitch_assist_seek_kd: 0.1    # HipPitch seek / stop / write-zero.
+    hip_pitch_assist_return_kd: 0.1  # HipPitch return, then restore original knee HOLD.
+    max_torque_nm: 9.0
+    seek_direction: 1
+    home_angle_deg: 0.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 9.0
+    bck_kd: 2.0
+    hold_kp: 5.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: 1.0
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 3.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  left_hip_yaw_joint:  # motor_index: 2 (display only)
+    max_torque_nm: 9.0
+    seek_direction: 1
+    home_angle_deg: 60.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 9.0
+    bck_kd: 0.7
+    hold_kp: 4.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: 1.0
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 2.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  left_hip_roll_joint:  # motor_index: 1 (display only)
+    max_torque_nm: 9.0
+    seek_direction: -1
+    home_angle_deg: -20.0
+    direction_confirmed: true
+    kd: 0.5
+    bck_kp: 9.0
+    bck_kd: 0.5
+    hold_kp: 9.0
+    hold_kd: 0.4
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: 1.4
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 3.5
+    adaptive_torque_limit_nm: 3.5
+    adaptive_torque_rate_nm_s: 0.25
+    arrival_tolerance_deg: 10.0  # 接近终点后才切换 HOLD
+    hold_error_deg: 10.0        # 保持偏差超过10°时进入恢复
+    motion_test_torque_ff_nm: 0.6
+    motion_test_cycles: 3
+
+  left_hip_pitch_joint:  # motor_index: 0 (display only)
+    post_zero_static_check: false  # Hand moving feedback directly to return/brake.
+    max_torque_nm: 36.0
+    seek_direction: 1
+    home_angle_deg: 150.0
+    direction_confirmed: true
+    kd: 0.5
+    bck_kp: 8.0
+    bck_kd: 0.5
+    hold_kp: 6.0
+    hold_kd: 0.3
+    seek_torque_ff_nm: 3.6
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+    brake_kd: 2.0
+    brake_max_torque_nm: 4.0
+    motion_test_torque_ff_nm: 0.8
+
+  right_ankle_roll_joint:  # motor_index: 11; mirrored from left
+    feedback_timeout_s: 0.75
+    max_torque_nm: 9.0
+    seek_direction: 1
+    home_angle_deg: 25.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 8.0
+    bck_kd: 0.3
+    hold_kp: 20.0
+    hold_kd: 1.0
+    seek_torque_ff_nm: 1.0
+    move_torque_ff_nm: 1.2
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  right_ankle_pitch_joint:  # motor_index: 10; mirrored from left
+    return_overspeed_kd: 1.0
+    return_overspeed_torque_limit_nm: 0.5
+    max_torque_nm: 11.0
+    seek_direction: -1
+    home_angle_deg: -40.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 8.0
+    bck_kd: 0.3
+    hold_kp: 6.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: -1.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+    motion_test_torque_ff_nm: 0.7
+
+  right_knee_joint:  # motor_index: 9 (display only)
+    motion_test_reverse_margin_deg: 3.0
+    motion_test_torque_ff_nm: 0.8
+    hip_pitch_assist_seek_kd: 0.1
+    hip_pitch_assist_return_kd: 0.1
+    max_torque_nm: 9.0
+    seek_direction: -1
+    home_angle_deg: 0.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 9.0
+    bck_kd: 2.0
+    hold_kp: 5.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: -1.0
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 3.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  right_hip_yaw_joint:  # motor_index: 8; mirrored from left
+    motion_test_torque_ff_nm: 0.6
+    max_torque_nm: 9.0
+    seek_direction: -1
+    home_angle_deg: -60.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 9.0
+    bck_kd: 0.7
+    hold_kp: 4.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: -1.0
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 2.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  right_hip_roll_joint:  # motor_index: 7 (display only)
+    post_zero_tolerance_deg: 5.0
+    max_torque_nm: 9.0
+    seek_direction: 1
+    home_angle_deg: 20.0
+    direction_confirmed: true
+    kd: 0.5
+    bck_kp: 9.0
+    bck_kd: 0.5
+    hold_kp: 9.0
+    hold_kd: 0.4
+    seek_torque_ff_nm: 0.5
+    move_torque_ff_nm: -1.4
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 3.5
+    adaptive_torque_limit_nm: 3.5
+    adaptive_torque_rate_nm_s: 0.25
+    arrival_tolerance_deg: 10.0
+    hold_error_deg: 10.0
+    motion_test_torque_ff_nm: 0.6
+    motion_test_cycles: 3
+
+  right_hip_pitch_joint:  # motor_index: 6 (display only)
+    post_zero_static_check: false  # Hand moving feedback directly to return/brake.
+    max_torque_nm: 36.0
+    seek_direction: -1
+    home_angle_deg: -150.0
+    direction_confirmed: true
+    kd: 0.5
+    bck_kp: 8.0
+    bck_kd: 0.5
+    hold_kp: 6.0
+    hold_kd: 0.3
+    seek_torque_ff_nm: -3.6
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25
+    brake_kd: 2.0
+    brake_max_torque_nm: 4.0
+    motion_test_torque_ff_nm: 0.8
+
+  neck_roll_joint:  # motor_index: 20 (display only)
+    feedback_timeout_s: 0.75
+    max_torque_nm: 6.0
+    seek_direction: -1
+    home_angle_deg: -17.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 5.0
+    bck_kd: 0.3
+    hold_kp: 2.0
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: -0.2
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 3.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  neck_pitch_joint:  # motor_index: 19 (display only)
+    feedback_timeout_s: 0.75
+    max_torque_nm: 3.0
+    seek_direction: -1
+    home_angle_deg: -20.0
+    direction_confirmed: true
+    kd: 0.2
+    bck_kp: 5.0
+    bck_kd: 0.2
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 2.0
+    adaptive_torque_rate_nm_s: 0.25
+
+  neck_yaw_joint:  # motor_index: 18 (display only)
+    feedback_timeout_s: 0.75
+    max_torque_nm: 6.0
+    seek_direction: -1
+    home_angle_deg: -90.0
+    direction_confirmed: true
+    kd: 0.3
+    bck_kp: 5.0
+    bck_kd: 0.3
+    hold_kp: 1.6
+    hold_kd: 0.1
+    seek_torque_ff_nm: -0.5
+    move_torque_ff_nm: 0.0
+    hold_torque_ff_nm: 0.0
+    adaptive_torque_enabled: true
+    adaptive_ki: 1.0
+    adaptive_torque_limit_nm: 1.0
+    adaptive_torque_rate_nm_s: 0.25

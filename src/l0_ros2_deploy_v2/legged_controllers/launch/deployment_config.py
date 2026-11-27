@@ -19,7 +19,9 @@ import yaml
 
 
 def workspace():
-    for parent in Path(__file__).resolve().parents:
+    for parent in Path(__file__).absolute().parents:
+        if parent.name == 'install' and (parent / '.wbc_workspace_path').is_file():
+            return Path((parent / '.wbc_workspace_path').read_text().strip()).resolve(strict=True)
         if parent.name in ('src', 'install'):
             return parent.parent
     raise RuntimeError('Cannot locate deployment workspace from launch file')
@@ -75,7 +77,7 @@ def checked_asset(root, relative):
 def deployment_assets(config):
     from ament_index_python.packages import get_package_share_directory
     root = Path(get_package_share_directory('legged_deploy')) / 'policy'
-    if not root.resolve().is_relative_to(workspace().resolve()):
+    if not root.resolve().is_relative_to((workspace() / 'install').resolve()):
         raise ValueError('legged_deploy belongs to another workspace')
     for name in ('robot_type', 'subpolicy'):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', config[name]):
@@ -89,51 +91,59 @@ def deployment_assets(config):
     for name in ('rl_config.yaml', 'joy_config.yaml'):
         if (source_amp / name).is_file() and sha(source_amp / name) != sha(amp / name):
             raise ValueError('AMP source/install config mismatch: ' + name)
-    if config['wbc_enabled'].lower() != 'true':
+    text_enabled = config['txt2motion_enabled'].lower() == 'true'
+    if config['wbc_enabled'].lower() != 'true' and not text_enabled:
+        config['wbc_mode'] = 'disabled'
         return None, []
-    mode = config['wbc_mode']
-    if mode not in ('base', 'lora', 'static'):
-        raise ValueError('wbc_mode must be base, lora or static')
+    name = config['wbc_lora_bundle']
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
+        raise ValueError('Invalid WBC bundle name')
+    bundle = robot_root / name
+    graph = json.loads(checked_asset(bundle, 'base_manifest.json').read_text())
+    mode = {'wbc_base_graph_v1': 'base', 'wbc_lora_graph_v1': 'lora'}[graph['format']]
+    if config.get('wbc_mode', 'auto') not in ('auto', mode):
+        raise ValueError('Selected mode does not match ' + name)
+    config['wbc_mode'] = mode
+    if text_enabled and (mode != 'lora' or not (bundle / 'deployment.json').is_file()):
+        raise ValueError('Select txt2motion_enabled:=false for a fixed actor bundle')
+    from motion_assets import load_motion_assets
+    assets = load_motion_assets(bundle / ('deployment.json' if text_enabled else 'base_manifest.json'))
+    catalog = {key: item for key, item in assets['actions'].items() if not item.get('json_only')}
     selected = yaml.safe_load(config['wbc_policies'])
-    bundle = None
-    if mode in ('base', 'lora'):
-        name = config['wbc_lora_bundle']
-        if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
-            raise ValueError('Invalid WBC bundle name')
-        bundle = robot_root / name
-        graph = json.loads((bundle / 'base_manifest.json').read_text())
-        expected = 'wbc_base_graph_v1' if mode == 'base' else 'wbc_lora_graph_v1'
-        if graph.get('format') != expected or graph.get('kind') != 'policy':
-            raise ValueError('WBC mode and manifest disagree')
-        checked_asset(bundle, graph['model']['rknn'])
-        checked_asset(bundle, graph['model']['rknn'] + '.json')
-        available = [item['action_id'] for item in graph['actions']]
-        if len(available) != len(set(available)):
-            raise ValueError('Duplicate WBC catalog actions')
-        if selected == 'all':
-            selected = available
-        record = json.loads((bundle / 'INSTALLATION.json').read_text())
-        for relative, expected_hash in record['files'].items():
-            if sha(checked_asset(bundle, relative)) != expected_hash:
+    if selected == 'all' or selected == []:
+        selected = list(catalog)
+    if (not isinstance(selected, list) or not selected or
+            any(not isinstance(a, str) or a not in catalog for a in selected) or
+            len(selected) != len(set(selected))):
+        raise ValueError('Invalid WBC action selection')
+    checked_asset(bundle, graph['model']['rknn'])
+    if mode == 'base':
+        record = json.loads(checked_asset(bundle, 'INSTALLATION.json').read_text())
+        for relative, expected in record['files'].items():
+            if sha(checked_asset(bundle, relative)) != expected:
                 raise ValueError('WBC asset hash mismatch: ' + relative)
-    if (not isinstance(selected, list) or not selected or len(selected) != len(set(map(str, selected))) or
-            any(not isinstance(a, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', a) for a in selected)):
-        raise ValueError('wbc_policies must be a nonempty unique ID list (all requires base/lora)')
-    if bundle:
-        if not set(selected) <= set(available):
-            raise ValueError('Selected action is absent from bundle')
-        catalog = {item['action_id']: item for item in graph['actions']}
-        for action in selected:
-            item = catalog[action]
-            for key in (('config', 'reference_rknn', 'adapter_manifest') if mode == 'lora'
-                        else ('config', 'reference_rknn')):
-                checked_asset(bundle, item[key])
-            checked_asset(bundle, item['reference_rknn'] + '.json')
-    else:
-        for action in selected:
-            for name in ('policy.rknn', 'reference_motion.rknn', 'rl_config.yaml'):
-                checked_asset(robot_root, action + '/' + name)
+    for action in selected:
+        item = catalog[action]
+        checked_asset(item['root'], item['reference_rknn'])
     return bundle, selected
+
+
+def write_version_snapshot(repo, path):
+    """Record diagnostic version metadata without making it a launch prerequisite."""
+    from launch.logging import get_logger
+
+    with path.open('w') as out:
+        for command in (['git', '-C', str(repo), 'rev-parse', 'HEAD'],
+                        ['git', '-C', str(repo), 'status', '--short'], ['uname', '-a']):
+            out.flush()
+            try:
+                subprocess.run(command, stdout=out, stderr=out, timeout=5, check=True)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError) as exc:
+                message = f'Version metadata unavailable for {shlex.join(command)}: {exc}'
+                out.write('\nWARNING: ' + message + '\n')
+                get_logger('sim2real').warning(message)
+        out.write('\n'.join(f'{k}={os.environ.get(k, "unset")}' for k in
+            ('ROS_DOMAIN_ID', 'ROS_LOCALHOST_ONLY', 'RMW_IMPLEMENTATION')) + '\n')
 
 
 def prepare_deployment(context):
@@ -178,7 +188,7 @@ def prepare_deployment(context):
                 shutil.copy2(bundle / name, run / name)
             (run / 'installed_bundle.txt').write_text(str(bundle) + '\n')
             record = json.loads((bundle / 'INSTALLATION.json').read_text())
-            (run / 'models.sha256').write_text(''.join(f'{h}  {p}\n' for p, h in sorted(record['files'].items())))
+            (run / 'models.sha256').write_text(''.join(f'{h}  {p}\n' for p, h in sorted(record.get('files', {}).items())))
         repo = workspace() / 'src/l0_ros2_deploy_v2'
         from ament_index_python.packages import get_package_prefix, get_package_share_directory
         worker = Path(get_package_prefix('legged_deploy')) / 'lib/legged_deploy/rl_controller'
@@ -186,12 +196,7 @@ def prepare_deployment(context):
         amp = Path(get_package_share_directory('legged_deploy')) / 'policy' / config['robot_type'] / config['subpolicy']
         (run / 'amp.sha256').write_text(''.join(f'{sha(amp / n)}  {amp / n}\n'
             for n in ('policy.rknn', 'rl_config.yaml', 'joy_config.yaml')))
-        with (run / 'version.txt').open('w') as out:
-            for command in (['git', '-C', str(repo), 'rev-parse', 'HEAD'],
-                            ['git', '-C', str(repo), 'status', '--short'], ['uname', '-a']):
-                subprocess.run(command, stdout=out, stderr=out, timeout=5, check=True)
-            out.write('\n'.join(f'{k}={os.environ.get(k, "unset")}' for k in
-                ('ROS_DOMAIN_ID', 'ROS_LOCALHOST_ONLY', 'RMW_IMPLEMENTATION')) + '\n')
+        write_version_snapshot(repo, run / 'version.txt')
         pending = root / 'current_run_dir.pending'
         pending.write_text(str(run) + '\n')
         pending.replace(root / 'current_run_dir')

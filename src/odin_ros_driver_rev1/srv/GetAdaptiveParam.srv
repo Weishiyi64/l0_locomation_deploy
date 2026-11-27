@@ -1,0 +1,8 @@
+# Request - empty, query current adaptive mode parameters
+---
+# Response
+bool success
+int32 error_code   # 0=OK, other values from OdinResult enum
+string message
+uint16 cdf_percentile     # CDF percentile threshold (1-10000, unit: 0.01%)
+uint16 outdoor_threshold  # CDF distance >= this value classified as outdoor (mm)

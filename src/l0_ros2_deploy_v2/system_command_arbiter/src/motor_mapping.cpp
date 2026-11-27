@@ -1,4 +1,4 @@
-#include "system_command_arbiter/motor_mapping.hpp"
+#include "motor_mapping.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -49,16 +49,16 @@ MotorLimits loadLimits(const YAML::Node& model, const std::string& name) {
   return limits;
 }
 
-}  // namespace
-
-uint8_t MotorMapping::motorTypeForFamily(const std::string& family) {
-  if (family == "DM") return MotorRoute::MOTOR_TYPE_DM;
-  if (family == "RS") return MotorRoute::MOTOR_TYPE_RS;
-  if (family == "EC") return MotorRoute::MOTOR_TYPE_ENC;
-  if (family == "MR") return MotorRoute::MOTOR_TYPE_MTE;
-  if (family == "LS") return MotorRoute::MOTOR_TYPE_LS;
+MotorFamily motorFamily(const std::string& family) {
+  if (family == "DM") return MotorFamily::DM;
+  if (family == "RS") return MotorFamily::RS;
+  if (family == "EC") return MotorFamily::ENC;
+  if (family == "MR") return MotorFamily::MR;
+  if (family == "LS") return MotorFamily::LS;
   throw std::runtime_error("unsupported motor family: " + family);
 }
+
+}  // namespace
 
 MotorMapping::MotorMapping(const std::string& path) {
   const YAML::Node root = YAML::LoadFile(path);
@@ -69,7 +69,7 @@ MotorMapping::MotorMapping(const std::string& path) {
     throw std::runtime_error("mapping must contain 1..64 motors");
 
   struct Model {
-    uint8_t type{};
+    MotorFamily family;
     MotorLimits limits;
   };
   std::unordered_map<std::string, Model> parsed_models;
@@ -77,7 +77,7 @@ MotorMapping::MotorMapping(const std::string& path) {
   {
     const std::string name = item.first.as<std::string>();
     parsed_models.emplace(
-        name, Model{motorTypeForFamily(item.second["family"].as<std::string>()), loadLimits(item.second, name)});
+        name, Model{motorFamily(item.second["family"].as<std::string>()), loadLimits(item.second, name)});
   }
 
   std::unordered_set<uint64_t> physical_routes;
@@ -90,7 +90,8 @@ MotorMapping::MotorMapping(const std::string& path) {
     const std::string model_name = motor["model"].as<std::string>();
     const auto model = parsed_models.find(model_name);
     if (model == parsed_models.end()) throw std::runtime_error("unknown model for " + entry.joint_name);
-    entry.route.motor_type = model->second.type;
+    entry.route.motor_type = static_cast<uint8_t>(entries_.size());
+    entry.family = model->second.family;
     entry.route.bus_index = motor["bus_index"].as<uint8_t>();
     entry.route.motor_id = motor["motor_id"].as<uint32_t>();
     entry.zero_offset = requiredFinite(motor, "zero_offset", entry.joint_name);
@@ -123,24 +124,24 @@ int MotorMapping::indexOfJoint(const std::string& joint_name) const {
 }
 
 int MotorMapping::indexOfRoute(const MotorRoute& route) const {
-  for (std::size_t i = 0; i < entries_.size(); ++i)
-    if (entries_[i].enabled && sameRoute(entries_[i].route, route)) return static_cast<int>(i);
-  return -1;
+  const auto index = route.motor_type;
+  if (index >= entries_.size() || !entries_[index].enabled || !sameRoute(entries_[index].route, route)) return -1;
+  return index;
 }
 
-luvbot_hardware_interfaces::msg::ActuatorMotorCommand MotorMapping::commandFor(const MotorMappingEntry& mapping,
-                                                                               double q, double dq, double tau,
-                                                                               double kp, double kd,
-                                                                               double wrap_offset) const {
+luvbot_hardware_interfaces::msg::MotorTarget MotorMapping::commandFor(const MotorMappingEntry& mapping,
+                                                                     double q, double dq, double tau, double kp,
+                                                                     double kd, double wrap_offset) const {
   if (!mapping.enabled) throw std::runtime_error("motor is disabled for " + mapping.joint_name);
   if (!std::isfinite(q) || !std::isfinite(dq) || !std::isfinite(tau) || !std::isfinite(kp) || !std::isfinite(kd) ||
       !std::isfinite(wrap_offset))
     throw std::runtime_error("non-finite command for " + mapping.joint_name);
   const double direction = mapping.motor_direction * mapping.limits.rotation_direction;
   const double reduction_squared = mapping.reduction * mapping.reduction;
-  const double joint_q = std::clamp(q, mapping.joint_lower, mapping.joint_upper);
+  constexpr double kJointPositionCommandLimitRad = 10.0;
+  const double joint_q = std::clamp(q, -kJointPositionCommandLimitRad, kJointPositionCommandLimitRad);
 
-  luvbot_hardware_interfaces::msg::ActuatorMotorCommand command;
+  luvbot_hardware_interfaces::msg::MotorTarget command;
   command.route = mapping.route;
   command.q =
       static_cast<float>(std::clamp((joint_q - wrap_offset - mapping.zero_offset) * direction * mapping.reduction,

@@ -1,0 +1,31 @@
+{
+  "sha256": {
+    "amp1124.onnx": "d52111f0bf384bc7165bbf4ca5e1bbcafad79ff4d14e7a9dba9fe8268e77d77a",
+    "policy.rknn": "97f971e7cbceeea79d487e6c7f8de0551ee752d9fd3e323b2eb0d08d428078f7",
+    "stop_full_reference.onnx": "ea0e8946a6ab391add4a39aa8c59d62c00403c4ec17a838bf7af11ccc6f141ea",
+    "stop_decoder.onnx": "f0eb0bac77b27425ee379721372eb92c5d496bff4ff0cce4a081f4e4ba720123",
+    "stop_decoder.rknn": "84e9446f36ce6ffd9800c6a6e6697fc5f4ca189e13d62cd07e084721833da8ab"
+  },
+  "backend": "RK3588 RKNN Toolkit2 2.3.2, float16, no integer quantization",
+  "reference": "ONNX Runtime 1.31.0 x86 CPU, saved reference outputs",
+  "stop_valid_comparisons": 111,
+  "stop_frame_count_matches": 111,
+  "stop_input_exceptions": {
+    "111": 0,
+    "112": 0,
+    "113": 0,
+    "114": 400
+  },
+  "stop_max_pelvis_m": 0.00023889541625976562,
+  "stop_max_quaternion_component": 0.0001685023307800293,
+  "stop_max_joint_rad": 0.0026769638061523438,
+  "stop_max_terminal_joint_rad": 6.556510925292969e-07,
+  "stop_plan_latency_ms": {
+    "p50": 10.219047,
+    "p95": 11.532083,
+    "max": 11.644079
+  },
+  "amp_comparisons": 32,
+  "amp_max_actor_output_error": 0.011562347412109375,
+  "amp_mean_actor_output_error": 0.0010930993594229221
+}

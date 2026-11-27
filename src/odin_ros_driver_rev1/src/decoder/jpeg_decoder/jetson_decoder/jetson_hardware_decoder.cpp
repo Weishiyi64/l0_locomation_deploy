@@ -1,6 +1,6 @@
 #include "jetson_hardware_decoder.h"
 
-#ifdef USE_JETSON_DECODER
+#ifdef USING_JETSON_DECODER
 
 #include <cstdlib>
 #include <cstring>
@@ -12,7 +12,14 @@
 #include <nvbufsurftransform.h>
 #include <unistd.h>
 
-#include "utility/ros_compat.hpp"
+#include "utility/rc_log.hpp"
+
+#ifdef ODIN_HAVE_LIBYUV
+// libyuv fast colour conversion (I420/NV21 → BGR), ~7x faster than cv::cvtColor.
+// Only compiled when CMake found libyuv-dev (see README); falls back to OpenCV
+// transparently otherwise.
+#include <libyuv.h>
+#endif
 
 namespace odin_decoder {
 
@@ -24,7 +31,7 @@ JetsonHardwareDecoder::JetsonHardwareDecoder() {
     return;
   }
   initialized_ = true;
-  RC_LOG_INFO("[JetsonDecoder] Hardware decoder initialized (JetPack R36+ verified at compile time)");
+  RC_LOG_DEBUG("[JetsonDecoder] Hardware decoder initialized (JetPack R36+ verified at compile time)");
 }
 
 JetsonHardwareDecoder::~JetsonHardwareDecoder() {
@@ -155,8 +162,23 @@ bool JetsonHardwareDecoder::Decode(const uint8_t* data, size_t size, cv::Mat& ou
     v_plane.copyTo(v_dst);
 
     cv::Mat yuv_i420(h * 3 / 2, w, CV_8UC1, yuv_data.data());
-    cv::cvtColor(yuv_i420, output, cv::COLOR_YUV2BGR_I420);
-    success = !output.empty();
+#ifdef ODIN_HAVE_LIBYUV
+    // Fast path: libyuv I420 → BGR24. NB: the "...ToRGB24" family writes
+    // B,G,R byte order (identical to OpenCV BGR24); "...ToRAW" would swap
+    // the red and blue channels.
+    output.create(h, w, CV_8UC3);
+    if (libyuv::I420ToRGB24(yuv_data.data(), w,
+                            yuv_data.data() + static_cast<size_t>(w) * h, w / 2,
+                            yuv_data.data() + static_cast<size_t>(w) * h +
+                                static_cast<size_t>(w) * h / 4, w / 2,
+                            output.data, static_cast<int>(output.step), w, h) == 0) {
+      success = true;
+    } else
+#endif
+    {
+      cv::cvtColor(yuv_i420, output, cv::COLOR_YUV2BGR_I420);
+      success = !output.empty();
+    }
   }
   // Handle NV21 format (Y plane + interleaved VU plane - Jetson outputs NV21)
   else if (params.planeParams.num_planes == 2) {
@@ -165,8 +187,20 @@ bool JetsonHardwareDecoder::Decode(const uint8_t* data, size_t size, cv::Mat& ou
     cv::Mat vu_plane(h/2, w, CV_8UC1, params.mappedAddr.addr[1], params.planeParams.pitch[1]);
     y_plane.copyTo(nv21(cv::Rect(0, 0, w, h)));
     vu_plane.copyTo(nv21(cv::Rect(0, h, w, h/2)));
-    cv::cvtColor(nv21, output, cv::COLOR_YUV2BGR_NV21);
-    success = !output.empty();
+#ifdef ODIN_HAVE_LIBYUV
+    // Fast path: libyuv NV21 → BGR24 ("ToRGB24" = B,G,R memory order, same as
+    // OpenCV BGR24).
+    output.create(h, w, CV_8UC3);
+    if (libyuv::NV21ToRGB24(nv21.data, w,
+                            nv21.data + static_cast<size_t>(w) * h, w,
+                            output.data, static_cast<int>(output.step), w, h) == 0) {
+      success = true;
+    } else
+#endif
+    {
+      cv::cvtColor(nv21, output, cv::COLOR_YUV2BGR_NV21);
+      success = !output.empty();
+    }
   }
   else {
     cv::Mat raw(h, w, CV_8UC3, params.mappedAddr.addr[0], params.planeParams.pitch[0]);
@@ -191,4 +225,4 @@ std::string JetsonHardwareDecoder::GetName() const {
 
 }  // namespace odin_decoder
 
-#endif  // USE_JETSON_DECODER
+#endif  // USING_JETSON_DECODER

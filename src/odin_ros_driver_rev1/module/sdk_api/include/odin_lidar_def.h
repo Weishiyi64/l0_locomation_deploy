@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -30,7 +31,12 @@ enum class OdinResult {
   kStopped,             ///< Operation stopped
   kFirmwareIllegal,     ///< Invalid firmware file
   kCommunicationError,  ///< Communication error
-  kUnknownError         ///< Unknown error
+  kNotSupported,        ///< Feature not supported by this device
+  kUnknownError,        ///< Unknown error
+  // Appended (do not renumber the values above; wire-visible via *.srv error_code):
+  kIoError,             ///< Map/file IO failure (from loop-closure algo)
+  kMapLoadFailed,       ///< Map file corrupt/incompatible (from loop-closure algo)
+  kAlgoInternalError,   ///< Loop-closure algo internal error
 };
 
 /**
@@ -45,11 +51,24 @@ enum class MTConnectionType : uint8_t {
 /**
  * @brief Device operating mode
  */
-enum class OdinOperatingMode : uint8_t {
+enum class OdinDeviceMode : uint8_t {
   kStandby = 0,    ///< Standby mode, stops data streaming
   kNormal = 1,     ///< Normal operating mode, starts data streaming
   kUpgrade = 2,    ///< Upgrade mode
+  kSlam = 3,       ///< SLAM mapping mode
+  KRelocation = 4, ///< Relocalization mode
+  kReMap = 5,      ///< Relocalization + incremental mapping mode
   kUnknown = 0xFF  ///< Unknown mode
+};
+
+/**
+ * @brief LiDAR sensor mode (cmd_id=0x05 SetSensorMode / 0x09 GetSensorMode)
+ */
+enum class OdinSensorMode : uint8_t {
+  kHDR = 0,       ///< HDR mode
+  kHighPeak = 1,  ///< High Peak mode
+  kLowPeak = 2,   ///< Low Peak mode
+  kAdaptive = 3,  ///< Adaptive mode
 };
 
 /**
@@ -64,66 +83,83 @@ enum class OdinFileType : uint8_t {
 };
 
 enum class OdomSourceType : uint8_t {
-  kOdom2ImuLow   = 0,  // (odom→imu_low)
-  kOdom2ImuHigh  = 1,  // (odom→imu_high)
-  kLidar2Camera  = 2,  // (lidar→camera)
-  kLidar2Imu     = 3,  // (lidar→imu)
-  kOdom2Map      = 4,  // (odom→map)
+  kOdom2ImuLow   = 0,  ///< Odom → IMU low-freq
+  kOdom2ImuHigh  = 1,  ///< Odom → IMU high-freq
 };
 
 /**
- * @brief Data channel type for ChannelConfig command (0x05)
- * Uses segmented numbering per protocol design
+ * @brief Data channel type for ChannelConfig command (0x06 SetChannelConfig)
+ *
+ * Segmented numbering — each segment reserves 16 slots (0x10 per group):
+ *   0x00-0x0F  Point cloud  (kRawPoint=0x00, kSlamPoint=0x01)
+ *   0x10-0x1F  Image        (kImage0=0x10, kImage1=0x11)
+ *   0x20-0x2F  IMU          (kImu=0x20)
+ *   0x30-0x3F  Odometry     (kOdomLF=0x30 low-freq, kOdomHF=0x31 high-freq, kTf=0x32)
+ *   0x40-0x4F  Function     (kAlgoDownlink=0x40, kCalibFile=0x41, kTelemetry=0x42)
  */
 enum class OdinDataChannel : uint8_t {
-  kRawPoint = 0x00,   // Raw point cloud
-  kSlamPoint = 0x01,  // SLAM point cloud
-  kImage0 = 0x10,     // Left camera
-  kImage1 = 0x11,     // Right camera
-  kImu = 0x20,        // IMU
-  kOdom = 0x30,       // Odometry
+  // 0x00-0x0F: Point cloud
+  kRawPoint  = 0x00,  ///< Raw point cloud (host <- device)
+  kSlamPoint = 0x01,  ///< SLAM point cloud (host <- device)
+
+  // 0x10-0x1F: Image
+  kImage0 = 0x10,     ///< Left camera image/video stream (host <- device)
+  kImage1 = 0x11,     ///< Right camera image/video stream (host <- device)
+
+  // 0x20-0x2F: IMU
+  kImu = 0x20,        ///< IMU 6/9-axis samples (host <- device)
+
+  // 0x30-0x3F: Odometry / TF
+  kOdomLF   = 0x30,     ///< Odometry low-freq  (odom_lf, host <- device)
+  kOdomHF = 0x31,     ///< Odometry high-freq (odom_hf, host <- device)
+  kTf = 0x32,         ///< TF transforms
+  // 0x40-0x4F: Function channels
+  kAlgoDownlink = 0x40,  ///< Algorithm downlink transparent (host -> device)
+  kCalibFile    = 0x41,  ///< Calibration file download (host <- device)
+  kTelemetry    = 0x42,  ///< Telemetry JSON ~1 Hz (host <- device)
 };
 
 /**
  * @brief Transport mode for data channel
  */
 enum class OdinTransportMode : uint8_t {
-  kUdp = 0,  // UDP transport (default)
-  kTcp = 1,  // TCP transport
+  kUdp = 0,  ///< UDP transport (default)
+  kTcp = 1,  ///< TCP transport
 };
 
 /**
  * @brief Unified data format for all sensor types
- * 
- * Format values are organized by sensor type:
- * - Image (0x00-0x0F): MJPEG, YUYV, NV12, NV21, RGB24
- * - RawPoint (0x10-0x1F): XYZIC, XYZ
- * - SlamPoint (0x20-0x2F): XYZRGBA, XYZ
- * - IMU (0x30-0x3F): 6-axis, 9-axis
- * - Odom (0x40-0x4F): Standard
+ *
+ * Image formats use bitmask encoding (can be OR-combined):
+ *   0x01=NV12 | 0x02=MJPEG | 0x04=H264 | 0x08=H265
+ * Other sensor types use fixed segment values:
+ * - RawPoint (0x10): XYZIC (uint16 compressed coords)
+ * - SlamPoint (0x20): XYZRGBA (uint16 compressed coords)
+ * - IMU (0x30): 6-axis
+ * - Odom (0x40): Standard
+ * - TF (0x50): Standard TF
  */
 enum class OdinDataFormat : uint8_t {
-  // Image formats (0x00-0x0F)
-  kImageMjpeg = 0x00,   // MJPEG compressed
-  kImageYuyv = 0x01,    // YUYV raw
-  kImageNv12 = 0x02,    // NV12
-  kImageNv21 = 0x03,    // NV21
-  kImageRgb24 = 0x04,   // RGB24
+  // Image formats (bitmask, single-bit per codec)
+  kImageNv12  = 0x01,   ///< NV12 raw data passthrough (no encoding)
+  kImageMjpeg = 0x02,   ///< MJPEG (JPEG compressed)
+  kImageH264  = 0x04,   ///< H.264 encoded video stream
+  kImageH265  = 0x08,   ///< H.265 encoded video stream
 
   // RawPoint formats (0x10-0x1F)
-  kRawPointXyzic = 0x10,  // XYZ + Intensity + Confidence (8B per point)
-  kRawPointXyz = 0x11,    // XYZ only (6B per point, simplified)
+  kRawPointXyzic = 0x10,  ///< XYZ + Intensity + Confidence (uint16 compressed coords, 8B per point)
 
   // SlamPoint formats (0x20-0x2F)
-  kSlamPointXyzrgba = 0x20,  // XYZ + RGBA (10B per point)
-  kSlamPointXyz = 0x21,      // XYZ only (6B per point, simplified)
+  kSlamPointXyzrgba = 0x20,  ///< XYZ + RGBA (uint16 compressed coords, 10B per point)
 
   // IMU formats (0x30-0x3F)
-  kImu6Axis = 0x30,     // Gyro + Acc (6-axis)
-  kImu9Axis = 0x31,     // Gyro + Acc + Mag (9-axis)
+  kImu6Axis = 0x30,     ///< Gyro + Acc (6-axis)
 
   // Odom formats (0x40-0x4F)
-  kOdomStandard = 0x40, // Standard odometry
+  kOdomStandard = 0x40, ///< Standard odometry
+
+  // TF formats (0x50-0x5F)
+  kTfStandard = 0x50,   ///< Standard TF transform
 
   kUnknown = 0xFF
 };
@@ -136,66 +172,26 @@ enum class OdinDataFormat : uint8_t {
  * Image format uses OdinDataFormat::kImageXxx series
  */
 struct OdinStreamCfg {
-  uint16_t width = 0;           // Resolution width (0 = not sent, use device default)
-  uint16_t height = 0;          // Resolution height (0 = not sent, use device default)
-  uint8_t fps = 0;              // Frame rate (0 = not sent, use device default)
-  OdinDataFormat format = OdinDataFormat::kUnknown;  // Image format (kUnknown = not sent)
+  uint16_t width = 0;           ///< Resolution width (0 = not sent, use device default)
+  uint16_t height = 0;          ///< Resolution height (0 = not sent, use device default)
+  uint16_t fps = 0;             ///< Frame rate (0 = not sent, use device default)
+  OdinDataFormat format = OdinDataFormat::kUnknown;  ///< Image format (kUnknown = not sent)
 };
 
 /**
  * @brief Sensor capability - supported modes for a data channel
  */
 struct OdinSensorCapability {
-  OdinDataChannel channel = OdinDataChannel::kRawPoint;
-  std::vector<OdinStreamCfg> modes;                    // Supported mode list
+  OdinDataChannel channel = OdinDataChannel::kRawPoint;  ///< Channel type
+  std::vector<OdinStreamCfg> modes;                       ///< Supported mode list
 };
 
-struct OdinPointCloudPacket {
-  OdinDeviceHandle device = kInvalidDeviceHandle;
-  uint8_t version = 0;
-  uint16_t length = 0;
-  uint16_t point_count = 0;
-  uint16_t udp_count = 0;
-  uint32_t frame_count = 0;
-  uint8_t data_type = 0;
-  uint8_t time_type = 0;
-  uint16_t reserved = 0;
-  uint64_t timestamp = 0;
-  std::vector<uint8_t> payload;
-};
-
-using OdinSlamPacket = OdinPointCloudPacket;
-
-struct OdinImagePacket {
-  OdinDeviceHandle device = kInvalidDeviceHandle;
-  uint8_t version = 0;
-  uint16_t length = 0;
-  uint16_t udp_count = 0;
-  uint32_t frame_count = 0;
-  uint64_t timestamp = 0;
-  std::vector<uint8_t> payload;
-};
-
-struct OdinImuPacket {
-  OdinDeviceHandle device = kInvalidDeviceHandle;
-  uint8_t version = 0;
-  uint16_t length = 0;
-  uint16_t sample_count = 0;
-  uint64_t timestamp = 0;
-  std::vector<uint8_t> payload;
-};
-
-struct OdinOdomPacket {
-  OdinDeviceHandle device = kInvalidDeviceHandle;
-  uint8_t version = 0;
-  uint16_t length = 0;
-  uint16_t data_count = 0;
-  uint32_t frame_count = 0;
-  uint64_t timestamp = 0;
-  std::vector<uint8_t> payload;
-};
+// ============================================================================
+// Wire-format data types (packed)
+// ============================================================================
 
 #pragma pack(push, 1)
+
 template <typename T>
 struct OdinRawPoint {
   T x = T(0);
@@ -204,7 +200,7 @@ struct OdinRawPoint {
   uint8_t intensity = 0;
   uint8_t confidence = 0;
 };
-// static_assert(sizeof(OdinRawPoint) == 15, "Unexpected OdinRawPoint size");
+
 
 template <typename T>
 struct OdinSlamPoint {
@@ -216,32 +212,200 @@ struct OdinSlamPoint {
   uint8_t b = 0;
   uint8_t a = 0;
 };
-// static_assert(sizeof(OdinSlamPoint) == 16, "Unexpected OdinSlamPoint size");
 
+
+/// @brief Single IMU sample on the wire (v2, 24 bytes: gyro + acc only).
+/// @details Per-sample timestamp/sequence were removed in v2; the timestamp is
+///          reconstructed by the assembler as `header.timestamp + j*interval_ns`
+///          and delivered via `OdinImuPacket.timestamp`.
 struct OdinImuSample {
-  float gyro_x = 0.0f;
-  float gyro_y = 0.0f;
-  float gyro_z = 0.0f;
-  float acc_x = 0.0f;
-  float acc_y = 0.0f;
-  float acc_z = 0.0f;
-  uint64_t timestamp = 0;
-  uint64_t sequence = 0;
+  float gyro_x = 0.0f;  ///< Angular velocity X (rad/s)
+  float gyro_y = 0.0f;  ///< Angular velocity Y (rad/s)
+  float gyro_z = 0.0f;  ///< Angular velocity Z (rad/s)
+  float acc_x = 0.0f;   ///< Linear acceleration X (m/s^2)
+  float acc_y = 0.0f;   ///< Linear acceleration Y (m/s^2)
+  float acc_z = 0.0f;   ///< Linear acceleration Z (m/s^2)
 };
-// static_assert(sizeof(OdinImuSample) == 40, "Unexpected OdinImuSample size");
+static_assert(sizeof(OdinImuSample) == 24, "OdinImuSample (v2) must be 24 bytes");
 
+/// @brief Odometry data entry (197 bytes, packed).
+/// @details Public struct is layout-compatible with the generation-3 wire
+///          layout (cov[36], V3/OdomEntry.hpp). Generation-2 firmware sends
+///          cov[18] entries (125 bytes, V2/OdomEntry.hpp); the SDK routes by
+///          the payload generation stamped in the frame header version byte
+///          (never by size) and zero-fills the orientation covariance rows,
+///          so users always see the full 6x6 layout. Fields learned from
+///          same-generation tail extensions (newest generation only: firmware
+///          appends them after `type` without a version bump) may later be
+///          added at the struct tail; they keep their defaults when the
+///          firmware does not send them. Each learned field must also be
+///          registered in V3/LearnedFields.def - its learned-tail ledger
+///          assert (V3/OdomEntry.hpp) enforces the pairing at compile time.
 struct OdinOdomData {
-  int64_t pos[3] = {0};
-  int64_t orient[4] = {0};
-  int64_t linear_velocity[3] = {0};
-  int64_t angular_velocity[3] = {0};
-  int64_t cov[18] = {0};
-  uint8_t type;
+  float pos[3] = {0};
+  float orient[4] = {0};
+  float linear_velocity[3] = {0};
+  float angular_velocity[3] = {0};
+  /// 6x6 covariance, row-major over (x, y, z, roll, pitch, yaw).
+  /// Generation-2 firmware (cov[18]) fills only the first 18 entries
+  /// (position rows); the remaining orientation rows are zero.
+  float cov[36] = {0};
+  uint8_t type = 0;  ///< Odom source type (@see OdomSourceType)
 };
-static_assert(sizeof(OdinOdomData) == 249, "Unexpected OdinOdomData size");
+static_assert(sizeof(OdinOdomData) == 197,
+              "Unexpected OdinOdomData size (generation-3 base: cov[36])");
+
 #pragma pack(pop)
 
+// ============================================================================
+// Assembled Data Packets (delivered to user via callbacks)
+// ============================================================================
 
+/// @brief Assembled raw point-cloud frame delivered to the user.
+///
+/// Protocol-level fields (version, length, chunk_count, data_type) are handled
+/// internally by the SDK and not exposed. Points are already converted from
+/// wire uint16 to float (with -30000 offset applied to y/z).
+/// Use points.size() for the number of points.
+struct OdinPointCloudPacket {
+  uint32_t frame_count = 0;      ///< Frame sequence number (for drop detection)
+  uint64_t timestamp = 0;        ///< Frame timestamp in ns (raw hardware monotonic)
+  std::vector<OdinRawPoint<float>> points;  ///< Float point data (ready to use)
+};
+
+/// @brief Assembled SLAM point-cloud frame delivered to the user.
+///
+/// Separate from OdinPointCloudPacket because SLAM points carry RGBA instead
+/// of intensity/confidence. Points are already converted from wire uint16
+/// to float and coordinate-transformed by the SLAM-Odom synchronizer.
+struct OdinSlamPacket {
+  uint32_t frame_count = 0;      ///< Frame sequence number (for drop detection)
+  uint64_t timestamp = 0;        ///< Frame timestamp in ns (raw hardware monotonic)
+  std::vector<OdinSlamPoint<float>> points;  ///< Float SLAM point data (ready to use)
+};
+
+/// @brief Unified camera frame packet delivered to the user (wire protocol v2).
+///
+/// Covers all image/video channel formats on kImage0/kImage1: MJPEG, H.264,
+/// and any future encoded formats. The `format` field is the sole discriminant;
+/// downstream consumers dispatch on it (e.g. via switch) without casts.
+///
+/// Field semantics by format:
+///   - All formats : format, timestamp, payload are always valid.
+///   - kImageMjpeg : frame_count carries the v2 frame_seq (for drop detection).
+///                   width/height from the StartStream cfg passed by the caller
+///                   (0 if not configured, same convention as H264).
+///   - kImageH264  : frame_count carries the v2 frame_seq for drop detection.
+///                   width/height from the StartStream cfg passed by the caller.
+///                   payload is an H.264 Annex-B access unit (ITU-T H.264).
+///                   Keyframe detection (IDR/SPS NAL) is the consumer's
+///                   responsibility — scan the Annex-B start codes and NAL
+///                   unit types per ITU-T H.264 §7.3.2.1 / §7.4.2.4.
+struct OdinCameraPacket {
+  OdinDataFormat   format      = OdinDataFormat::kUnknown; ///< Codec/format tag
+  uint64_t         timestamp   = 0;    ///< Frame timestamp in ns (raw hardware monotonic)
+  uint32_t         frame_count = 0;    ///< Frame sequence number from device
+  uint16_t         width       = 0;    ///< Frame width
+  uint16_t         height      = 0;    ///< Frame height
+  std::vector<uint8_t> payload;        ///< Encoded bytes: JPEG SOI..EOI or H.264 Annex-B AU (ITU-T H.264)
+};
+
+/// @brief IMU data packet delivered to the user.
+/// Protocol-level fields are handled internally and not exposed.
+/// Use samples.size() for the number of samples.
+struct OdinImuPacket {
+  uint64_t timestamp = 0;       ///< Reconstructed per-sample timestamp in ns
+  std::vector<OdinImuSample> samples;  ///< IMU samples (ready to use)
+};
+
+/// @brief Odometry data packet delivered to the user.
+/// Protocol-level fields are handled internally and not exposed.
+/// Use data.size() for the number of entries.
+struct OdinOdomPacket {
+  uint32_t frame_count = 0;     ///< Frame sequence number (for drop detection)
+  uint64_t timestamp = 0;       ///< Frame timestamp in ns
+  std::vector<OdinOdomData> data;  ///< Odom data entries (ready to use)
+};
+
+/// @brief Parsed telemetry data from the device (0x42 channel, ~1 Hz).
+///
+/// Fields correspond to the JSON keys defined in the protocol:
+/// ```json
+/// {"uptime_s":123,"cpu_pct":45,"mem_used_kb":1024,"mem_total_kb":2048,
+///  "mem_use_rate":50,"load_1":0.50,"load_5":0.45,"load_15":0.42}
+/// ```
+/// The SDK parses the JSON internally; callers receive structured data.
+struct OdinTelemetryData {
+  uint32_t uptime_s      = 0;    ///< Device uptime in seconds
+  uint32_t cpu_pct       = 0;    ///< CPU usage percentage (0-100)
+  uint32_t mem_used_kb   = 0;    ///< Memory used in kilobytes
+  uint32_t mem_total_kb  = 0;    ///< Total memory in kilobytes
+  uint32_t mem_use_rate  = 0;    ///< Memory usage rate percentage (0-100)
+  float    load_1        = 0.0f; ///< System load average (1 min)
+  float    load_5        = 0.0f; ///< System load average (5 min)
+  float    load_15       = 0.0f; ///< System load average (15 min)
+};
+
+/// @brief Telemetry packet delivered via 0x42 channel (device -> host, ~1 Hz).
+/// Each frame is self-contained; no chunk reassembly is needed.
+/// The SDK parses the device JSON into structured OdinTelemetryData.
+struct OdinTelemetryPacket {
+  uint32_t frame_count = 0;         ///< Frame sequence number (v2 frame_seq)
+  uint64_t timestamp = 0;           ///< Frame timestamp in ns (raw hardware monotonic)
+  OdinTelemetryData data;           ///< Parsed telemetry fields
+};
+
+/// @brief Assembled TF frame delivered to the user.
+///
+/// Mirrors ROS2 TransformStamped: `frame_id` is the parent frame,
+/// `child_frame_id` is the child frame, both delivered as std::string
+/// for direct assignment into ROS message fields.
+/// Protocol-level fields (version, length, raw wire payload) are not exposed.
+struct OdinTfPacket {
+  uint32_t frame_count = 0;                  ///< Frame sequence number (for drop detection)
+  uint64_t timestamp = 0;                    ///< Frame timestamp in ns (raw hardware monotonic)
+  float translation[3] = {0.0f, 0.0f, 0.0f}; ///< Parsed translation (m)
+  float rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f}; ///< Parsed quaternion (x, y, z, w)
+  std::string frame_id;                      ///< Parent frame id (parsed string)
+  std::string child_frame_id;                ///< Child frame id (parsed string)
+};
+
+struct OdinLcPointXYZ {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+};
+
+struct OdinLcPoseStamped {
+  uint64_t timestamp = 0;
+  double translation[3] = {0.0, 0.0, 0.0};
+  double rotation[4] = {0.0, 0.0, 0.0, 1.0};
+};
+
+struct OdinLcFramePacket {
+  uint64_t timestamp = 0;
+  int32_t frame_id = -1;
+  double translation[3] = {0.0, 0.0, 0.0};
+  double rotation[4] = {0.0, 0.0, 0.0, 1.0};
+  std::vector<OdinLcPointXYZ> cloud;
+  bool is_keyframe = false;
+};
+
+struct OdinLcOptimizationResultPacket {
+  uint64_t timestamp = 0;
+  std::vector<OdinLcPoseStamped> poses;
+  std::vector<OdinLcPointXYZ> cloud;
+};
+
+struct OdinLcMapCloudPacket {
+  uint64_t timestamp = 0;
+  std::vector<OdinLcPointXYZ> points;
+};
+
+struct OdinLcOptimizationStatusPacket {
+  uint64_t timestamp = 0;
+  bool busy = false;
+};
 
 /**
  * @brief Network attribute configuration
@@ -267,15 +431,20 @@ struct NetworkAttribute {
 struct DiscoveredDevice {
   std::string sn;                ///< Device serial number
   std::string model;             ///< Device model name (e.g., "Odin-L1")
-  std::string firmware_version;  ///< Device firmware version
   std::string host_ip;           ///< Host interface IP that discovered this device
 
   NetworkAttribute network;      ///< Network configuration (IP, gateway, netmask, MAC, DHCP, PTP)
 
   MTConnectionType connection = MTConnectionType::kEthernet;  ///< Connection type
+
+  /// Protocol epoch spoken by the device, used by CreateOdinProtocol to
+  /// pick the command dialect (transport-agnostic). Determined from the
+  /// DeviceQuery discovery ACK, in priority order:
+  ///   1. Explicit payload extension (byte 59, 60B extension);
+  ///   2. Reply frame header version byte (firmware states its own epoch);
+  ///   3. This default - the newest epoch this SDK speaks.
+  uint8_t protocol_version = 0x03;
 };
-
-
 
 // ============================================================================
 // Callback Type Definitions
@@ -285,19 +454,47 @@ struct DiscoveredDevice {
 using OdinPointCloudCallback = void (*)(const OdinPointCloudPacket &packet, void *client_data);
 /** @brief SLAM point cloud callback type */
 using OdinSlamCallback = void (*)(const OdinSlamPacket &packet, void *client_data);
-/** @brief Image callback type (left camera) */
-using OdinImageCallback = void (*)(const OdinImagePacket &packet, void *client_data);
-/** @brief Image callback type (right camera) */
-using OdinImageCallback2 = void (*)(const OdinImagePacket &packet, void *client_data);
+/** @brief Camera frame callback type (kImage0/kImage1 channel, any format: MJPEG, H.264, etc.) */
+using OdinCameraCallback = void (*)(const OdinCameraPacket &packet, void *client_data);
 /** @brief IMU data callback type */
 using OdinImuCallback = void (*)(const OdinImuPacket &packet, void *client_data);
 /** @brief Odometry data callback type (with odom source type) */
 using OdinOdomCallback = void (*)(const OdinOdomPacket &packet, OdomSourceType odom_type,
                                   void *client_data);
+/** @brief TF transform callback type */
+using OdinTfCallback = void (*)(const OdinTfPacket &packet, void *client_data);
+/** @brief Loop-closure adjusted frame callback type */
+using OdinLcFrameCallback = void (*)(const OdinLcFramePacket &packet, void *client_data);
+/** @brief Loop-closure optimization status callback type */
+using OdinLcOptimizationStatusCallback = void (*)(const OdinLcOptimizationStatusPacket &packet,
+                                                  void *client_data);
+/** @brief Loop-closure optimization result callback type */
+using OdinLcOptimizationResultCallback = void (*)(const OdinLcOptimizationResultPacket &packet,
+                                                  void *client_data);
+/** @brief Loop-closure map cloud callback type */
+using OdinLcMapCloudCallback = void (*)(const OdinLcMapCloudPacket &packet, void *client_data);
 
 /** @brief Upgrade progress callback type */
 using OdinUpgradeProgressCallback = void (*)(OdinDeviceHandle device, float progress,
                                              void *client_data);
+
+/** @brief Telemetry data callback type (0x42 channel, device -> host, ~1 Hz) */
+using OdinTelemetryCallback = void (*)(const OdinTelemetryPacket &packet, void *client_data);
+
+// ============================================================================
+// Hotplug Types
+// ============================================================================
+
+/** @brief Hotplug callback invoked when a device comes online */
+using OnAttachCallback = std::function<void(const DiscoveredDevice &device)>;
+/** @brief Hotplug callback invoked when a device goes offline */
+using OnDetachCallback = std::function<void(const DiscoveredDevice &device)>;
+
+/** @brief Hotplug callbacks structure - register both callbacks together */
+struct HotplugCallbacks {
+  OnAttachCallback on_attach;  ///< Called when device comes online
+  OnDetachCallback on_detach;  ///< Called when device goes offline
+};
 
 }  // namespace sdk
 }  // namespace odin

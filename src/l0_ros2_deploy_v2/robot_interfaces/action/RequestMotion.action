@@ -1,0 +1,16 @@
+string source
+string request_id
+int64 timestamp_ms
+string action_id
+string text
+string options_json
+bool execute
+string output_path
+---
+bool success
+string status
+string detail
+string output_path
+---
+string stage
+string detail

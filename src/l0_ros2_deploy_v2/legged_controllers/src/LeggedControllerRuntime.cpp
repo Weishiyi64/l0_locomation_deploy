@@ -1,7 +1,7 @@
+#include <algorithm>
 #include <cmath>
-#include <vector>
 
-#include "legged_controllers/LeggedController.h"
+#include "LeggedController.h"
 
 namespace legged {
 
@@ -27,59 +27,41 @@ void LeggedController::prepareControllerClock(const rclcpp::Time& time) {
   }
 }
 
-bool LeggedController::isActionSequenceFullCsv() const { return sequenceRuntime_.isFullCsvPhase(); }
-
 RuntimeControlState LeggedController::computeRuntimeControlState() const {
   RuntimeControlState state;
   state.walking = fsm_ && fsm_->isWalking();
   state.emergency_control = fsm_ && (fsm_->isEmergency() || fsm_->isCalibration());
-  state.action_full_csv = isActionSequenceFullCsv();
-  const bool amp_derived_action_active = sequenceRuntime_.isActive() || policyMux_.imitationActiveCommanded() ||
-                                         policyMux_.wbcActiveCommanded() || wbc_return_pending_.load() ||
-                                         wbc_handoff_in_progress_.load();
-  state.policy_drives_legs = state.walking && !state.action_full_csv;
+  // Callback admission must not remove overlays before the control thread starts the handoff.
+  const bool wbc_controls_commands = policyMux_.source() == PolicyCmdSource::kWbc ||
+      (wbc_handoff_in_progress_.load() && policy_handoff_.active() &&
+       !policy_handoff_.expired(last_controller_wall_sec_));
+  const bool amp_derived_action_active = policyMux_.imitationActiveCommanded() || wbc_controls_commands ||
+                                         wbc_preposition_active_.load();
+  state.policy_drives_legs = state.walking;
   state.rl_inference_enabled = state.policy_drives_legs;
   state.allow_auxiliary_overlays =
-      state.walking && !state.action_full_csv && !state.emergency_control && !amp_derived_action_active;
+      state.walking && !state.emergency_control && !amp_derived_action_active;
   return state;
 }
 
 bool LeggedController::faceFollowAllowed() const {
-  return face_follow_allowed_.load() && !sequenceRuntime_.isActive() && !policyMux_.imitationActiveCommanded() &&
-         !policyMux_.wbcActiveCommanded() && !wbc_return_pending_.load() && !wbc_handoff_in_progress_.load() &&
-         !textMotionCtrl_.busy();
+  return face_follow_allowed_.load() && !policyMux_.imitationActiveCommanded() && !motion_reserved_.load();
 }
 
 void LeggedController::syncFaceFollowState(bool allowed, double wall_sec) {
-  const bool effective = faceFollowEnabled_ && allowed;
+  const bool effective = faceFollowEnabled_ && allowed && !motion_reserved_.load();
   face_follow_allowed_.store(effective);
   faceFollowCtrl_.setAllowed(effective, wall_sec, headCtrl_, [this] { return readCurrentHeadRpyRad(); });
-}
-
-bool LeggedController::advanceSequenceAndWalkingPolicy(const rclcpp::Time& time, const rclcpp::Duration& period) {
-  (void)period;
-  handleActionSequenceUpdate(time);
-
-  const RuntimeControlState runtime = computeRuntimeControlState();
-  if (!runtime.policy_drives_legs && !sequenceRuntime_.isActive() && policyMux_.source() != PolicyCmdSource::kRl)
-  {
-    abortWbcImmediately("[WBC] Leaving Walking mode");
-    setPolicySource(PolicyCmdSource::kRl, "[PolicyMux] Leaving walk -> default RL source");
-  }
-  policy_observation_.inference_enabled = runtime.rl_inference_enabled;
-  return runtime.policy_drives_legs;
 }
 
 void LeggedController::runSafetyAndEmergencyFeedback(const rclcpp::Time& time, bool safety_armed) {
   const bool in_emergency = fsm_->isEmergency();
   const bool in_calibration = fsm_->isCalibration();
-  if (!in_emergency && !in_calibration && safety_armed)
+  const bool orientation_monitoring = !isSim_ && !in_emergency && !in_calibration && safety_armed;
+  if (safetyChecker_) safetyChecker_->setOrientationMonitoring(orientation_monitoring);
+  if (orientation_monitoring)
   {
     checkSafety();
-  }
-  else
-  {
-    orientation_violation_count_ = 0;
   }
 
   if (fsm_->isEmergency())
@@ -103,34 +85,29 @@ void LeggedController::runSafetyAndEmergencyFeedback(const rclcpp::Time& time, b
   }
 }
 
-void LeggedController::publishPolicyObservationWithJoystick(double wall_sec) {
-  applyJoystickMotion(lastJoystickCommand_, wall_sec);
+void LeggedController::publishPolicyObservationWithJoystick() {
+  applyJoystickMotion(lastJoystickCommand_);
   policy_observation_.header.stamp = nh_->get_clock()->now();
   policy_observation_.header.frame_id = "odom";
   policy_observation_.imu.header.stamp = policy_observation_.header.stamp;
   policy_observation_.imu.header.frame_id = "base_link";
   policy_observation_.joints.header = policy_observation_.header;
+  policyMux_.fillObservationPolicyCommand(policy_observation_);
+  if ((wbc_preposition_active_.load() || (motion_head_hold_active_ && motion_upper_snapshot_valid_)) &&
+      policy_observation_.source_policy == robot_interfaces::msg::PolicyObservation::SOURCE_AMP &&
+      policy_observation_.source_command.target_positions.size() == 21)
+  {
+    // WBC history includes the composed upper targets, including held head and natural arm-swing return.
+    std::copy(motion_upper_positions_.begin(), motion_upper_positions_.end(),
+              policy_observation_.source_command.target_positions.begin() + 12);
+  }
   pubState_->publish(policy_observation_);
 }
 
-void LeggedController::stepAuxiliaryMotionSources(bool allow_auxiliary_overlays, const rclcpp::Duration& period,
-                                                  const rclcpp::Time& time) {
-  if (allow_auxiliary_overlays && (headCtrl_.isTopicEnabled() || headCtrl_.isScriptEnabled()))
+void LeggedController::stepAuxiliaryMotionSources(bool allow_auxiliary_overlays, const rclcpp::Time& time) {
+  if (allow_auxiliary_overlays && !motion_reserved_.load() && headCtrl_.isTopicEnabled())
   {
-    double t_loop_sec = 0.0;
-    if (headCtrl_.isScriptEnabled() && !headCtrl_.empty() && headCtrl_.duration() > 0.0)
-    {
-      t_loop_sec = std::fmod(shifted_time.seconds(), headCtrl_.duration());
-      if (t_loop_sec < 0.0) t_loop_sec += headCtrl_.duration();
-    }
-    headCtrl_.stepHeadOutput(period.seconds(), time.seconds(), t_loop_sec);
-  }
-
-  if (sequenceRuntime_.jointCsv().isEnabled() && !sequenceRuntime_.jointCsv().empty() &&
-      sequenceRuntime_.jointCsv().duration() > 0.0)
-  {
-    sequenceRuntime_.jointCsv().step(period.seconds(), time.seconds());
-    (void)sequenceRuntime_.jointCsv().consumeFinishedEvent();
+    headCtrl_.stepHeadOutput(time.seconds());
   }
 }
 
@@ -142,18 +119,7 @@ void LeggedController::maybePublishVisualization(const rclcpp::Time& time) {
   }
 }
 
-void LeggedController::applyJointCsvPhaseTriggerBlendAndCmdVel(double wall_sec) {
-  const auto motor_states = robot_hw_->getHyridJointMotorState();
-  std::vector<double> q_all(motor_states.size());
-  for (size_t i = 0; i < motor_states.size(); ++i)
-  {
-    q_all[i] = motor_states[i].q;
-  }
-  sequenceRuntime_.triggerCsvBlend(q_all, wall_sec);
-  applyJoystickMotion(lastJoystickCommand_, wall_sec);
-}
-
-void LeggedController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
+void LeggedController::update(const rclcpp::Time& time, const rclcpp::Duration& /* period */) {
   if (!fsm_ || !robot_hw_)
   {
     RCLCPP_ERROR_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
@@ -163,12 +129,11 @@ void LeggedController::update(const rclcpp::Time& time, const rclcpp::Duration& 
 
   last_controller_wall_sec_ = time.seconds();
   prepareControllerClock(time);
-  handleActionSequenceUpdate(time);
   RuntimeControlState runtime = computeRuntimeControlState();
-  if (!runtime.policy_drives_legs && !sequenceRuntime_.isActive() && policyMux_.source() != PolicyCmdSource::kRl)
+  if (!runtime.policy_drives_legs && policyMux_.source() != PolicyCmdSource::kRl)
   {
     abortWbcImmediately("[WBC] Leaving Walking mode");
-    setPolicySource(PolicyCmdSource::kRl, "[PolicyMux] Leaving walk -> default RL source");
+    policyMux_.setSource(PolicyCmdSource::kRl, "[PolicyMux] Leaving walk -> default RL source");
   }
   policy_observation_.inference_enabled = runtime.rl_inference_enabled;
   updatePolicyObservationFromHardware();
@@ -178,127 +143,158 @@ void LeggedController::update(const rclcpp::Time& time, const rclcpp::Duration& 
   {
     policy_observation_.inference_enabled = false;
   }
-  publishPolicyObservationWithJoystick(time.seconds());
+  updateMotionPreparation();
+  publishPolicyObservationWithJoystick();
   updateWbcControlState();
   runtime = computeRuntimeControlState();
-  syncFaceFollowState(runtime.allow_auxiliary_overlays && !textMotionCtrl_.busy() &&
-                          !sequenceRuntime_.releaseHandoffActive(time.seconds()),
-                      time.seconds());
-  stepAuxiliaryMotionSources(runtime.allow_auxiliary_overlays, period, time);
+  const bool handoff_active = policy_handoff_.active() && !policy_handoff_.expired(time.seconds());
+  syncFaceFollowState(runtime.allow_auxiliary_overlays && !handoff_active, time.seconds());
+  stepAuxiliaryMotionSources(runtime.allow_auxiliary_overlays, time);
   applyJointCommands(runtime.policy_drives_legs, runtime.allow_auxiliary_overlays, runtime.emergency_control);
   maybePublishVisualization(time);
 }
 
-void LeggedController::applyJointCommands(bool walking, bool allow_auxiliary_overlays, bool emergency_control) {
-  const bool action_sequence_active = sequenceRuntime_.isActive();
-  const PolicyInputs policy_inputs = policyMux_.selectInputs(walking);
-  const bool policy_expired = walking && !policy_inputs.valid;
-  const bool effective_emergency = emergency_control || policy_expired;
-  const bool text_motion_allowed = allow_auxiliary_overlays && !effective_emergency &&
-                                   policyMux_.source() == PolicyCmdSource::kRl &&
-                                   !sequenceRuntime_.jointCsv().isEnabled() &&
-                                   !sequenceRuntime_.releaseHandoffActive(last_controller_wall_sec_);
-  text_motion_start_allowed_.store(text_motion_enabled_ && text_motion_allowed);
-  textMotionCtrl_.setAllowed(text_motion_enabled_ && text_motion_allowed);
-  if (text_motion_enabled_ && textMotionCtrl_.busy())
-    publishTextMotionEvent(textMotionCtrl_.step(policy_inputs.q_snapshot, robot_hw_->getJointMotorCommands(),
-                                               text_motion_allowed));
-  if (policy_expired)
+bool LeggedController::holdPolicyCommand(const PolicyInputs& inputs) {
+  if (!fsm_->isWalking()) return false;
   {
-    if (policyMux_.source() == PolicyCmdSource::kWbc) triggerEmergencyStop();
-    RCLCPP_ERROR_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
-                          "Policy command expired or unavailable; applying measured-position damping hold");
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    text_capture_stamp_ns_ = 0;
   }
-  const bool need_motor_state = effective_emergency;
-  const auto motor_states =
-      need_motor_state ? robot_hw_->getHyridJointMotorState() : std::vector<legged::JointMotorState>{};
-  const bool arm_swing_allowed = allow_auxiliary_overlays && !action_sequence_active && !effective_emergency;
+  if (jointCommandComposer_.holdLastCommand(robot_hw_.get()))
+  {
+    holding_policy_command_ = true;
+    RCLCPP_WARN_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
+        "[Policy Recovery] Holding last validated q/dq/kp/kd/tau until fresh output; no policy hold timeout");
+    captureControllerStatus(true, inputs);
+    return true;
+  }
+  holding_policy_command_ = false;
+  RCLCPP_ERROR(nh_->get_logger(), "[Policy Recovery] No validated joint command exists to hold; entering emergency damping");
+  triggerEmergencyStop(NoValidCommand);
+  return false;
+}
+
+void LeggedController::applyJointCommands(bool walking, bool allow_auxiliary_overlays, bool emergency_control) {
+  PolicyInputs policy_inputs = policyMux_.selectInputs(walking);
+  {
+    std::lock_guard<std::mutex> lock(wbc_transition_mutex_);
+    if (wbc_preposition_active_.load() && walking && policy_inputs.source == PolicyCmdSource::kRl &&
+        policy_inputs.q_snapshot.size() == 21 && wbc_preposition_positions_.size() == 21)
+      std::copy(wbc_preposition_positions_.begin() + 12, wbc_preposition_positions_.end(),
+                policy_inputs.q_snapshot.begin() + 12);
+  }
+  if (walking && !policy_inputs.valid && !emergency_control)
+  {
+    if (holdPolicyCommand(policy_inputs)) return;
+    emergency_control = true;
+  }
+  const bool arm_swing_allowed = allow_auxiliary_overlays && !emergency_control;
   armSwingCtrl_.update(last_controller_wall_sec_, policy_observation_.velocity_command.linear.x, arm_swing_allowed,
                        policy_inputs.q_snapshot);
 
   JointCommandComposer::Context ctx;
   ctx.robot_hw = robot_hw_.get();
-  ctx.head_ctrl = &headCtrl_;
-  ctx.joint_csv = &sequenceRuntime_.jointCsv();
+  ctx.head_ctrl = motion_head_pause_applied_ ? nullptr : &headCtrl_;
   ctx.arm_swing_ctrl = &armSwingCtrl_;
-  ctx.text_motion = text_motion_enabled_ ? &textMotionCtrl_ : nullptr;
-  ctx.release_handoff = &sequenceRuntime_.releaseHandoff();
+  ctx.release_handoff = &policy_handoff_;
   ctx.policy_inputs = policy_inputs;
-  ctx.blend_policy_gains = wbc_handoff_in_progress_.load();
+  ctx.blend_policy_gains = wbc_handoff_in_progress_.load() || wbc_preposition_active_.load();
   ctx.rl_gains = policyMux_.rlGainsSnapshot();
-  ctx.motor_states = motor_states;
-  ctx.is_leg_joint = &is_leg_joint_;
-  // Active CSV/action phases use the AMP profile too; only a selected mimic policy
-  // changes PolicyMux::gains away from the AMP profile.
-  ctx.walking = walking || action_sequence_active;
+  ctx.motor_states = emergency_control ? &robot_hw_->getHyridJointMotorState() : nullptr;
+  const bool holding_head = motion_head_hold_active_ && walking && policy_inputs.source == PolicyCmdSource::kRl &&
+                            !wbc_preposition_active_.load();
+  ctx.head_hold_positions = holding_head ? &motion_head_positions_ : nullptr;
+  ctx.upper_position_snapshot = (wbc_preposition_active_.load() || holding_head) ? &motion_upper_positions_ : nullptr;
+  ctx.walking = walking;
   ctx.allow_auxiliary_overlays = allow_auxiliary_overlays;
-  ctx.emergency = effective_emergency;
+  ctx.emergency = emergency_control;
   ctx.is_sim = isSim_;
-  ctx.action_sequence_full_csv = isActionSequenceFullCsv();
-  ctx.action_sequence_active = action_sequence_active;
   ctx.kp_standby = kp_standby_;
   ctx.emergency_damping_kd = emergency_damping_kd_;
   ctx.wall_sec = last_controller_wall_sec_;
-  jointCommandComposer_.composeAll(ctx);
+  if (!jointCommandComposer_.composeAll(ctx))
+  {
+    RCLCPP_WARN_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 1000,
+                         "[Policy Recovery] Rejected incomplete/non-finite joint command frame or invalid gains");
+    policy_inputs.valid = false;
+    if (walking && !emergency_control)
+    {
+      if (policy_inputs.source == PolicyCmdSource::kWbc)
+      {
+        std::string message;
+        requestWbcReturn("[WBC] Invalid composed command; requesting AMP", message, true);
+      }
+      if (holdPolicyCommand(policy_inputs)) return;
+    }
+    ctx.emergency = true;
+    holding_policy_command_ = false;
+    ctx.motor_states = &robot_hw_->getHyridJointMotorState();
+    jointCommandComposer_.composeAll(ctx);
+    captureControllerStatus(walking, policy_inputs);
+    return;
+  }
+  if (holding_policy_command_ && walking && !emergency_control)
+    RCLCPP_INFO(nh_->get_logger(), "[Policy Recovery] Fresh policy output applied; no reset required");
+  holding_policy_command_ = false;
+  if (ctx.upper_position_snapshot != nullptr) motion_upper_snapshot_valid_ = true;
+  {
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (motion_reserved_.load() && motion_source_ == "txt2motion" && !motion_head_pending_ &&
+        !motion_cancelled_.load() && holding_head &&
+        !emergency_control && !armSwingCtrl_.outputActive() && policy_handoff_.expired(last_controller_wall_sec_))
+    {
+      if (text_capture_stamp_ns_ == 0)
+      {
+        // The gateway must use an observation newer than this first confirmed held-output cycle.
+        text_capture_stamp_ns_ = rclcpp::Time(policy_observation_.header.stamp).nanoseconds();
+        RCLCPP_DEBUG(nh_->get_logger(), "[Motion] Text start capture ready for %s; head held and arm swing idle",
+                    motion_request_id_.c_str());
+      }
+    }
+    else text_capture_stamp_ns_ = 0;
+  }
+  captureControllerStatus(walking, policy_inputs);
 }
 
 void LeggedController::checkSafety() {
   if (isSim_ || !safetyChecker_)
   {
-    orientation_violation_count_ = 0;
     return;
   }
 
-  const auto& q = policy_observation_.imu.orientation;
-  const double roll = std::atan2(2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y));
-  const double pitch = std::asin(std::max(-1.0, std::min(1.0, 2.0 * (q.w * q.y - q.z * q.x))));
+  const auto orientation = safetyChecker_->orientationState();
+  if (orientation.consecutive_violations == 0) return;
 
-  SafetyChecker::OrientationResult orientationResult = safetyChecker_->checkOrientation(roll, pitch);
-  if (orientationResult.ok)
-  {
-    orientation_violation_count_ = 0;
-    return;
-  }
-
-  ++orientation_violation_count_;
   RCLCPP_WARN_THROTTLE(nh_->get_logger(), *nh_->get_clock(), 500,
-                       "[SafetyChecker] Orientation violation %d/%d: roll=%.1f deg, pitch=%.1f deg",
-                       orientation_violation_count_, safetyChecker_->requiredConsecutiveOrientationViolations(),
-                       radiansToDegrees(roll), radiansToDegrees(pitch));
+                       "[SafetyChecker] Orientation violation %d/%d IMU frames: roll=%.1f deg, pitch=%.1f deg",
+                       orientation.consecutive_violations, safetyChecker_->requiredConsecutiveOrientationViolations(),
+                       radiansToDegrees(orientation.roll), radiansToDegrees(orientation.pitch));
 
-  if (orientation_violation_count_ >= safetyChecker_->requiredConsecutiveOrientationViolations() &&
+  if (orientation.consecutive_violations >= safetyChecker_->requiredConsecutiveOrientationViolations() &&
       !fsm_->isEmergency())
   {
     RCLCPP_ERROR(nh_->get_logger(),
-                 "[SafetyChecker] Orientation violation persisted for %d cycles (roll=%.1f deg, pitch=%.1f deg)",
-                 orientation_violation_count_, radiansToDegrees(roll), radiansToDegrees(pitch));
-    triggerEmergencyStop();
+                 "[SafetyChecker] Orientation violation persisted for %d consecutive IMU frames "
+                 "(roll=%.1f deg, pitch=%.1f deg)",
+                 orientation.consecutive_violations, radiansToDegrees(orientation.roll),
+                 radiansToDegrees(orientation.pitch));
+    triggerEmergencyStop(OrientationStop);
   }
 }
 
 void LeggedController::updatePolicyObservationFromHardware() {
-  std::vector<double> bodyPosition;
-  std::vector<double> bodyOrientation;
-  bodyPosition.resize(3);
-  bodyOrientation.resize(4);
-  bodyPosition = robot_hw_->getBodyPosition();
-  bodyOrientation = robot_hw_->getBodyOrientation();
+  const auto bodyPosition = robot_hw_->getBodyPosition();
+  const auto bodyOrientation = robot_hw_->getBodyOrientation();
 
-  if (bodyPosition.size() >= 3)
-  {
-    policy_observation_.base_pose.position.x = bodyPosition[0];
-    policy_observation_.base_pose.position.y = bodyPosition[1];
-    policy_observation_.base_pose.position.z = bodyPosition[2];
-  }
-  if (bodyOrientation.size() >= 4)
-  {
-    policy_observation_.base_pose.orientation.x = bodyOrientation[0];
-    policy_observation_.base_pose.orientation.y = bodyOrientation[1];
-    policy_observation_.base_pose.orientation.z = bodyOrientation[2];
-    policy_observation_.base_pose.orientation.w = bodyOrientation[3];
-  }
+  policy_observation_.base_pose.position.x = bodyPosition[0];
+  policy_observation_.base_pose.position.y = bodyPosition[1];
+  policy_observation_.base_pose.position.z = bodyPosition[2];
+  policy_observation_.base_pose.orientation.x = bodyOrientation[0];
+  policy_observation_.base_pose.orientation.y = bodyOrientation[1];
+  policy_observation_.base_pose.orientation.z = bodyOrientation[2];
+  policy_observation_.base_pose.orientation.w = bodyOrientation[3];
 
-  std::vector<legged::JointMotorState> motor_states = robot_hw_->getHyridJointMotorState();
+  const auto& motor_states = robot_hw_->getHyridJointMotorState();
   const size_t state_count = std::min(motor_states.size(), policy_observation_.joints.position.size());
   for (size_t i = 0; i < state_count; ++i)
   {
@@ -307,33 +303,22 @@ void LeggedController::updatePolicyObservationFromHardware() {
     policy_observation_.joints.effort[i] = motor_states[i].tau;
   }
 
-  std::vector<double> imu_quaternion = robot_hw_->getImuQuaternion();
-  std::vector<double> imu_angular_velocity = robot_hw_->getImuAngularVelocity();
+  const auto imu_quaternion = robot_hw_->getImuQuaternion();
+  const auto imu_angular_velocity = robot_hw_->getImuAngularVelocity();
 
-  if (imu_quaternion.size() >= 4)
-  {
-    policy_observation_.imu.orientation.x = imu_quaternion[0];
-    policy_observation_.imu.orientation.y = imu_quaternion[1];
-    policy_observation_.imu.orientation.z = imu_quaternion[2];
-    policy_observation_.imu.orientation.w = imu_quaternion[3];
-  }
-  if (imu_angular_velocity.size() >= 3)
-  {
-    policy_observation_.imu.angular_velocity.x = imu_angular_velocity[0];
-    policy_observation_.imu.angular_velocity.y = imu_angular_velocity[1];
-    policy_observation_.imu.angular_velocity.z = imu_angular_velocity[2];
-  }
+  policy_observation_.imu.orientation.x = imu_quaternion[0];
+  policy_observation_.imu.orientation.y = imu_quaternion[1];
+  policy_observation_.imu.orientation.z = imu_quaternion[2];
+  policy_observation_.imu.orientation.w = imu_quaternion[3];
+  policy_observation_.imu.angular_velocity.x = imu_angular_velocity[0];
+  policy_observation_.imu.angular_velocity.y = imu_angular_velocity[1];
+  policy_observation_.imu.angular_velocity.z = imu_angular_velocity[2];
   policy_observation_.motion_time = shifted_time;
 }
 
 void LeggedController::rvizVisualization() {
-  if (!enableRviz_)
-  {
-    return;
-  }
-
   rvizVisualPos_.header.stamp = rclcpp::Clock().now();
-  std::vector<legged::JointMotorState> motor_states = robot_hw_->getHyridJointMotorState();
+  const auto& motor_states = robot_hw_->getHyridJointMotorState();
   for (size_t i = 0; i < motor_states.size(); ++i)
   {
     rvizVisualPos_.position[i] = motor_states[i].q;

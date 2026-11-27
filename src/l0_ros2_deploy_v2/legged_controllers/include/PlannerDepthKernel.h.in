@@ -1,0 +1,4 @@
+#pragma once
+static const char* const kPlannerDepthKernel = R"LLLCL(
+@PLANNER_DEPTH_KERNEL_SOURCE@
+)LLLCL";

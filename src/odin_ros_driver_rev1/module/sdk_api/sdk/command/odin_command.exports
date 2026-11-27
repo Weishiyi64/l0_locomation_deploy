@@ -1,0 +1,7 @@
+{
+  global:
+    _ZN4odin3sdk14CommandFactory*;
+    odin_command_abi_version;
+  local:
+    *;
+};

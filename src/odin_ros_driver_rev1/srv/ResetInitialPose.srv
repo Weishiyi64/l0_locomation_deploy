@@ -1,0 +1,6 @@
+# Request - empty, triggers SLAM pose reset (cmd_id=0x70)
+---
+# Response
+bool success
+int32 error_code  # 0=OK, other values from OdinResult enum
+string message

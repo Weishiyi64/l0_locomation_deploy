@@ -1,4 +1,4 @@
-#include "legged_controllers/PolicyMux.h"
+#include "PolicyMux.h"
 
 #include <algorithm>
 #include <cctype>
@@ -8,14 +8,14 @@
 #include <unordered_map>
 #include <utility>
 
-#include "legged_controllers/ControllerFileUtils.h"
-#include "legged_controllers/IHardwareLayer.h"
+#include "ControllerFileUtils.h"
+#include "IHardwareLayer.h"
 
 namespace legged {
 
 namespace {
 
-void fillPolicyCommandPositions(luvbot_control_interfaces::msg::PolicyCommand& cmd, double value) {
+void fillPolicyCommandPositions(robot_interfaces::msg::PolicyCommand& cmd, double value) {
   std::fill(cmd.target_positions.begin(), cmd.target_positions.end(), value);
 }
 
@@ -66,13 +66,15 @@ void PolicyMux::createRosInterfaces() {
   {
     imitation_policy_client_callback_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
   }
-  switch_imitation_policy_client_ = node_->create_client<luvbot_control_interfaces::srv::SwitchPolicy>(
+  switch_imitation_policy_client_ = node_->create_client<robot_interfaces::srv::SwitchPolicy>(
       "control/policy/switch", rmw_qos_profile_services_default, imitation_policy_client_callback_group_);
   publishImitationActive(false);
   wbc_active_pub_ = node_->create_publisher<std_msgs::msg::Bool>("control/policy/wbc/active",
+                                                             rclcpp::QoS(1).reliable().transient_local());
+  wbc_execution_pub_ = node_->create_publisher<std_msgs::msg::String>("control/policy/wbc/execution_active",
                                                                  rclcpp::QoS(1).reliable().transient_local());
   wbc_client_callback_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-  prepare_wbc_motion_client_ = node_->create_client<luvbot_control_interfaces::srv::ControlWbcMotion>(
+  prepare_wbc_motion_client_ = node_->create_client<robot_interfaces::srv::ControlWbcMotion>(
       "control/policy/wbc/prepare", rmw_qos_profile_services_default, wbc_client_callback_group_);
   publishWbcActive(false);
 }
@@ -168,7 +170,7 @@ bool PolicyMux::switchImitationPolicy(const std::string& policy_name, const char
     return false;
   }
 
-  auto request = std::make_shared<luvbot_control_interfaces::srv::SwitchPolicy::Request>();
+  auto request = std::make_shared<robot_interfaces::srv::SwitchPolicy::Request>();
   request->policy_name = policy;
   auto future = switch_imitation_policy_client_->async_send_request(request);
   const auto timeout = std::chrono::duration<double>(std::max(1.0, imitation_policy_switch_timeout_sec_));
@@ -203,7 +205,7 @@ bool PolicyMux::switchImitationPolicy(const std::string& policy_name, const char
   return true;
 }
 
-bool PolicyMux::validateAndOrderCommand(const luvbot_control_interfaces::msg::PolicyCommand& msg,
+bool PolicyMux::validateAndOrderCommand(const robot_interfaces::msg::PolicyCommand& msg,
                                         std::vector<double>& ordered_positions, uint64_t& last_sequence,
                                         bool& sequence_initialized, const char* topic_label) {
   const rclcpp::Time current = node_->get_clock()->now();
@@ -254,20 +256,21 @@ bool PolicyMux::validateAndOrderCommand(const luvbot_control_interfaces::msg::Po
   return true;
 }
 
-void PolicyMux::setRlCommand(const luvbot_control_interfaces::msg::PolicyCommand& msg) {
+void PolicyMux::setRlCommand(const robot_interfaces::msg::PolicyCommand& msg) {
   std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  if (!amp_return_id_.empty() && msg.amp_return_id != amp_return_id_) return;
   if (rclcpp::Time(pos_cmd_rl_.valid_until) <= node_->get_clock()->now()) rl_sequence_initialized_ = false;
   std::vector<double> ordered_positions;
   if (validateAndOrderCommand(msg, ordered_positions, last_rl_sequence_, rl_sequence_initialized_, "RL"))
   {
+    command_received_[0] = std::chrono::steady_clock::now();
+    pos_cmd_rl_ = msg;
+    pos_cmd_rl_.joint_names.assign(joint_names_.begin(), joint_names_.end());
     pos_cmd_rl_.target_positions.assign(ordered_positions.begin(), ordered_positions.end());
-    pos_cmd_rl_.valid_until = msg.valid_until;
-    ++rl_command_revision_;
-    command_cv_.notify_all();
   }
 }
 
-void PolicyMux::setImitationCommand(const luvbot_control_interfaces::msg::PolicyCommand& msg) {
+void PolicyMux::setImitationCommand(const robot_interfaces::msg::PolicyCommand& msg) {
   std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
   if (rclcpp::Time(pos_cmd_imitation_.valid_until) <= node_->get_clock()->now())
     imitation_sequence_initialized_ = false;
@@ -276,13 +279,17 @@ void PolicyMux::setImitationCommand(const luvbot_control_interfaces::msg::Policy
                                                      imitation_sequence_initialized_, "imitation");
   if (pos_cmd_imitation_valid_)
   {
+    command_received_[1] = std::chrono::steady_clock::now();
+    pos_cmd_imitation_ = msg;
+    pos_cmd_imitation_.joint_names.assign(joint_names_.begin(), joint_names_.end());
     pos_cmd_imitation_.target_positions.assign(ordered_positions.begin(), ordered_positions.end());
-    pos_cmd_imitation_.valid_until = msg.valid_until;
   }
 }
 
 void PolicyMux::clearCommands(double value) {
   std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  amp_return_id_.clear();
+  amp_return_seed_ = robot_interfaces::msg::PolicyCommand{};
   fillPolicyCommandPositions(pos_cmd_rl_, value);
   fillPolicyCommandPositions(pos_cmd_imitation_, value);
   fillPolicyCommandPositions(pos_cmd_wbc_, value);
@@ -301,6 +308,7 @@ void PolicyMux::resizeCommands(size_t joint_count) {
 }
 
 void PolicyMux::setSource(PolicyCmdSource source, const char* reason) {
+  if (source == PolicyCmdSource::kImitation) clearRlReturn();
   const PolicyCmdSource previous = policy_cmd_source_.exchange(source);
   if (reason != nullptr && previous != source)
   {
@@ -322,6 +330,12 @@ PolicyInputs PolicyMux::selectInputs(bool walking) const {
     use_wbc = walking && policy_cmd_source_.load() == PolicyCmdSource::kWbc;
     const auto& selected = use_wbc ? pos_cmd_wbc_ : (use_imitation ? pos_cmd_imitation_ : pos_cmd_rl_);
     out.q_snapshot.assign(selected.target_positions.begin(), selected.target_positions.end());
+    out.source = use_wbc ? PolicyCmdSource::kWbc : (use_imitation ? PolicyCmdSource::kImitation : PolicyCmdSource::kRl);
+    const auto received = command_received_[use_wbc ? 2 : (use_imitation ? 1 : 0)];
+    if (received != std::chrono::steady_clock::time_point{})
+      out.last_update_age_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - received).count();
+    out.valid_for_ms = std::max(0.0, (rclcpp::Time(selected.valid_until) - node_->get_clock()->now()).seconds() * 1000.0);
     out.valid = !walking || ((!use_wbc || pos_cmd_wbc_valid_) && (!use_imitation || pos_cmd_imitation_valid_) &&
                              rclcpp::Time(selected.valid_until) > node_->get_clock()->now());
   }
@@ -337,6 +351,52 @@ PolicyInputs PolicyMux::selectInputs(bool walking) const {
 JointGainProfile PolicyMux::rlGainsSnapshot() const {
   std::lock_guard<std::mutex> lock(gains_mutex_);
   return rl_walking_gains_;
+}
+
+void PolicyMux::fillObservationPolicyCommand(
+    robot_interfaces::msg::PolicyObservation& observation) const {
+  using Observation = robot_interfaces::msg::PolicyObservation;
+  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  observation.amp_return_id = amp_return_id_;
+  if (amp_return_live_preview_) observation.velocity_command = geometry_msgs::msg::Twist{};
+  const auto source = policy_cmd_source_.load();
+  observation.source_policy = source == PolicyCmdSource::kWbc ? Observation::SOURCE_WBC :
+      (source == PolicyCmdSource::kImitation ? Observation::SOURCE_IMITATION : Observation::SOURCE_AMP);
+  observation.source_command = source == PolicyCmdSource::kWbc ?
+      (amp_return_id_.empty() || amp_return_live_preview_ ? pos_cmd_wbc_ : amp_return_seed_) :
+      (source == PolicyCmdSource::kImitation ? pos_cmd_imitation_ : pos_cmd_rl_);
+  if (!observation.inference_enabled ||
+      (source == PolicyCmdSource::kWbc && !pos_cmd_wbc_valid_) ||
+      (source == PolicyCmdSource::kImitation && !pos_cmd_imitation_valid_) ||
+      rclcpp::Time(observation.source_command.valid_until) <= node_->get_clock()->now())
+  {
+    observation.source_policy = Observation::SOURCE_NONE;
+    observation.source_command = robot_interfaces::msg::PolicyCommand{};
+  }
+}
+
+std::string PolicyMux::beginRlReturn(bool live_preview) {
+  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  if (!amp_return_id_.empty()) return amp_return_id_;
+  amp_return_live_preview_ = live_preview;
+  amp_return_id_ = wbc_request_id_.empty() ? "amp_recovery_" + std::to_string(node_->now().nanoseconds()) : wbc_request_id_;
+  amp_return_seed_ = pos_cmd_wbc_valid_ && pos_cmd_wbc_.source_id == amp_return_id_ ?
+      pos_cmd_wbc_ : robot_interfaces::msg::PolicyCommand{};
+  // This request ID is new for AMP; no output computed before the return may take over.
+  pos_cmd_rl_.valid_until = builtin_interfaces::msg::Time{};
+  return amp_return_id_;
+}
+
+void PolicyMux::finishRlReturnPreview() {
+  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  amp_return_live_preview_ = false;
+}
+
+void PolicyMux::clearRlReturn() {
+  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  amp_return_live_preview_ = false;
+  amp_return_id_.clear();
+  amp_return_seed_ = robot_interfaces::msg::PolicyCommand{};
 }
 
 void PolicyMux::publishRlObsReset() {
@@ -412,16 +472,30 @@ bool PolicyMux::loadWbcWalkingGains(const std::string& robot_cfg_path, const std
   }
 }
 
-std::shared_ptr<luvbot_control_interfaces::srv::ControlWbcMotion::Response> PolicyMux::prepareWbcMotion(
-    uint8_t command, const std::string& motion_id, double timeout_sec) {
+std::shared_ptr<robot_interfaces::srv::ControlWbcMotion::Response> PolicyMux::prepareWbcMotion(
+    uint8_t command, const std::string& motion_id, double timeout_sec, const std::string& request_id) {
   if (!prepare_wbc_motion_client_ || !prepare_wbc_motion_client_->wait_for_service(std::chrono::milliseconds(0)))
   {
     RCLCPP_ERROR(logger(), "[WBC] control/policy/wbc/prepare service is unavailable");
     return nullptr;
   }
-  auto request = std::make_shared<luvbot_control_interfaces::srv::ControlWbcMotion::Request>();
+  auto request = std::make_shared<robot_interfaces::srv::ControlWbcMotion::Request>();
   request->command = command;
   request->motion_id = motion_id;
+  {
+    std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+    if (command == robot_interfaces::srv::ControlWbcMotion::Request::START ||
+        command == robot_interfaces::srv::ControlWbcMotion::Request::REFERENCE) {
+      if (request_id.empty()) return nullptr;
+      wbc_request_id_ = request_id;
+      amp_return_id_.clear();
+      amp_return_live_preview_ = false;
+      amp_return_seed_ = robot_interfaces::msg::PolicyCommand{};
+      pos_cmd_wbc_valid_ = false;
+      wbc_sequence_initialized_ = false;
+    }
+    request->request_id = request_id.empty() ? wbc_request_id_ : request_id;
+  }
   auto future = prepare_wbc_motion_client_->async_send_request(request);
   if (future.wait_for(std::chrono::duration<double>(timeout_sec)) != std::future_status::ready)
   {
@@ -439,25 +513,34 @@ void PolicyMux::publishWbcActive(bool active, const char* reason) {
     message.data = active;
     wbc_active_pub_->publish(message);
   }
-  if (reason != nullptr) RCLCPP_INFO(logger(), "%s (control/policy/wbc/active=%s)", reason, active ? "true" : "false");
+  if (wbc_execution_pub_)
+  {
+    std_msgs::msg::String message;
+    {
+      std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+      message.data = "{\"request_id\":\"" + wbc_request_id_ + "\",\"active\":" + (active ? "true}" : "false}");
+    }
+    wbc_execution_pub_->publish(message);
+  }
+  if (reason != nullptr) RCLCPP_DEBUG(logger(), "%s (control/policy/wbc/active=%s)", reason, active ? "true" : "false");
 }
 
-void PolicyMux::setWbcCommand(const luvbot_control_interfaces::msg::PolicyCommand& msg) {
+void PolicyMux::setWbcCommand(const robot_interfaces::msg::PolicyCommand& msg) {
   std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  // Freeze the valid return seed; a worker retiring asynchronously must not change the bridge command.
+  if (wbc_request_id_.empty() || msg.source_id != wbc_request_id_ ||
+      (!amp_return_id_.empty() && !(amp_return_live_preview_ && policy_cmd_source_.load() == PolicyCmdSource::kWbc))) return;
   if (rclcpp::Time(pos_cmd_wbc_.valid_until) <= node_->get_clock()->now()) wbc_sequence_initialized_ = false;
   std::vector<double> ordered;
-  pos_cmd_wbc_valid_ = msg.source_id == "wbc" &&
-                       validateAndOrderCommand(msg, ordered, last_wbc_sequence_, wbc_sequence_initialized_, "WBC");
-  if (!pos_cmd_wbc_valid_) return;
+  // Reject a bad incoming command without invalidating the last accepted command before its own deadline.
+  if (!validateAndOrderCommand(msg, ordered, last_wbc_sequence_, wbc_sequence_initialized_, "WBC")) return;
+  pos_cmd_wbc_valid_ = true;
+  command_received_[2] = std::chrono::steady_clock::now();
+  pos_cmd_wbc_ = msg;
+  pos_cmd_wbc_.joint_names.assign(joint_names_.begin(), joint_names_.end());
   pos_cmd_wbc_.target_positions.assign(ordered.begin(), ordered.end());
-  pos_cmd_wbc_.valid_until = msg.valid_until;
   ++wbc_command_revision_;
   command_cv_.notify_all();
-}
-
-uint64_t PolicyMux::rlCommandRevision() const {
-  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
-  return rl_command_revision_;
 }
 
 uint64_t PolicyMux::wbcCommandRevision() const {
@@ -465,19 +548,20 @@ uint64_t PolicyMux::wbcCommandRevision() const {
   return wbc_command_revision_;
 }
 
-bool PolicyMux::waitForRlCommandAfter(uint64_t revision, double timeout_sec) {
-  std::unique_lock<std::mutex> lock(pos_cmd_mutex_);
-  return command_cv_.wait_for(lock, std::chrono::duration<double>(timeout_sec), [this, revision]() {
-    return rl_command_revision_ > revision && rclcpp::Time(pos_cmd_rl_.valid_until) > node_->get_clock()->now();
-  });
+bool PolicyMux::rlReturnCommandReady(const std::string& return_id) const {
+  std::lock_guard<std::mutex> lock(pos_cmd_mutex_);
+  return !return_id.empty() && amp_return_id_ == return_id && pos_cmd_rl_.amp_return_id == return_id &&
+         rclcpp::Time(pos_cmd_rl_.valid_until) > node_->get_clock()->now();
 }
 
 bool PolicyMux::waitForWbcCommandAfter(uint64_t revision, double timeout_sec) {
   std::unique_lock<std::mutex> lock(pos_cmd_mutex_);
-  return command_cv_.wait_for(lock, std::chrono::duration<double>(timeout_sec), [this, revision]() {
+  const auto ready = [this, revision]() {
     return pos_cmd_wbc_valid_ && wbc_command_revision_ > revision &&
            rclcpp::Time(pos_cmd_wbc_.valid_until) > node_->get_clock()->now();
-  });
+  };
+  if (timeout_sec <= 0.0) return ready();
+  return command_cv_.wait_for(lock, std::chrono::duration<double>(timeout_sec), ready);
 }
 
 }  // namespace legged

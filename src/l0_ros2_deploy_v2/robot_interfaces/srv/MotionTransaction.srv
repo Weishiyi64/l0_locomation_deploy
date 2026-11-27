@@ -1,0 +1,18 @@
+uint8 STATUS=0
+uint8 RESERVE=1
+uint8 EXECUTE=2
+uint8 CANCEL=3
+uint8 RELEASE=4
+uint8 GENERATE=5
+uint8 command
+string request_id
+string source
+int64 timestamp_ms
+string action_id
+string payload_json
+---
+bool success
+bool ready
+int64 ready_since_ms
+string message
+string payload_json

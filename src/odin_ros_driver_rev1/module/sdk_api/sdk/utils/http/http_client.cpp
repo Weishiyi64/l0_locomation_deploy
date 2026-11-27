@@ -10,8 +10,12 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
-#include <libgen.h>
+
+#ifdef _WIN32
+#include <io.h>  // _access
+#else
 #include <unistd.h>
+#endif
 
 #include "mongoose/mongoose.h"
 
@@ -758,21 +762,25 @@ bool Client::download_file_legacy(const std::string &base_url, const std::string
 }
 
 bool Client::upload_file_legacy(const std::string &base_url, const std::string &file_path) {
+#ifdef _WIN32
+  if (_access(file_path.c_str(), 0) != 0) {
+#else
   if (access(file_path.c_str(), F_OK) != 0) {
+#endif
     MG_ERROR(("[Client] file not found: %s", file_path.c_str()));
     return false;
   }
 
-  char *dup_path = strdup(file_path.c_str());
-  char *name = basename(dup_path);
-  if (name == nullptr) {
+  // basename() lives in <libgen.h> (POSIX only); both separators are
+  // accepted so Windows paths (C:\dir\file) resolve the same way.
+  size_t pos = file_path.find_last_of("/\\");
+  std::string name = (pos != std::string::npos) ? file_path.substr(pos + 1) : file_path;
+  if (name.empty()) {
     MG_ERROR(("[Client] invalid file path: %s", file_path.c_str()));
-    free(dup_path);
     return false;
   }
 
   std::string url = base_url + URI_API_FILES_UPLOAD_PREFIX + name;
-  free(dup_path);
   return upload(url, file_path);
 }
 

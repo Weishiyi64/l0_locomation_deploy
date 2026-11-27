@@ -1,9 +1,9 @@
 #pragma once
 #include "jpeg_decoder.h"
 
-// This header is only meaningful when USE_JETSON_DECODER is defined.
+// This header is only meaningful when USING_JETSON_DECODER is defined.
 // Including it on non-Jetson builds is safe but the class will be empty.
-#ifdef USE_JETSON_DECODER
+#ifdef USING_JETSON_DECODER
 
 class NvJPEGDecoder;  // forward-declare to avoid leaking NvJpegDecoder.h
 
@@ -29,4 +29,4 @@ class JetsonHardwareDecoder : public JpegDecoder {
 
 }  // namespace odin_decoder
 
-#endif  // USE_JETSON_DECODER
+#endif  // USING_JETSON_DECODER

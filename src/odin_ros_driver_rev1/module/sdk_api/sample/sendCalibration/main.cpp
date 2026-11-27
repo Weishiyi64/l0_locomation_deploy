@@ -58,7 +58,9 @@ void PrintUsage(const char* program_name) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#ifndef _WIN32
   setvbuf(stdout, NULL, _IOLBF, 0);  // use line buffer
+#endif
   log_config(LOG_LEVEL_DEBUG, printf);
   if (argc < 2) {
     PrintUsage(argv[0]);
@@ -158,7 +160,7 @@ int main(int argc, char* argv[]) {
 
   // Set device to standby mode for file transfer
   std::cout << "Setting device to standby mode...\n";
-  if (SetOperatingMode(handle, OdinOperatingMode::kStandby) != OdinResult::kOk) {
+  if (SetDeviceMode(handle, OdinDeviceMode::kStandby) != OdinResult::kOk) {
     std::cerr << "Warning: Failed to set device mode.\n";
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(500));

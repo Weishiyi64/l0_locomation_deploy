@@ -11,9 +11,14 @@ embedded node.
 - `/actuator/motor/state`: raw motor feedback.
 - `/actuator/motor/set_enabled`: idempotent single-motor enable/disable.
 
+The standalone arbiter and mock use shared `luvbot_hardware_interfaces` types.
 The final command publisher uses Best Effort, Volatile, Keep Last 1. Motor
-state uses Best Effort, Volatile, Keep Last 5. Commands are rejected when
+state uses Best Effort, Volatile, Keep Last 5. Candidates are rejected when
 expired, out of order, incomplete, non-finite, from an unknown source, or unsafe.
+The shared output is MIT, so the arbiter accepts hybrid candidates.
+Final MIT frames carry a timestamp and sequence number. The mock applies its
+configured `command_validity_ms` (20 ms by default) to that timestamp and also
+enforces its receive watchdog.
 
 The shared mapping used by `LeggedReal` confirms a feedback turn with three
 consecutive valid samples. A position already inside the configured joint
@@ -33,10 +38,9 @@ requires restart. Do not reset a fault while the robot depends on position hold.
 `LeggedReal` logs the raw position, selected offset, converted position, and
 confirmation state when a turn changes or becomes ready.
 
-Legacy families map to `MotorRoute` as follows: `DM -> DM`, `RS -> RS`,
-`EC -> ENC`, `MR -> MTE`, and `LS -> LS`. All five routed motor types are
-supported by the embedded node; the five ENC motors in L0_v3 follow the same
-enable, command, and feedback lifecycle as the other motors.
+`MotorRoute.motor_type` is the zero-based motor index in the configured joint
+order. The mapping keeps the protocol family separately for local calibration
+and model selection.
 
 Start the normal arbiter (it does not generate commands on its own):
 
@@ -60,18 +64,20 @@ It runs the complete enable, feedback, two-second hold, and disable sequence.
 
 ## Real single-motor pilot
 
-Run the embedded team's `motor_driver_node` separately first. The real pilot
-is disarmed by default:
+The standalone pilot requires a compatible driver implementing `SetMotorEnabled`.
+HPM direct deployment uses `MotorEnableCommand` through `LeggedReal`. The
+standalone pilot is disarmed by default:
 
 ```bash
 ros2 launch system_command_arbiter motor_pilot.launch.py
 ```
 
-After mechanically securing the robot and verifying the selected route:
+After mechanically securing the robot, pass the index, bus and CAN ID of the
+verified motor. The example selects index 4 in the default l0_v3 mapping:
 
 ```bash
 ros2 launch system_command_arbiter motor_pilot.launch.py \
-  allow_actuation:=true pilot_motor_type:=4 pilot_bus_index:=4 pilot_motor_id:=1
+  allow_actuation:=true pilot_motor_type:=4 pilot_bus_index:=0 pilot_motor_id:=5
 ```
 
 ## `my_ws` handoff
@@ -84,17 +90,15 @@ watchdog. Robot joint mapping remains in this package's `l0_v3.yaml`.
 ## L0 v4 / v5 HPM mappings
 
 - `config/l0_v4.yaml`: 21 enabled joints, including six RS05 arm motors.
-- `config/l0_v5.yaml`: the same joint order, with six LS PJ2S-48XX22A arm
-  motors (model confirmed on 2026-10-13). Joint indices, protocol families and
-  motor IDs match HPM's `hpm_motor/config/motors.yaml`.
+- `config/l0_v5.yaml`: 21 enabled joints, with MR PA35-10-8 arm motors.
+  Joint indices, protocol families, CAN buses and motor IDs match the default
+  HPM `hpm_motor/config/motors.yaml` at `ad8ecd80`.
 
 The shared mapping/arbiter contract accepts bus 0. The v5 mapping stores the
 physical HPM bus directly, with no offset. Bus ranges remain platform-defined;
-existing v3/v4 bus assignments are unchanged. The sibling
-`luvbot_ros_interfaces` contract documents this convention without changing
-message fields or constants.
-`LeggedReal` sends only the joint index as `route.motor_type`; HPM owns CAN-FD
-framing, bit rates and physical routing.
+existing v3/v4 bus assignments are unchanged. HPM selects the physical device
+from the joint index in `route.motor_type` and owns CAN-FD framing, bit rates
+and physical routing.
 
 | Group | HPM / deployment bus | Joint indices | CAN IDs |
 | --- | --- | --- | --- |
@@ -104,19 +108,12 @@ framing, bit rates and physical routing.
 | Right arm | 2 | 15–17 | 0x31–0x33 |
 | Head | 1 | 18–20 | 0x41–0x43 |
 
-The HPM routing table specifies protocol/model/routing but not mechanical
-calibration. The v5 mapping therefore inherits reduction, zero offsets, motor
-directions and joint limits from v4 and reuses the existing PJ2S-48XX22A model
-profile for the arms. Unlike the previous MR arm profile, its model rotation
-direction is +1 instead of -1, which changes the arm position/velocity/torque
-sign conversion. Verify every inherited mechanical value against real feedback
-before commanding motion; matching a CAN ID does not validate direction or zero.
+The HPM routing table specifies protocol, model and route. The deployment
+mapping supplies reduction, zero offsets, directions and joint limits.
+Verify these mechanical values on the robot before commanding motion.
 
-Select `robot_type:=l0_v5` at the
-`legged_controllers sim2real.launch.py` entry point. The default stays `l0_v4`.
-The v5 `l0_v3_amp_07090` policy directory is a relative link to the existing v4
-assets, including gains; it is a reuse baseline, not a newly tuned LS policy.
-WBC remains restricted to v4, and no v5 radar policy has been supplied.
+The `legged_controllers sim2real.launch.py` entry point defaults to
+`robot_type:=l0_v5`.
 
 Before movement, also align HPM's RS06 encoding ranges and LS torque/current
 units with the actual motor specification. Adding a mapping does not resolve

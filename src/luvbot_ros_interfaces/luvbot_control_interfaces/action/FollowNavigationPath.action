@@ -1,0 +1,58 @@
+# 导航任务唯一编号。
+# 同一任务更新路径时保持不变，新任务使用新编号。
+# 导航节点重启后也不复用旧编号。
+string task_id
+
+# 同一任务内的路径参考修订号，从 1 开始递增。
+# 路径裁剪、内容、最终朝向、速度或有效期改变时递增。
+# 只刷新时间戳、其他内容不变时保持不变。
+uint64 path_revision
+
+# 本次完整剩余路径。
+# 用它替换旧路径，不追加；所有点统一使用 path.header。
+luvbot_control_interfaces/PathReference path
+
+# 是否要求到达终点后对齐最终朝向。
+# false：到达位置即可，忽略 goal_yaw。
+# true：位置和最终朝向均需满足。
+bool use_heading
+
+# 到达终点后的最终朝向，单位 rad。
+# 与路径处于同一坐标系 device0/odom。
+# 0 沿 +X，从 +Z 向下看逆时针为正，+π/2 沿 +Y。
+# 不是行驶过程中“朝向目标点”的方向角。
+float64 goal_yaw
+
+# 线速度参考，单位 m/s，不是直接的底盘速度指令。
+# 沿用现有约定：0 使用运控部署默认值。
+float64 speed
+
+# 角速度参考，单位 rad/s，用于转向及最终朝向对齐。
+# 沿用现有约定：0 使用运控部署默认值。
+float64 turn_speed
+
+# 路径参考有效期，单位秒，必须为有限正数。
+# 过期时间 = path.header.stamp + reference_timeout。
+# 不能从收到消息的时刻重新计时。
+# 过期后停止执行旧路径，并反馈 REFERENCE_EXPIRED。
+float64 reference_timeout
+---
+uint8 SUCCEEDED=0
+uint8 REPLACED=1
+uint8 REFERENCE_EXPIRED=2
+uint8 CANCELED=3
+uint8 STOPPED=4
+string task_id
+uint64 path_revision
+uint8 code
+string message
+---
+uint8 HOLD=0
+uint8 NAV=1
+uint8 FACE=2
+string task_id
+uint64 path_revision
+uint8 phase
+float64 remaining_distance
+float64 heading_error
+string stop_reason

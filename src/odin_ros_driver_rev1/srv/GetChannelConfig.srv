@@ -1,0 +1,14 @@
+# Request - empty, query current SDK data channel states
+---
+# Response
+bool success
+string message
+# Current channel states
+bool raw_point_enabled
+bool slam_point_enabled
+bool image0_enabled
+bool image1_enabled
+bool imu_enabled
+bool odom_lf_enabled
+bool odom_hf_enabled
+bool tf_enabled

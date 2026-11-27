@@ -69,6 +69,7 @@ def generate_launch_description():
                 name='robot_state_publisher',
                 output='screen',
                 condition=UnlessCondition(standalone),
+                remappings=[('joint_states', '/system/joint/jointstates')],
                 parameters=[
                     {'use_sim_time': use_sim_time},
                     {'robot_description': robot_description},

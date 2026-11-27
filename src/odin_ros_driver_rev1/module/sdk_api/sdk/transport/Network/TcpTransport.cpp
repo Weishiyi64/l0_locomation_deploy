@@ -3,21 +3,42 @@
 #include <cstring>
 #include <vector>
 
+// Platform socket headers and the SocketHandle alias come from
+// SocketHandle.hpp via TcpTransport.hpp.
 #ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 #endif
 
 #include "logger.h"
 
 namespace odin {
 namespace sdk {
+
+namespace {
+
+// Suppress SIGPIPE when send() targets a peer that already closed the
+// connection. A library must not touch the process-wide SIGPIPE disposition
+// (signal(SIGPIPE, SIG_IGN) would silently change the host application's
+// behaviour), so we use the per-call MSG_NOSIGNAL flag on Linux/Android and the
+// SO_NOSIGPIPE socket option on macOS/BSD. Windows never raises SIGPIPE.
+#if defined(MSG_NOSIGNAL)
+constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+constexpr int kSendFlags = 0;
+#endif
+
+// Fallback for platforms that lack MSG_NOSIGNAL. Must be called on every socket
+// we may write to (connected client sockets), not on the listen socket.
+void SuppressSigPipe(SocketHandle fd) {
+#if !defined(MSG_NOSIGNAL) && defined(SO_NOSIGPIPE)
+  int on = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char*>(&on), sizeof(on));
+#else
+  (void)fd;
+#endif
+}
+
+}  // namespace
 
 TcpTransport::TcpTransport() = default;
 
@@ -31,7 +52,7 @@ bool TcpTransport::Open(const ITransportAddress& local_address) {
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  if (listen_socket_ >= 0 || client_socket_ >= 0) {
+  if (listen_socket_ != kInvalidSocketHandle || client_socket_ != kInvalidSocketHandle) {
     LOG_WARN("TcpTransport::Open: already open\n");
     return true;
   }
@@ -50,10 +71,12 @@ bool TcpTransport::Open(const ITransportAddress& local_address) {
 bool TcpTransport::OpenAsClient() {
   // Create TCP socket
   client_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (client_socket_ < 0) {
+  if (client_socket_ == kInvalidSocketHandle) {
     LOG_ERROR("TcpTransport::OpenAsClient: socket() failed\n");
     return false;
   }
+
+  SuppressSigPipe(client_socket_);
 
   // Note: We use select() for receive timeout in ReceiveLoop, not SO_RCVTIMEO
   // Set send timeout only
@@ -73,7 +96,7 @@ bool TcpTransport::OpenAsClient() {
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -85,7 +108,7 @@ bool TcpTransport::OpenAsClient() {
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -97,7 +120,7 @@ bool TcpTransport::OpenAsClient() {
 bool TcpTransport::OpenAsServer() {
   // Create TCP socket
   listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (listen_socket_ < 0) {
+  if (listen_socket_ == kInvalidSocketHandle) {
     LOG_ERROR("TcpTransport::OpenAsServer: socket() failed\n");
     return false;
   }
@@ -124,7 +147,7 @@ bool TcpTransport::OpenAsServer() {
 #else
     close(listen_socket_);
 #endif
-    listen_socket_ = -1;
+    listen_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -136,7 +159,7 @@ bool TcpTransport::OpenAsServer() {
 #else
     close(listen_socket_);
 #endif
-    listen_socket_ = -1;
+    listen_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -154,31 +177,33 @@ bool TcpTransport::Connect(const ITransportAddress& remote_address) {
   std::lock_guard<std::mutex> lock(mutex_);
   
   // Close existing sockets if any
-  if (client_socket_ >= 0) {
+  if (client_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
     closesocket(client_socket_);
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
   }
-  if (listen_socket_ >= 0) {
+  if (listen_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
     closesocket(listen_socket_);
 #else
     close(listen_socket_);
 #endif
-    listen_socket_ = -1;
+    listen_socket_ = kInvalidSocketHandle;
   }
 
   remote_addr_ = *addr;
 
   // Create TCP socket
   client_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (client_socket_ < 0) {
+  if (client_socket_ == kInvalidSocketHandle) {
     LOG_ERROR("TcpTransport::Connect: socket() failed\n");
     return false;
   }
+
+  SuppressSigPipe(client_socket_);
 
   // Set connection timeout
   struct timeval tv;
@@ -198,7 +223,7 @@ bool TcpTransport::Connect(const ITransportAddress& remote_address) {
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -210,7 +235,7 @@ bool TcpTransport::Connect(const ITransportAddress& remote_address) {
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
     return false;
   }
 
@@ -231,40 +256,49 @@ void TcpTransport::Close() {
   StopReceiving();
 
   std::lock_guard<std::mutex> lock(mutex_);
-  if (client_socket_ >= 0) {
+  if (client_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
     closesocket(client_socket_);
 #else
     close(client_socket_);
 #endif
-    client_socket_ = -1;
+    client_socket_ = kInvalidSocketHandle;
   }
 
-  if (listen_socket_ >= 0) {
+  if (listen_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
     closesocket(listen_socket_);
 #else
     close(listen_socket_);
 #endif
-    listen_socket_ = -1;
+    listen_socket_ = kInvalidSocketHandle;
   }
 
   connected_.store(false);
-  LOG_INFO("TcpTransport: closed\n");
+  LOG_DEBUG("TcpTransport: closed\n");
 }
 
 bool TcpTransport::IsOpen() const {
   std::lock_guard<std::mutex> lock(mutex_);
   // Open in either server mode (listen_socket_) or client mode (client_socket_)
-  return listen_socket_ >= 0 || client_socket_ >= 0;
+  return listen_socket_ != kInvalidSocketHandle || client_socket_ != kInvalidSocketHandle;
 }
 
 int TcpTransport::Send(const uint8_t* data, size_t length) {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (client_socket_ < 0) {
+  if (client_socket_ == kInvalidSocketHandle) {
     return -1;
   }
-  return static_cast<int>(send(client_socket_, reinterpret_cast<const char*>(data), length, 0));
+  // ReceiveLoop clears connected_ as soon as the peer closes (recv()==0 on FIN,
+  // or a recv/select error on RST) but deliberately leaves the fd open for
+  // Close() to reap. Writing to such a socket returns EPIPE and raises SIGPIPE,
+  // which would kill the host process. Report it as a plain send error instead
+  // so callers (heartbeat, command channel, algo downlink) fail gracefully.
+  if (!connected_.load()) {
+    return -1;
+  }
+  return static_cast<int>(
+      send(client_socket_, reinterpret_cast<const char*>(data), length, kSendFlags));
 }
 
 void TcpTransport::SetReceiveCallback(TransportReceiveCallback callback) {
@@ -280,13 +314,13 @@ bool TcpTransport::StartReceiving() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     // Client mode: already connected, start receive loop directly
-    if (client_socket_ >= 0 && connected_.load()) {
+    if (client_socket_ != kInvalidSocketHandle && connected_.load()) {
       running_.store(true);
       receive_thread_ = std::thread(&TcpTransport::ReceiveLoop, this);
       return true;
     }
     // Server mode: need listen socket to accept connections
-    if (listen_socket_ < 0) {
+    if (listen_socket_ == kInvalidSocketHandle) {
       LOG_ERROR("TcpTransport::StartReceiving: not open\n");
       return false;
     }
@@ -304,16 +338,20 @@ void TcpTransport::StopReceiving() {
   // Close sockets to unblock accept/recv
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (client_socket_ >= 0) {
+    if (client_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
       shutdown(client_socket_, SD_BOTH);
 #else
       shutdown(client_socket_, SHUT_RDWR);
 #endif
     }
-    if (listen_socket_ >= 0) {
+    if (listen_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
-      shutdown(listen_socket_, SD_BOTH);
+      // On Windows shutdown() does NOT unblock accept() on a listening socket;
+      // closesocket() is required to wake the accept thread. Clear the handle so
+      // Close() will not close it again.
+      closesocket(listen_socket_);
+      listen_socket_ = kInvalidSocketHandle;
 #else
       shutdown(listen_socket_, SHUT_RDWR);
 #endif
@@ -333,20 +371,23 @@ void TcpTransport::AcceptLoop() {
     sockaddr_in client_addr{};
     socklen_t addr_len = sizeof(client_addr);
 
-    int sock;
+    SocketHandle sock;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (listen_socket_ < 0) break;
+      if (listen_socket_ == kInvalidSocketHandle) break;
       sock = listen_socket_;
     }
 
-    int new_client = accept(sock, reinterpret_cast<sockaddr*>(&client_addr), &addr_len);
-    if (new_client < 0) {
+    SocketHandle new_client =
+        accept(sock, reinterpret_cast<sockaddr*>(&client_addr), &addr_len);
+    if (new_client == kInvalidSocketHandle) {
       if (running_.load()) {
         LOG_WARN("TcpTransport::AcceptLoop: accept() failed\n");
       }
       continue;
     }
+
+    SuppressSigPipe(new_client);
 
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, sizeof(ip_str));
@@ -355,7 +396,7 @@ void TcpTransport::AcceptLoop() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       // Close previous client if any
-      if (client_socket_ >= 0) {
+      if (client_socket_ != kInvalidSocketHandle) {
 #ifdef _WIN32
         closesocket(client_socket_);
 #else
@@ -379,12 +420,12 @@ void TcpTransport::ReceiveLoop() {
   std::vector<uint8_t> buffer(kBufferSize);
 
   while (running_.load() && connected_.load()) {
-    int sock;
+    SocketHandle sock;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       sock = client_socket_;
     }
-    if (sock < 0) break;
+    if (sock == kInvalidSocketHandle) break;
 
     // Use select() to wait for data with timeout (same pattern as UdpTransport)
     fd_set read_fds;
@@ -417,7 +458,10 @@ void TcpTransport::ReceiveLoop() {
 
     // Data available, read it
     if (FD_ISSET(sock, &read_fds)) {
-      ssize_t received = recv(sock, reinterpret_cast<char*>(buffer.data()), buffer.size(), 0);
+      // recv() returns ssize_t on POSIX but int on Windows; int covers both
+      // (buffer is 64 KB, far below the int range).
+      int received = recv(sock, reinterpret_cast<char*>(buffer.data()),
+                          static_cast<int>(buffer.size()), 0);
       
       if (received < 0) {
         // recv error

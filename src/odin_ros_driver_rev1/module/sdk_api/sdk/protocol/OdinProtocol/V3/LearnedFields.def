@@ -1,0 +1,40 @@
+// ============================================================================
+// LearnedFields.def - the V3 learned-tail-field manifest (data-only file).
+// ============================================================================
+// One X_LEARNED(field_name) line per tail field the SDK has LEARNED to
+// read. The field itself is declared at the tail of OdinOdomData in
+// odin_lidar_def.h; this manifest only REGISTERS it - both width and tail
+// offset are derived from the public struct's own layout at expansion time,
+// so the manifest order is irrelevant and the declaration stays the single
+// source of truth.
+//
+// Learning a new field = exactly TWO touches:
+//   1. declare it at the tail of OdinOdomData in odin_lidar_def.h (with a
+//      default value) and bump the struct's sizeof assert;
+//   2. add ONE line here:   X_LEARNED(field_name)
+// V3/OdomEntry.hpp expands this manifest into the conversion (the learned
+// lines) and into the kLearnedTail ledger (the width sum), so:
+//   - a field declared but not listed here fails the ledger assert
+//     (compile error naming the fix - never a silently always-default field);
+//   - a line without its declaration fails to compile (offsetof finds no
+//     member).
+//
+// Contract: firmware appends these fields AFTER `type`, in frozen
+// append-only order, WITHOUT a version bump (up to kOdomMaxTailExt bytes
+// per entry). Reshuffling the tail shifts downstream offsets into wrong
+// fields and requires a version bump instead.
+//
+// The macro is named X_LEARNED (not X) on purpose: this file gets included
+// WHILE OdomGenerations.def is being expanded (its layout includes pull in
+// V3/OdomEntry.hpp), and nested X-macro expansions must not share a macro
+// name - an inner #undef would kill the outer definition mid-expansion.
+//
+// Included multiple times by consumers that #define X_LEARNED first and
+// #undef it afterwards. The #error below refuses an include without a
+// definition. No include guard on purpose - the whole point is re-expansion.
+#ifndef X_LEARNED
+#error "Define X_LEARNED(FIELD) before including LearnedFields.def"
+#endif
+
+// NOTHING LEARNED YET. The first entry looks like:
+// X_LEARNED(test)

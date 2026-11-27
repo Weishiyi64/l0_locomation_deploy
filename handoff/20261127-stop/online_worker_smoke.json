@@ -1,0 +1,23 @@
+[
+  {
+    "action": "L0_backseat_A",
+    "requested_frame": 237,
+    "stop_to_amp_preview_s": 2.058784034999917,
+    "max_wbc_publish_gap_s": 0.024129393999828608,
+    "fresh_preview_with_wbc_active": true
+  },
+  {
+    "action": "L0_yoga_X",
+    "requested_frame": 465,
+    "stop_to_amp_preview_s": 1.5013770670002486,
+    "max_wbc_publish_gap_s": 0.022920475999853807,
+    "fresh_preview_with_wbc_active": true
+  },
+  {
+    "action": "L0_billiejean_A",
+    "requested_frame": 190,
+    "stop_to_amp_preview_s": 1.1793494660005308,
+    "max_wbc_publish_gap_s": 0.02294905800044944,
+    "fresh_preview_with_wbc_active": true
+  }
+]

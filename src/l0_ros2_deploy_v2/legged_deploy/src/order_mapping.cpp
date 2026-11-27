@@ -89,6 +89,27 @@ void OrderMapper::transformMjToIsaac(const Eigen::VectorXd& mj_vec, Eigen::Vecto
   }
 }
 
+void OrderMapper::mapJointObservation(const std::vector<double>& positions, const std::vector<double>& velocities,
+                                      const std::vector<double>& default_angles, Eigen::VectorXd& q,
+                                      Eigen::VectorXd& dq) const {
+  const size_t count = isaac_to_mj_.size();
+  if (count == 0U || positions.size() != count || velocities.size() != count || default_angles.size() != count)
+  {
+    RCLCPP_ERROR(logger_, "OrderMapper: joint observation/default angle sizes must match the initialized mapping");
+    throw std::runtime_error("OrderMapper: joint observation size mismatch");
+  }
+
+  q.resize(count);
+  dq.resize(count);
+  // initialize() guarantees a complete permutation; write directly into the resident state vectors.
+  for (size_t isaac_i = 0; isaac_i < count; ++isaac_i)
+  {
+    const int mj_i = isaac_to_mj_[isaac_i];
+    q[isaac_i] = positions[mj_i] - default_angles[mj_i];
+    dq[isaac_i] = velocities[mj_i];
+  }
+}
+
 void OrderMapper::transformIsaacToMj(const Eigen::VectorXd& isaac_vec, Eigen::VectorXd& mj_vec) const {
   if (isaac_vec.size() != static_cast<int>(isaac_to_mj_.size()))
   {

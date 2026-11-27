@@ -15,25 +15,11 @@ def launch_setup(context, *args, **kwargs):
     legged_controllers_share = get_package_share_directory('legged_controllers')
     command_arbiter_share = get_package_share_directory('system_command_arbiter')
     imu_enabled = cfg['imu_enabled'] == 'true'
-    hpm_mode = cfg.get('hpm_mode', 'real')
-    if hpm_mode not in ('real', 'isolated'):
-        raise RuntimeError('hpm_mode must be real or isolated')
     if robot_type not in ('l0_v3', 'l0_v4', 'l0_v5'):
         raise RuntimeError(f'Unsupported HPM robot_type: {robot_type}')
     mapping_file = os.path.abspath(os.path.join(command_arbiter_share, 'config', f'{robot_type}.yaml'))
-    head_script_enabled = cfg['head_script_enabled'] == 'true'
-    head_script_config = cfg['head_script_config']
-    joystick_imitation_enabled = cfg.get('joystick_imitation_enabled', 'false') == 'true'
-    joystick_imitation_config_path = cfg.get('joystick_imitation_config_path', '')
-    joystick_sequence_enabled = cfg.get('joystick_sequence_enabled', 'false') == 'true'
-    joystick_sequence_config_path = cfg.get('joystick_sequence_config_path', '')
     radar_control_enabled = cfg.get('radar_control_enabled', 'false') == 'true'
     emergency_damping_kd = float(cfg.get('emergency_damping_kd', '5.0'))
-    joystick_back_emergency_sequence_enabled = cfg.get('joystick_back_emergency_sequence_enabled', 'true') == 'true'
-    joystick_back_emergency_sequence_path = cfg.get(
-        'joystick_back_emergency_sequence_path',
-        'action_sequences/walking_back_emergency.yaml',
-    )
     arm_swing_enabled = cfg.get('arm_swing_enabled', 'true') == 'true'
     safety_orientation_roll_limit_deg = float(cfg['safety_orientation_roll_limit_deg'])
     safety_orientation_pitch_limit_deg = float(cfg['safety_orientation_pitch_limit_deg'])
@@ -62,19 +48,10 @@ def launch_setup(context, *args, **kwargs):
         'rviz': rviz,
         'isSim': False,
         '/RobotHw/imu_enabled': imu_enabled,
-        'head_script_enabled': head_script_enabled,
-        'head_script_config': head_script_config,
-        'joystick_imitation_enabled': joystick_imitation_enabled,
-        'joystick_imitation_config_path': joystick_imitation_config_path,
-        'joystick_sequence_enabled': joystick_sequence_enabled,
-        'joystick_sequence_config_path': joystick_sequence_config_path,
         'radar_control_enabled': radar_control_enabled,
         'face_follow_enabled': True,
         'wbc_enabled': cfg['wbc_enabled'] == 'true',
-        'text_motion_enabled': cfg.get('text_motion_enabled', 'false') == 'true',
         'emergency.damping_kd': emergency_damping_kd,
-        'joystick_back_emergency_sequence_enabled': joystick_back_emergency_sequence_enabled,
-        'joystick_back_emergency_sequence_path': joystick_back_emergency_sequence_path,
         'arm_swing.enabled': arm_swing_enabled,
         'arm_swing.stop_vx_threshold': float(cfg.get('arm_swing_stop_vx_threshold', '0.05')),
         'arm_swing.high_vx_threshold': float(cfg.get('arm_swing_high_vx_threshold', '0.8')),
@@ -91,17 +68,11 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[legged_real_params],
         remappings=[
+            ('odom', '/planner/base_odometry' if radar_control_enabled else 'odom'),
             ('emergency_stop', '/system/safety/emergency_stop'),
             ('hardware_fault', '/system/safety/hardware_fault'),
             ('motors_ready', '/hardware_status/motors_ready'),
-        ] + ([
-            ('actuator/motor/state', '/wbc_isolated/actuator/motor/state'),
-            ('actuator/motor/command', '/wbc_isolated/actuator/motor/command'),
-            ('actuator/motor/enable', '/wbc_isolated/actuator/motor/enable'),
-            ('actuator/motor/set_zero', '/wbc_isolated/actuator/motor/set_zero'),
-            ('imu/data', '/wbc_isolated/imu/data'),
-            ('odom', '/wbc_isolated/odom'),
-        ] if hpm_mode == 'isolated' else []),
+        ],
     )
 
     return [legged_real_node]
@@ -114,22 +85,9 @@ def generate_launch_description():
             DeclareLaunchArgument('subpolicy'),
             DeclareLaunchArgument('rviz'),
             DeclareLaunchArgument('imu_enabled'),
-            DeclareLaunchArgument('head_script_enabled'),
-            DeclareLaunchArgument('head_script_config'),
-            DeclareLaunchArgument('joystick_imitation_enabled', default_value='false'),
-            DeclareLaunchArgument('joystick_imitation_config_path', default_value=''),
             DeclareLaunchArgument('wbc_enabled', default_value='false'),
-            DeclareLaunchArgument('text_motion_enabled', default_value='false'),
-            DeclareLaunchArgument('hpm_mode', default_value='real'),
-            DeclareLaunchArgument('joystick_sequence_enabled', default_value='false'),
-            DeclareLaunchArgument('joystick_sequence_config_path', default_value=''),
             DeclareLaunchArgument('radar_control_enabled', default_value='false'),
             DeclareLaunchArgument('emergency_damping_kd', default_value='5.0'),
-            DeclareLaunchArgument('joystick_back_emergency_sequence_enabled', default_value='true'),
-            DeclareLaunchArgument(
-                'joystick_back_emergency_sequence_path',
-                default_value='action_sequences/walking_back_emergency.yaml',
-            ),
             DeclareLaunchArgument('arm_swing_enabled', default_value='true'),
             DeclareLaunchArgument('arm_swing_stop_vx_threshold', default_value='0.05'),
             DeclareLaunchArgument('arm_swing_high_vx_threshold', default_value='0.8'),

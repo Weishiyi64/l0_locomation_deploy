@@ -1,0 +1,11 @@
+# Empty request: read current output volume and mute state without modifying it.
+---
+# True only when both volume and mute state were read successfully.
+bool success
+# Actual percentage reported by the hardware; -1 if unavailable.
+int32 volume
+# True when all channels of the configured mute control are off.
+# Only meaningful when mute_known is true.
+bool muted
+bool mute_known
+string message

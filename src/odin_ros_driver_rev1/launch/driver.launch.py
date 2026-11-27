@@ -1,10 +1,10 @@
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -48,92 +48,128 @@ def _pv(name, value_type):
 # `ros2 param set /<完整节点名> sync_queue_size <值>`。
 
 
+def _reject_unsupported_camera_options(context):
+    for name in ('enable_image1', 'send_image2_raw', 'send_rectify'):
+        if IfCondition(LaunchConfiguration(name)).evaluate(context):
+            raise RuntimeError(f'{name} must be false on the single-camera L0 driver')
+    return []
+
+
 def generate_launch_description():
     pkg_share = get_package_share_directory(packageName)
-    default_rviz = os.path.join(pkg_share, 'rviz', 'driver_view_ros2.rviz')
-    default_control_config = os.path.join(pkg_share, 'config', 'control_command.yaml')
+    default_rviz = os.path.join(pkg_share, 'rviz', 'odin1lite_driver_view_ros2.rviz')
+    device_plugin_dir = os.path.join(get_package_prefix(packageName), 'lib', packageName)
 
     # -----------------------------------------------------------------------
     # Launch arguments / 启动参数声明
     # -----------------------------------------------------------------------
     args = [
         # --- General / 通用 -------------------------------------------------
-        _arg('start_auxiliary_nodes', 'true', 'Start optional image/depth postprocessing nodes'),
         _arg('start_rviz', 'false', 'Whether to start RViz / 是否启动 RViz'),
         _arg('rviz_config', default_rviz, 'Path to RViz config file / RViz 配置文件路径'),
         _arg('topic_prefix', 'manifold',
-             'Topic prefix root, final prefix is /{topic_prefix}/{model}/device{N}/ '
-             '/ 话题前缀根，最终前缀 /{topic_prefix}/{model}/device{N}/'),
-        _arg('control_config_path', default_control_config,
-             'Data-channel enable configuration / 数据通道开关配置'),
+             'Topic prefix root, final prefix is /{topic_prefix}/device{N}/ '
+             '/ 话题前缀根，最终前缀 /{topic_prefix}/device{N}/'),
 
         # --- Main driver: device / 主驱动设备 ------------------------------
-        _arg('operating_mode', 'normal',
-             'Operating mode: normal | standby / 工作模式'),
+        _arg('device_mode', 'normal',
+             'device mode: normal | standby / 工作模式'),
         _arg('discovery_timeout_ms', '2000',
              'SDK device-discovery timeout (ms) / SDK 设备发现超时 (ms)'),
 
         # --- Main driver: image stream / 图像流 ----------------------------
-        _arg('image_width', '0',
+        _arg('image_width', '1280',
              'Image width, 0 = device default / 图像宽度，0=设备默认'),
-        _arg('image_height', '0',
+        _arg('image_height', '1088',
              'Image height, 0 = device default / 图像高度，0=设备默认'),
-        _arg('image_fps', '0',
+        _arg('image_fps', '30',
              'Image FPS, 0 = device default / 图像帧率，0=设备默认'),
         _arg('image_format', 'mjpeg',
-             'Image format: mjpeg|yuyv|nv12|nv21|rgb24 / 图像格式'),
+             'Image format: mjpeg|h264|nv12 / 图像格式'),
+
+        # --- Main driver: device-side filter parameters / 设备端滤波器参数 ----
+        _arg('filter_confidence_threshold', '-1',
+             'Device confidence filter threshold [0..255], -1=device default / 设备置信度滤波阈值，-1=设备默认'),
+        _arg('filter_adaptive_cdf_percentile', '-1',
+             'Adaptive filter CDF percentile [1..10000] (0.01%), -1=device default / 自适应滤波 CDF 百分位，-1=设备默认'),
+        _arg('filter_adaptive_outdoor_thr', '-1',
+             'Adaptive filter outdoor threshold (mm), -1=device default / 室外判定距离阈值，-1=设备默认'),
+        _arg('filter_range_min_depth', '-1',
+             'Range filter min valid depth (mm), -1=device default / 距离滤波最小有效深度，-1=设备默认'),
 
         # --- Main driver: frame ids / 坐标系名 -----------------------------
-        _arg('raw_frame_id', 'odom',
+        _arg('raw_frame_id', 'lidar',
              'Frame id for raw cloud / 原始点云 frame_id'),
         _arg('slam_frame_id', 'odom',
              'Frame id for SLAM cloud / SLAM 点云 frame_id'),
         _arg('image_frame_id', 'camera0',
              'Frame id for left image / 左相机图像 frame_id'),
-        _arg('image2_frame_id', 'odom',
-             'Frame id for right image / 右相机图像 frame_id'),
-        _arg('gray_image_frame_id', 'odom',
-             'Frame id for gray image / 灰度图像 frame_id'),
-        _arg('imu_frame_id', 'odom',
+        _arg('imu_frame_id', 'imu',
              'Frame id for IMU / IMU frame_id'),
         _arg('odom_frame_id', 'odom',
              'Odometry parent frame / 里程计父帧'),
-        _arg('odom_child_frame_id', 'base_link',
-             'Odometry child frame / 里程计子帧'),
-        _arg('map_frame_id', 'map',
-             'TF map frame name / TF map 帧名'),
 
-        # --- Main driver: TF switches / TF 开关 ----------------------------
-        _arg('publish_tf_odom', 'true',
-             'Publish odom -> base_link TF / 是否发布 odom->base_link TF'),
-        _arg('publish_tf_map', 'true',
-             'Publish map -> odom TF / 是否发布 map->odom TF'),
+        # --- Main driver: TF republish / TF 重发 ---------------------------
+        _arg('tf_publish_rate', '0',
+             'TF republish rate (Hz); 0 = disable timer republish / TF 重发频率；0=禁用定时重发'),
 
         # --- Main driver: runtime knobs / 运行期可调旋钮（初始值） ----------
         _arg('confidence_threshold', '7',
              'Point-cloud confidence threshold (0..255) / 点云置信度阈值'),
-        _arg('sensor_mode', '1',
-             'dToF sensor mode: 0=HDR 1=High Peak 2=Low Peak 3=Adaptive / dToF 传感器模式'),
+        _arg('enable_row_filter', 'false',
+             'Enable row filter: zero out points below min_row / 启用行滤波：置零 min_row 以下的点'),
+        _arg('min_row', '0',
+             'Minimum row index (0..191), points with row < min_row are zeroed / 最小行号（0..191），低于此行的点置零'),
+        _arg('sensor_mode', '-1',
+             'dToF Lidar sensor mode: -1=Ignore 0=HDR 1=High Peak 2=Low Peak 3=Adaptive; '
+             '-1 = keep device current mode (do not set on start) / dToF 传感器模式；'
+             '-1 = 保持设备当前模式（启动时不下发）'),
         _arg('log_level', '1',
              'Log level: 0=ERROR 1=INFO 2=WARN 3=DEBUG / 日志级别'),
 
-        # --- Main driver: odometry scaling (advanced) / 里程计缩放（高级） -
-        _arg('odom_position_scale', '1e-6',
-             'Odometry position scale (SDK -> meters) / 里程计位置缩放'),
-        _arg('odom_orientation_scale', '1e-6',
-             'Odometry orientation scale / 里程计姿态缩放'),
-        _arg('odom_linear_velocity_scale', '1e-6',
-             'Odometry linear-velocity scale / 线速度缩放'),
-        _arg('odom_angular_velocity_scale', '1e-6',
-             'Odometry angular-velocity scale / 角速度缩放'),
+        # --- Main driver: channel enable (hot-switch via rqt/service) ------
+        _arg('enable_raw_point', 'true',
+             'Enable raw point cloud channel (hot-switch) / 启用原始点云通道（热切换）'),
+        _arg('enable_slam_point', 'true',
+             'Enable SLAM point cloud channel (hot-switch) / 启用 SLAM 点云通道（热切换）'),
+        _arg('enable_image0', 'true',
+             'Enable camera0 image channel (hot-switch) / 启用相机0图像通道（热切换）'),
+        _arg('enable_image1', 'false',
+             'Unsupported on L0 / L0 单相机不支持'),
+        _arg('enable_imu', 'true',
+             'Enable IMU data channel (hot-switch) / 启用 IMU 数据通道（热切换）'),
+        _arg('enable_odom_lf', 'true',
+             'Enable low-frequency odometry channel (hot-switch) / 启用低频里程计通道（热切换）'),
+        _arg('enable_odom_hf', 'true',
+             'Enable high-frequency odometry channel (hot-switch) / 启用高频里程计通道（热切换）'),
+        _arg('enable_tf', 'true',
+             'Enable TF transform channel (hot-switch) / 启用 TF 变换通道（热切换）'),
+
+        # --- post_process_node: post-processing flags (hot-switch) ---------
+        _arg('post_process', 'false',
+             'Enable post-processing node (static, not hot-switch) / 启用后处理节点（静态，非热切换）'),
+        _arg('send_image_raw', 'false',
+             'Publish raw camera0 image (hot-switch) / 发布原始相机0图像（热切换）'),
+        _arg('send_image2_raw', 'false',
+             'Unsupported on L0 / L0 单相机不支持'),
+        _arg('send_cloud_render', 'false',
+             'Publish cloud-rendered image (hot-switch) / 发布点云渲染图像（热切换）'),
+        _arg('undistort_mapping_only', 'false',
+             'Publish camera0 undistort only in confirmed SLAM/ReMap mode'),
+        _arg('send_undistort', 'false',
+             'Publish undistorted images (hot-switch) / 发布去畸变图像（热切换）'),
+        _arg('send_rectify', 'false',
+             'Unsupported on L0 / L0 单相机不支持'),
+
+        # --- opencv_undistort_node ----------------------------------------
+        _arg('send_opencv_undistort', 'false',
+             'Start OpenCV undistortion node / 启动 OpenCV 去畸变节点'),
 
         # --- pointcloud_reprojector_node ----------------------------------
-        # NOTE: 'mode' is also overridden at runtime by reprojection_mode in
-        # config/control_command.yaml. The launch-arg here is only the seed
-        # default before the YAML override is applied.
-        # 注意：'mode' 同时会被 control_command.yaml 中 reprojection_mode 覆盖。
         _arg('mode', 'raw',
-             'Reprojector mode: raw | slam (yaml may override) / 重投影模式'),
+             'Reprojector mode: raw | slam / 重投影模式'),
+        _arg('enable_reprojection', 'false',
+             'Enable pointcloud_reprojector_node (static, not hot-switch) / 启用重投影节点（静态，非热切换）'),
         _arg('min_depth', '0.1',
              'Reprojector visualization min depth (m) / 可视化最小深度'),
         _arg('max_depth', '50.0',
@@ -146,9 +182,10 @@ def generate_launch_description():
              'Reprojector time-sync slop (s) / 重投影节点时间同步偏差'),
 
         # --- pointcloud_to_depth_node -------------------------------------
-        _arg('depth_rate_hz', '10.0', 'Depth update rate'),
-        _arg('depth_width', '64', 'SRU depth width; preserve calibrated FOV'),
-        _arg('depth_height', '40', 'SRU depth height'),
+        _arg('enable_pointcloud_to_depth', 'false',
+             'Enable pointcloud_to_depth_node (static, not hot-switch) / 启用点云转深度图节点（静态，非热切换）'),
+
+        # --- pointcloud_to_depth_node -------------------------------------
         _arg('scale', '7.0',
              'Projection canvas downscale factor / 投影画布下采样比'),
         _arg('z_min', '0.1',
@@ -161,8 +198,6 @@ def generate_launch_description():
              'Enable z-buffer to prevent far-over-near overwrite / 启用 Z-buffer'),
         _arg('edge_grad_threshold', '0.75',
              'Sobel edge suppression threshold (m/pixel) / Sobel 边缘抑制阈值'),
-        _arg('raw_depth_preview_enabled', 'false',
-             'Publish full-resolution mono8 depth preview / 发布全尺寸 mono8 深度预览'),
         _arg('vis_depth_min', '0.1',
              'JET min normalization (m); <0 = per-frame auto / JET 归一化下限'),
         _arg('vis_depth_max', '5.0',
@@ -170,11 +205,15 @@ def generate_launch_description():
         _arg('sync_slop_sec', '0.1',
              'pointcloud_to_depth time-sync slop (s) / 点云转深度图同步偏差'),
 
+        # --- depth_to_pointcloud_node -------------------------------------
+        _arg('enable_depth_to_pointcloud', 'false',
+             'Enable depth_to_pointcloud_node (static, not hot-switch) / 启用深度图转点云节点（静态，非热切换）'),
+
         # Shared by pointcloud_reprojector_node + pointcloud_to_depth_node.
         # If you need different values, override per-node with
         # `ros2 param set /<full_node_name> sync_queue_size <v>`.
         # 重投影节点与点云转深度图节点共用；如需分别设置请走全路径。
-        _arg('sync_queue_size', '5',
+        _arg('sync_queue_size', '10',
              'Shared time-sync queue size (reprojector + pointcloud_to_depth) '
              '/ 共享的时间同步队列长度'),
 
@@ -192,8 +231,7 @@ def generate_launch_description():
     # -----------------------------------------------------------------------
     driver_params = {
         'topic_prefix':                 _pv('topic_prefix',                 str),
-        'control_config_path':          _pv('control_config_path',          str),
-        'operating_mode':               _pv('operating_mode',               str),
+        'device_mode':                  _pv('device_mode',                  str),
         'discovery_timeout_ms':         _pv('discovery_timeout_ms',         int),
 
         'image_width':                  _pv('image_width',                  int),
@@ -201,32 +239,39 @@ def generate_launch_description():
         'image_fps':                    _pv('image_fps',                    int),
         'image_format':                 _pv('image_format',                 str),
 
+        'filter_confidence_threshold':    _pv('filter_confidence_threshold',    int),
+        'filter_adaptive_cdf_percentile': _pv('filter_adaptive_cdf_percentile', int),
+        'filter_adaptive_outdoor_thr':    _pv('filter_adaptive_outdoor_thr',    int),
+        'filter_range_min_depth':         _pv('filter_range_min_depth',         int),
+
         'raw_frame_id':                 _pv('raw_frame_id',                 str),
         'slam_frame_id':                _pv('slam_frame_id',                str),
         'image_frame_id':               _pv('image_frame_id',               str),
-        'image2_frame_id':              _pv('image2_frame_id',              str),
-        'gray_image_frame_id':          _pv('gray_image_frame_id',          str),
         'imu_frame_id':                 _pv('imu_frame_id',                 str),
         'odom_frame_id':                _pv('odom_frame_id',                str),
-        'odom_child_frame_id':          _pv('odom_child_frame_id',          str),
-        'map_frame_id':                 _pv('map_frame_id',                 str),
 
-        'publish_tf_odom':              _pv('publish_tf_odom',              bool),
-        'publish_tf_map':               _pv('publish_tf_map',               bool),
+        'tf_publish_rate':              _pv('tf_publish_rate',              float),
 
         'confidence_threshold':         _pv('confidence_threshold',         int),
+        'enable_row_filter':            _pv('enable_row_filter',            bool),
+        'min_row':                      _pv('min_row',                      int),
         'sensor_mode':                  _pv('sensor_mode',                  int),
         'log_level':                    _pv('log_level',                    int),
 
-        'odom_position_scale':          _pv('odom_position_scale',          float),
-        'odom_orientation_scale':       _pv('odom_orientation_scale',       float),
-        'odom_linear_velocity_scale':   _pv('odom_linear_velocity_scale',   float),
-        'odom_angular_velocity_scale':  _pv('odom_angular_velocity_scale',  float),
+        'enable_raw_point':             _pv('enable_raw_point',             bool),
+        'enable_slam_point':            _pv('enable_slam_point',            bool),
+        'enable_image0':                _pv('enable_image0',                bool),
+        'enable_image1':                _pv('enable_image1',                bool),
+        'enable_imu':                   _pv('enable_imu',                   bool),
+        'enable_odom_lf':               _pv('enable_odom_lf',               bool),
+        'enable_odom_hf':               _pv('enable_odom_hf',               bool),
+        'enable_tf':                    _pv('enable_tf',                    bool),
     }
 
     reproj_params = {
-        'topic_prefix':     _pv('topic_prefix',     str),
-        'mode':             _pv('mode',             str),
+        'topic_prefix':         _pv('topic_prefix',         str),
+        'enable_reprojection':  _pv('enable_reprojection',  bool),
+        'mode':                 _pv('mode',                 str),
         'min_depth':        _pv('min_depth',        float),
         'max_depth':        _pv('max_depth',        float),
         'point_size':       _pv('point_size',       int),
@@ -236,17 +281,14 @@ def generate_launch_description():
     }
 
     p2d_params = {
-        'topic_prefix':         _pv('topic_prefix',         str),
-        'depth_rate_hz': _pv('depth_rate_hz', float),
-        'depth_width': _pv('depth_width', int),
-        'depth_height': _pv('depth_height', int),
+        'topic_prefix':              _pv('topic_prefix',              str),
+        'enable_pointcloud_to_depth': _pv('enable_pointcloud_to_depth', bool),
         'scale':                _pv('scale',                float),
         'z_min':                _pv('z_min',                float),
         'z_max':                _pv('z_max',                float),
         'dilate_radius':        _pv('dilate_radius',        int),
         'use_z_buffer':         _pv('use_z_buffer',         bool),
         'edge_grad_threshold':  _pv('edge_grad_threshold',  float),
-        'raw_depth_preview_enabled': _pv('raw_depth_preview_enabled', bool),
         'vis_depth_min':        _pv('vis_depth_min',        float),
         'vis_depth_max':        _pv('vis_depth_max',        float),
         'sync_queue_size':      _pv('sync_queue_size',      int),    # shared
@@ -254,14 +296,28 @@ def generate_launch_description():
     }
 
     d2p_params = {
-        'topic_prefix': _pv('topic_prefix', str),
+        'topic_prefix':               _pv('topic_prefix',               str),
+        'enable_depth_to_pointcloud': _pv('enable_depth_to_pointcloud', bool),
         'step':         _pv('step',         int),
         'd_min':        _pv('d_min',        float),
         'd_max':        _pv('d_max',        float),
     }
 
+    opencv_undistort_params = {
+        'topic_prefix':              _pv('topic_prefix',              str),
+        'send_opencv_undistort':     _pv('send_opencv_undistort',     bool),
+    }
+
     postprocess_params = {
-        'topic_prefix': _pv('topic_prefix', str),
+        'topic_prefix':      _pv('topic_prefix',      str),
+        'post_process':      _pv('post_process',      bool),
+        'send_image_raw':    _pv('send_image_raw',    bool),
+        'send_image2_raw':   _pv('send_image2_raw',   bool),
+        'send_cloud_render': _pv('send_cloud_render', bool),
+        'send_undistort':    _pv('send_undistort',    bool),
+        'undistort_mapping_only': _pv('undistort_mapping_only', bool),
+        'send_rectify':      _pv('send_rectify',      bool),
+        'send_opencv_undistort': _pv('send_opencv_undistort', bool),
     }
 
     # -----------------------------------------------------------------------
@@ -273,44 +329,54 @@ def generate_launch_description():
             executable='odin_ros_driver_node',
             output='screen',
             parameters=[driver_params],
+            additional_env={'ODIN_DEVICE_LIB_PATH': EnvironmentVariable(
+                'ODIN_DEVICE_LIB_PATH', default_value=device_plugin_dir)},
         ),
         Node(
             package=packageName,
             executable='post_process_node',
-            condition=IfCondition(LaunchConfiguration('start_auxiliary_nodes')),
             name='postprocess',
             output='screen',
             parameters=[postprocess_params],
+            condition=IfCondition(LaunchConfiguration('post_process')),
+        ),
+        Node(
+            package=packageName,
+            executable='opencv_undistort_node',
+            name='opencv_undistort',
+            output='screen',
+            parameters=[opencv_undistort_params],
+            condition=IfCondition(LaunchConfiguration('send_opencv_undistort')),
         ),
         Node(
             package=packageName,
             executable='pointcloud_reprojector_node',
-            condition=IfCondition(LaunchConfiguration('start_auxiliary_nodes')),
             name='pointcloud_reprojector',
             output='screen',
             parameters=[reproj_params],
+            condition=IfCondition(LaunchConfiguration('enable_reprojection')),
         ),
         # PointCloud -> depth map verification node.
         # Subscribes to the synchronized cloud_raw + camera0/undistort and
-        # publishes /{prefix}/{model}/device{N}/pointcloud2depth/{depth,depth_color,depth_overlay}.
+        # publishes /{prefix}/device{N}/pointcloud2depth/{depth,depth_color,depth_overlay}.
         Node(
             package=packageName,
             executable='pointcloud_to_depth_node',
-            condition=IfCondition(LaunchConfiguration('start_auxiliary_nodes')),
             name='pointcloud_to_depth',
             output='screen',
             parameters=[p2d_params],
+            condition=IfCondition(LaunchConfiguration('enable_pointcloud_to_depth')),
         ),
         # Depth -> dense XYZRGB cloud back-projection node.
         # Subscribes to the synchronized pointcloud2depth/depth + camera0/undistort
-        # and publishes /{prefix}/{model}/device{N}/depth2cloud/cloud_color.
+        # and publishes /{prefix}/device{N}/depth2cloud/cloud_color.
         Node(
             package=packageName,
             executable='depth_to_pointcloud_node',
-            condition=IfCondition(LaunchConfiguration('start_auxiliary_nodes')),
             name='depth_to_pointcloud',
             output='screen',
             parameters=[d2p_params],
+            condition=IfCondition(LaunchConfiguration('enable_depth_to_pointcloud')),
         ),
         Node(
             package='rviz2',
@@ -322,4 +388,4 @@ def generate_launch_description():
         ),
     ]
 
-    return LaunchDescription([*args, *nodes])
+    return LaunchDescription([*args, OpaqueFunction(function=_reject_unsupported_camera_options), *nodes])

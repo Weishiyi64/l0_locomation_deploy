@@ -1,6 +1,6 @@
 #pragma once
 
-#include "odin_lidar_api.h"
+#include "odin_lidar_api_ext.h"
 
 #include <atomic>
 #include <map>
@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "IDevice.h"
+#include "DeviceLoader.h"
 
 namespace odin {
 namespace sdk {
@@ -32,30 +33,71 @@ class OdinSdkImpl {
   void RegisterPointCloudCallback(OdinDeviceHandle handle, OdinPointCloudCallback cb,
                                   void *user_data);
   void RegisterSlamCallback(OdinDeviceHandle handle, OdinSlamCallback cb, void *user_data);
-  void RegisterImageCallback(OdinDeviceHandle handle, OdinImageCallback cb, void *user_data);
-  void RegisterImageCallback2(OdinDeviceHandle handle, OdinImageCallback2 cb, void *user_data);
+  void RegisterCameraCallback(OdinDeviceHandle handle, OdinCameraCallback cb, void *user_data);
+  void RegisterCameraCallback2(OdinDeviceHandle handle, OdinCameraCallback cb, void *user_data);
   void RegisterImuCallback(OdinDeviceHandle handle, OdinImuCallback cb, void *user_data);
   void RegisterOdomCallback(OdinDeviceHandle handle, OdinOdomCallback cb, void *user_data);
+  void RegisterTelemetryCallback(OdinDeviceHandle handle, OdinTelemetryCallback cb, void *user_data);
+  OdinResult StartTelemetry(OdinDeviceHandle handle);
+  void RegisterTfCallback(OdinDeviceHandle handle, OdinTfCallback cb, void *user_data);
   void EnableSlamOdomSyncForDevice(OdinDeviceHandle handle, bool enabled, uint32_t max_frame_lag);
 
   // Command operations
   OdinResult GetFirmwareVersion(OdinDeviceHandle handle, std::string &version,
                                 uint32_t timeout_ms = 1000);
-  OdinResult SetOperatingMode(OdinDeviceHandle handle, OdinOperatingMode mode,
+  OdinResult SetDeviceMode(OdinDeviceHandle handle, OdinDeviceMode mode,
                               uint32_t timeout_ms = 1000);
-  OdinResult SetSensorMode(OdinDeviceHandle handle, uint8_t mode, uint32_t timeout_ms = 1000);
+  OdinResult SetSensorMode(OdinDeviceHandle handle, OdinSensorMode mode, uint32_t timeout_ms = 1000);
+  OdinResult SendAlgoData(OdinDeviceHandle device, const uint8_t* data, size_t len);
+  OdinResult GetDeviceMode(OdinDeviceHandle handle, OdinDeviceMode& mode, uint32_t timeout_ms = 1000);
+  OdinResult GetSensorMode(OdinDeviceHandle handle, OdinSensorMode& mode, uint32_t timeout_ms = 1000);
   OdinResult GetDeviceFile(OdinDeviceHandle device, OdinUpgradeProgressCallback cb,
-                           OdinFileType type, std::string save_path);
+                           OdinFileType type, std::string save_path,
+                           uint32_t timeout_ms = 5000);
   OdinResult SendFileToDevice(OdinDeviceHandle device, OdinUpgradeProgressCallback cb,
                               OdinFileType type, std::string file_path);
+  OdinResult GetSensorCapability(OdinDeviceHandle device,
+                                  std::vector<OdinSensorCapability>& capabilities,
+                                  const std::vector<OdinDataChannel>& channels,
+                                  uint32_t timeout_ms);
   OdinResult StartStream(OdinDeviceHandle device, OdinDataChannel channel,
                          OdinTransportMode transport, const OdinStreamCfg* mode = nullptr,
                          uint32_t timeout_ms = 1000);
-  OdinResult GetSensorCapability(OdinDeviceHandle device,
-                                 std::vector<OdinSensorCapability>& capabilities,
-                                 const std::vector<OdinDataChannel>& channels,
-                                 uint32_t timeout_ms);
   OdinResult CloseStream(OdinDeviceHandle device, OdinDataChannel channel, uint32_t timeout_ms);
+  OdinResult GetChannelConfig(OdinDeviceHandle device, OdinDataChannel channel,
+                              OdinChannelConfigInfo& info, uint32_t timeout_ms = 1000);
+  OdinResult SetFilterParam(OdinDeviceHandle device, const OdinLidarFilterParams& params,
+                             uint32_t timeout_ms = 1000);
+  OdinResult GetFilterParam(OdinDeviceHandle device, OdinLidarFilterParams& params,
+                             uint32_t timeout_ms = 1000);
+  OdinResult RestoreDefaultConfig(OdinDeviceHandle device, uint32_t timeout_ms = 1000);
+  OdinResult SetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode mode,
+                                uint32_t timeout_ms = 1000);
+  OdinResult GetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode& mode,
+                                uint32_t timeout_ms = 1000);
+  OdinResult GetPtpSyncStatus(OdinDeviceHandle device, OdinPtpSyncStatus& status,
+                              uint32_t timeout_ms = 1000);
+  OdinResult SetAdaptiveParam(OdinDeviceHandle device, const OdinAdaptiveFilterParam& param,
+                              uint32_t timeout_ms = 1000);
+  OdinResult GetAdaptiveParam(OdinDeviceHandle device, OdinAdaptiveFilterParam& param,
+                              uint32_t timeout_ms = 1000);
+  OdinResult ResetInitialPose(OdinDeviceHandle device, uint32_t timeout_ms = 1000);
+
+  // Host-side loop-closure / relocalization
+  OdinResult SaveMap(OdinDeviceHandle handle, const std::string& path);
+  OdinResult LoadMap(OdinDeviceHandle handle, const std::string& path);
+  OdinResult ExployMap(OdinDeviceHandle handle, const std::string& path);
+  void RegisterLcOptimizationStatusCallback(OdinDeviceHandle handle,
+                                            OdinLcOptimizationStatusCallback cb,
+                                            void *user_data);
+  void RegisterLcFrameCallback(OdinDeviceHandle handle, OdinLcFrameCallback cb,
+                               void *user_data);
+  void RegisterLcOptimizationResultCallback(OdinDeviceHandle handle,
+                                            OdinLcOptimizationResultCallback cb,
+                                            void *user_data);
+  void RegisterLcMapCloudCallback(OdinDeviceHandle handle, OdinLcMapCloudCallback cb,
+                                  void *user_data);
+
   OdinResult GetNetworkAttribute(OdinDeviceHandle device, NetworkAttribute& attr, uint32_t timeout_ms);
   OdinResult SetNetworkAttribute(OdinDeviceHandle device, const NetworkAttribute& attr, uint32_t timeout_ms);
   OdinResult Reboot(OdinDeviceHandle device, uint32_t timeout_ms);
@@ -64,9 +106,11 @@ class OdinSdkImpl {
   // Device discovery
   bool DiscoverDevices(std::vector<DiscoveredDevice> &devices, uint32_t timeout_ms = 2000);
 
-  // Heartbeat failure callback (called by device when heartbeat fails)
-  using HeartbeatFailedNotifyCallback = std::function<void(const DiscoveredDevice& device)>;
-  void SetHeartbeatFailedNotifyCallback(HeartbeatFailedNotifyCallback cb);
+  // Heartbeat success callback (called by device on every successful heartbeat).
+  // The SDK routes this to the hotplug listener as a keep-alive signal so that
+  // connected devices are not timed out while streaming.
+  using HeartbeatSuccessNotifyCallback = std::function<void(const DiscoveredDevice& device)>;
+  void SetHeartbeatSuccessNotifyCallback(HeartbeatSuccessNotifyCallback cb);
   
   // Heartbeat interval configuration
   void SetHeartbeatInterval(uint32_t interval_ms);
@@ -78,7 +122,6 @@ class OdinSdkImpl {
 
   
  private:
-  void OnDeviceHeartbeatFailed(OdinDeviceHandle handle);
   // Device discovery helpers (USB only, network discovery moved to network_utils)
   bool DiscoverUsbDevices(std::vector<DiscoveredDevice> &devices, std::set<std::string> &seen_sns,
                           uint32_t timeout_ms);
@@ -108,8 +151,8 @@ class OdinSdkImpl {
   std::atomic<OdinDeviceHandle> next_handle_{1};
   OdinDeviceHandle default_handle_ = kInvalidDeviceHandle;
   
-  // Heartbeat failure notification
-  HeartbeatFailedNotifyCallback heartbeat_failed_notify_cb_;
+  // Heartbeat success (keep-alive) notification
+  HeartbeatSuccessNotifyCallback heartbeat_success_notify_cb_;
   
   // Heartbeat interval (default 500ms)
   uint32_t heartbeat_interval_ms_ = 500;

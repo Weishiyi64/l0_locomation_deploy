@@ -4,13 +4,23 @@
 #include "ITransport.hpp"
 #include "TcpTransport.hpp"
 #include "OdinProtocol.hpp"
+#include "payload_builder.h"
+#include "internal/http_config_backend.hpp"
+#include "internal/http_file_backend.hpp"
 #include "logger.h"
+
+#include <chrono>
+#include <fstream>
+#include <random>
+#include <thread>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 namespace odin {
@@ -44,48 +54,45 @@ void ReleaseWinsock() {}
 
 }  // namespace
 
-OdinCommand::OdinCommand() = default;
+OdinCommand::OdinCommand()
+    : http_config_(new HttpConfigBackend()),
+      http_file_(new HttpFileBackend()) {}
 
 OdinCommand::~OdinCommand() {
   Disconnect();
 }
 
-bool OdinCommand::Connect(const ITransportAddress& device_address,
-                           const ITransportAddress* local_address,
+bool OdinCommand::Connect(const DiscoveredDevice& discovered_device,
                            OdinDeviceHandle handle) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (connected_.load()) return true;
 
-  // Resolve device address: Odin protocol uses NetworkAddress (TCP/UDP).
-  const auto* dev_net = dynamic_cast<const NetworkAddress*>(&device_address);
-  if (!dev_net) {
-    LOG_ERROR("OdinCommand::Connect: unsupported device address type\n");
-    return false;
-  }
-  device_ip_ = dev_net->ip;
+  // Extract transport-specific fields from the descriptor. The device layer
+  // stays unaware of these; future variants (USB, etc.) would consume their
+  // own fields off DiscoveredDevice here.
+  device_ip_ = discovered_device.network.ip_address;
   if (device_ip_.empty()) {
     LOG_ERROR("OdinCommand::Connect: empty device IP\n");
     return false;
   }
-
-  // Resolve local address (optional - default to "0.0.0.0:0")
+  host_ip_ = discovered_device.host_ip.empty() ? "0.0.0.0"
+                                                : discovered_device.host_ip;
   NetworkAddress local_addr;
-  local_addr.ip = "0.0.0.0";
+  local_addr.ip = host_ip_;
   local_addr.port = 0;
-  if (local_address) {
-    const auto* loc_net = dynamic_cast<const NetworkAddress*>(local_address);
-    if (loc_net && !loc_net->ip.empty()) {
-      local_addr.ip = loc_net->ip;
-      local_addr.port = loc_net->port;
-    }
-  }
-  host_ip_ = local_addr.ip;
   handle_ = handle;
 
   if (!AcquireWinsock()) {
     LOG_ERROR("OdinCommand: AcquireWinsock failed\n");
     return false;
   }
+
+  // Protocol version comes from the DeviceQuery discovery ACK (defaults to
+  // v2/0x02 until firmware starts reporting it). CreateOdinProtocol negotiates:
+  // a device reporting a NEWER version still connects with the best known
+  // dialect (forward compatible); failure means the device speaks an older
+  // protocol than this SDK supports.
+  const uint8_t protocol_version = discovered_device.protocol_version;
 
   // Step 1: Try heartbeat channel (TCP 60002)
   heartbeat_supported_ = true;
@@ -100,29 +107,36 @@ bool OdinCommand::Connect(const ITransportAddress& device_address,
     LOG_WARN("OdinCommand: Heartbeat transport Open failed (port 60002)\n");
     heartbeat_supported_ = false;
   } else {
-    std::unique_ptr<IProtocol> hb_protocol(new OdinProtocolV1());
-    heartbeat_channel_.reset(new CommandChannel(std::move(hb_protocol), std::move(hb_transport)));
-
-    CommandChannelConfig hb_cfg;
-    hb_cfg.default_timeout_ms = 2000;
-    hb_cfg.device_handle = handle_;
-
-    if (!heartbeat_channel_->Start(hb_cfg)) {
-      LOG_WARN("OdinCommand: Heartbeat CommandChannel start failed\n");
-      heartbeat_channel_.reset();
+    std::unique_ptr<IProtocol> hb_protocol = CreateOdinProtocol(protocol_version);
+    if (!hb_protocol) {
+      LOG_ERROR("OdinCommand: device protocol version 0x%02x is older than this SDK supports\n",
+                protocol_version);
       heartbeat_supported_ = false;
     } else {
-      // Send first heartbeat to verify
-      std::vector<uint8_t> hb_payload;
-      OdinCommandSyncResponse hb_response;
-      if (!heartbeat_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kHeartbeat), 
-                                         hb_payload, hb_response, 2000)) {
-        LOG_WARN("OdinCommand: First heartbeat failed\n");
-        heartbeat_channel_->Stop();
+      heartbeat_channel_.reset(
+          new CommandChannel(std::move(hb_protocol), std::move(hb_transport)));
+
+      CommandChannelConfig hb_cfg;
+      hb_cfg.default_timeout_ms = 2000;
+      hb_cfg.device_handle = handle_;
+
+      if (!heartbeat_channel_->Start(hb_cfg)) {
+        LOG_WARN("OdinCommand: Heartbeat CommandChannel start failed\n");
         heartbeat_channel_.reset();
         heartbeat_supported_ = false;
       } else {
-        LOG_INFO("OdinCommand: Heartbeat channel established (port 60002)\n");
+        // Send first heartbeat to verify
+        std::vector<uint8_t> hb_payload;
+        OdinCommandSyncResponse hb_response;
+        if (!heartbeat_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kHeartbeat),
+                                           hb_payload, hb_response, 2000)) {
+          LOG_WARN("OdinCommand: First heartbeat failed\n");
+          heartbeat_channel_->Stop();
+          heartbeat_channel_.reset();
+          heartbeat_supported_ = false;
+        } else {
+          LOG_INFO("OdinCommand: Heartbeat channel established (port 60002)\n");
+        }
       }
     }
   }
@@ -148,7 +162,17 @@ bool OdinCommand::Connect(const ITransportAddress& device_address,
     return false;
   }
 
-  std::unique_ptr<IProtocol> cmd_protocol(new OdinProtocolV1());
+  std::unique_ptr<IProtocol> cmd_protocol = CreateOdinProtocol(protocol_version);
+  if (!cmd_protocol) {
+    LOG_ERROR("OdinCommand: device protocol version 0x%02x is older than this SDK supports\n",
+              protocol_version);
+    if (heartbeat_channel_) {
+      heartbeat_channel_->Stop();
+      heartbeat_channel_.reset();
+    }
+    ReleaseWinsock();
+    return false;
+  }
   command_channel_.reset(new CommandChannel(std::move(cmd_protocol), std::move(cmd_transport)));
 
   CommandChannelConfig cmd_cfg;
@@ -166,12 +190,26 @@ bool OdinCommand::Connect(const ITransportAddress& device_address,
     return false;
   }
 
+  // Bring up HTTP-backed sub-protocols. Failure here is non-fatal: if the
+  // device's web server is unreachable we still keep the TLV channel up so
+  // streaming/control works; only management calls will fail later.
+  if (http_config_) http_config_->Connect(discovered_device);
+  if (http_file_)   http_file_->Connect(discovered_device);
+
+  // Bring up the algorithm downlink (data_type=0x40) server and subscribe the
+  // module. Non-fatal: a failure here never blocks the main connection.
+  StartAlgoDownlink();
+
   connected_.store(true);
   LOG_INFO("OdinCommand: Connected to %s\n", device_ip_.c_str());
   return true;
 }
 
 void OdinCommand::Disconnect() {
+  // Stop any active background calibration fetch before tearing down the
+  // command channel; otherwise the thread could use a stale channel.
+  StopCalibThread();
+
   std::lock_guard<std::mutex> lock(mutex_);
   if (!connected_.load()) return;
 
@@ -184,6 +222,14 @@ void OdinCommand::Disconnect() {
     heartbeat_channel_->Stop();
     heartbeat_channel_.reset();
   }
+
+  StopAlgoDownlink();
+  // Note: no StopCalibServer here — the calib server is brought up and
+  // torn down on demand inside FetchCalibrationFile().
+  StopTelemetryServer();
+
+  if (http_file_)   http_file_->Disconnect();
+  if (http_config_) http_config_->Disconnect();
 
   ReleaseWinsock();
   connected_.store(false);
@@ -222,17 +268,17 @@ OdinResult OdinCommand::GetFirmwareVersion(std::string& version, uint32_t timeou
   return OdinResult::kOk;
 }
 
-OdinResult OdinCommand::SetOperatingMode(OdinOperatingMode mode, uint32_t timeout_ms) {
+OdinResult OdinCommand::SetDeviceMode(OdinDeviceMode mode, uint32_t timeout_ms) {
   std::vector<uint8_t> payload;
   payload.push_back(static_cast<uint8_t>(mode));
 
-  LOG_DEBUG("OdinCommand::SetOperatingMode: mode=%d\n", static_cast<int>(mode));
+  LOG_DEBUG("OdinCommand::SetDeviceMode: mode=%d\n", static_cast<int>(mode));
 
   std::lock_guard<std::mutex> lock(mutex_);
   if (!command_channel_) return OdinResult::kNotInitialized;
 
   OdinCommandSyncResponse response;
-  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kSetMode), 
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kSetDeviceMode), 
                                   payload, response, timeout_ms)) {
     return OdinResult::kTimeout;
   }
@@ -240,12 +286,44 @@ OdinResult OdinCommand::SetOperatingMode(OdinOperatingMode mode, uint32_t timeou
   return response.result;
 }
 
-OdinResult OdinCommand::SetSensorMode(uint8_t mode, uint32_t timeout_ms) {
+OdinResult OdinCommand::GetDeviceMode(OdinDeviceMode& mode, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kGetDeviceMode),
+                                  payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetDeviceMode: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.result != OdinResult::kOk) {
+    return response.result;
+  }
+
+  if (response.response.payload.size() >= 2) {
+    uint8_t raw_mode = response.response.payload[1];
+    if (raw_mode > static_cast<uint8_t>(OdinDeviceMode::kReMap)) {
+      LOG_ERROR("OdinCommand::GetDeviceMode: invalid mode value %d\n", raw_mode);
+      return OdinResult::kUnknownError;
+    }
+    mode = static_cast<OdinDeviceMode>(raw_mode);
+  } else {
+    LOG_ERROR("OdinCommand::GetDeviceMode: response too short\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::SetSensorMode(OdinSensorMode mode, uint32_t timeout_ms) {
   std::vector<uint8_t> payload;
   payload.push_back(0x00);
-  payload.push_back(mode);
+  payload.push_back(static_cast<uint8_t>(mode));
 
-  LOG_DEBUG("OdinCommand::SetSensorMode: mode=%d\n", mode);
+  LOG_DEBUG("OdinCommand::SetSensorMode: mode=%d\n", static_cast<int>(mode));
 
   std::lock_guard<std::mutex> lock(mutex_);
   if (!command_channel_) return OdinResult::kNotInitialized;
@@ -259,10 +337,44 @@ OdinResult OdinCommand::SetSensorMode(uint8_t mode, uint32_t timeout_ms) {
   return response.result;
 }
 
+OdinResult OdinCommand::GetSensorMode(OdinSensorMode& mode, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;
+
+  LOG_DEBUG("OdinCommand::GetSensorMode\n");
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kGetLiDARMode),
+                                  payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetSensorMode: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.result != OdinResult::kOk) {
+    return response.result;
+  }
+
+  if (response.response.payload.size() <= 1) {
+    LOG_ERROR("OdinCommand::GetSensorMode: response too short\n");
+    return OdinResult::kCommunicationError;
+  }
+  if (static_cast<OdinSensorMode>(response.response.payload[1]) > OdinSensorMode::kAdaptive) {
+    LOG_ERROR("OdinCommand::GetSensorMode: invalid mode value %d\n", response.response.payload[1]);
+  }
+  mode = static_cast<OdinSensorMode>(response.response.payload[1]);
+  
+  return OdinResult::kOk;
+}
+
 OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& capabilities,
                                              const std::vector<OdinDataChannel>& channels,
                                              uint32_t timeout_ms) {
   capabilities.clear();
+
+  // Two-level index accumulated during parsing (implementation-only).
+  std::map<OdinDataChannel, CapabilityIndex> pending_index;
 
   std::vector<uint8_t> payload;
   for (auto ch : channels) {
@@ -315,6 +427,7 @@ OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& c
         }
 
         cJSON* resolutions = cJSON_GetObjectItem(ch_obj, "resolutions");
+        std::vector<CapabilityIndex::Resolution> res_list;
         if (resolutions && cJSON_IsArray(resolutions)) {
           int res_count = cJSON_GetArraySize(resolutions);
           for (int j = 0; j < res_count; ++j) {
@@ -334,28 +447,42 @@ OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& c
               cfg.height = static_cast<uint16_t>(height->valueint);
             }
 
+            // Two-level index entry for this resolution object. Its position in
+            // res_list is the resolution_id; the fps sub-list index is fps_id.
+            CapabilityIndex::Resolution cres;
+            cres.width = cfg.width;
+            cres.height = cfg.height;
+            cres.format = channel_format;
+
             cJSON* fps_arr = cJSON_GetObjectItem(res_obj, "fps");
             if (fps_arr && cJSON_IsArray(fps_arr)) {
               int fps_count = cJSON_GetArraySize(fps_arr);
               for (int k = 0; k < fps_count; ++k) {
                 cJSON* fps_val = cJSON_GetArrayItem(fps_arr, k);
                 if (fps_val && cJSON_IsNumber(fps_val)) {
+                  uint16_t fps = static_cast<uint16_t>(fps_val->valueint);
+                  cres.fps_list.push_back(fps);
+                  // Keep the public 1-D modes list unchanged (ABI compat).
                   OdinStreamCfg cfg_copy = cfg;
-                  cfg_copy.fps = static_cast<uint16_t>(fps_val->valueint);
+                  cfg_copy.fps = fps;
                   cap.modes.push_back(cfg_copy);
                 }
               }
             } else {
+              cres.fps_list.push_back(cfg.fps);
               cap.modes.push_back(cfg);
             }
+            res_list.push_back(std::move(cres));
           }
         }
 
         if (channels.empty()) {
+          pending_index[cap.channel].resolutions = std::move(res_list);
           capabilities.push_back(cap);
         } else {
           for (auto ch : channels) {
             if (ch == cap.channel) {
+              pending_index[cap.channel].resolutions = std::move(res_list);
               capabilities.push_back(cap);
               break;
             }
@@ -366,6 +493,7 @@ OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& c
 
     cJSON_Delete(root);
     UpdateCapabilityTable(capabilities);
+    CommitCapabilityIndex(pending_index);
     return OdinResult::kOk;
   }
 
@@ -391,23 +519,41 @@ OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& c
     cap.channel = static_cast<OdinDataChannel>(resp_payload[offset++]);
     uint8_t mode_count = resp_payload[offset++];
 
+    // Binary TLV lists flat (w,h,fps,format) modes; group consecutive entries
+    // sharing the same resolution/format into one resolution object so that
+    // resolution_id/fps_id match the JSON two-level semantics.
+    std::vector<CapabilityIndex::Resolution> res_list;
     for (uint8_t j = 0; j < mode_count && offset + 6 <= resp_payload.size(); j++) {
       OdinStreamCfg cfg;
       cfg.width = (static_cast<uint16_t>(resp_payload[offset]) << 8) |
                   static_cast<uint16_t>(resp_payload[offset + 1]);
       cfg.height = (static_cast<uint16_t>(resp_payload[offset + 2]) << 8) |
                    static_cast<uint16_t>(resp_payload[offset + 3]);
-      cfg.fps = resp_payload[offset + 4];
+      cfg.fps = (static_cast<uint16_t>(resp_payload[offset + 4]));
       cfg.format = static_cast<OdinDataFormat>(resp_payload[offset + 5]);
       offset += 6;
       cap.modes.push_back(cfg);
+
+      if (!res_list.empty() && res_list.back().width == cfg.width &&
+          res_list.back().height == cfg.height && res_list.back().format == cfg.format) {
+        res_list.back().fps_list.push_back(cfg.fps);
+      } else {
+        CapabilityIndex::Resolution cres;
+        cres.width = cfg.width;
+        cres.height = cfg.height;
+        cres.format = cfg.format;
+        cres.fps_list.push_back(cfg.fps);
+        res_list.push_back(std::move(cres));
+      }
     }
 
     if (channels.empty()) {
+      pending_index[cap.channel].resolutions = std::move(res_list);
       capabilities.push_back(cap);
     } else {
       for (auto ch : channels) {
         if (ch == cap.channel) {
+          pending_index[cap.channel].resolutions = std::move(res_list);
           capabilities.push_back(cap);
           break;
         }
@@ -416,6 +562,7 @@ OdinResult OdinCommand::GetSensorCapability(std::vector<OdinSensorCapability>& c
   }
 
   UpdateCapabilityTable(capabilities);
+  CommitCapabilityIndex(pending_index);
   return OdinResult::kOk;
 }
 
@@ -423,6 +570,13 @@ void OdinCommand::UpdateCapabilityTable(const std::vector<OdinSensorCapability>&
   std::lock_guard<std::mutex> lock(capability_mutex_);
   for (const auto& cap : capabilities) {
     capability_table_[cap.channel] = cap.modes;
+  }
+}
+
+void OdinCommand::CommitCapabilityIndex(const std::map<OdinDataChannel, CapabilityIndex>& pending) {
+  std::lock_guard<std::mutex> lock(capability_mutex_);
+  for (const auto& kv : pending) {
+    capability_index_[kv.first] = kv.second;
   }
 }
 
@@ -436,21 +590,64 @@ bool OdinCommand::LookupStreamConfig(OdinDataChannel channel, const OdinStreamCf
   }
 
   std::lock_guard<std::mutex> lock(capability_mutex_);
-  auto it = capability_table_.find(channel);
-  if (it == capability_table_.end()) {
+  auto it = capability_index_.find(channel);
+  if (it == capability_index_.end()) {
+    LOG_WARN("OdinCommand::LookupStreamConfig: no capability index for channel 0x%02x, "
+             "requested %ux%u — call GetSensorCapability first or ensure lazy-load\n",
+             static_cast<uint8_t>(channel), cfg->width, cfg->height);
     return false;
   }
 
-  const auto& configs = it->second;
-  for (size_t i = 0; i < configs.size(); ++i) {
-    if (configs[i].width == cfg->width && configs[i].height == cfg->height) {
-      resolution_id = static_cast<uint8_t>(i);
-      if (configs[i].fps == cfg->fps || cfg->fps == 0) {
+  // Protocol semantics (PROTOCOL.md 0x06 TLV table):
+  //   resolution_id = index into the `resolutions` array (per resolution object)
+  //   fps_id        = index into the selected resolution's `fps` sub-list
+  const auto& resolutions = it->second.resolutions;
+  for (size_t i = 0; i < resolutions.size(); ++i) {
+    const auto& res = resolutions[i];
+    if (res.width != cfg->width || res.height != cfg->height) {
+      continue;
+    }
+    resolution_id = static_cast<uint8_t>(i);
+
+    if (cfg->fps == 0) {
+      // Caller did not specify a frame rate — use the first (default) entry.
+      fps_id = 0;
+    } else {
+      for (size_t f = 0; f < res.fps_list.size(); ++f) {
+        if (res.fps_list[f] == cfg->fps) {
+          fps_id = static_cast<uint8_t>(f);
+          break;
+        }
+      }
+      // Device rejects out-of-range indices (ACK ret_code=1); if the requested
+      // fps is not advertised for this resolution, fall back to the default.
+      if (fps_id == 0xFF) {
+        LOG_WARN("OdinCommand::LookupStreamConfig: fps %u not supported for %ux%u on "
+                 "channel 0x%02x (available fps entries: %zu), falling back to fps_id=0\n",
+                 cfg->fps, cfg->width, cfg->height, static_cast<uint8_t>(channel),
+                 res.fps_list.size());
         fps_id = 0;
       }
-      return true;
     }
+    return true;
   }
+
+  // Log available resolutions for diagnosis.
+  std::string available;
+  for (size_t i = 0; i < resolutions.size(); ++i) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "[%zu]%ux%u", i, resolutions[i].width, resolutions[i].height);
+    available += buf;
+    for (size_t f = 0; f < resolutions[i].fps_list.size(); ++f) {
+      char fbuf[16];
+      snprintf(fbuf, sizeof(fbuf), "@%u", resolutions[i].fps_list[f]);
+      available += fbuf;
+    }
+    available += " ";
+  }
+  LOG_WARN("OdinCommand::LookupStreamConfig: %ux%u not found for channel 0x%02x, "
+           "available modes: %s\n",
+           cfg->width, cfg->height, static_cast<uint8_t>(channel), available.c_str());
   return false;
 }
 
@@ -458,54 +655,105 @@ std::vector<uint8_t> OdinCommand::BuildChannelConfigPayload(OdinDataChannel chan
                                                              OdinTransportMode transport,
                                                              uint16_t dst_port,
                                                              const OdinStreamCfg* cfg) {
-  std::vector<uint8_t> payload;
-  payload.reserve(cfg ? 20 : 8);
-
-  // data_type (1 byte)
-  payload.push_back(static_cast<uint8_t>(channel));
-
-  // TLV: dst_port
-  payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kDstPort));
-  payload.push_back(0x02);
-  payload.push_back(static_cast<uint8_t>((dst_port >> 8) & 0xFF));
-  payload.push_back(static_cast<uint8_t>(dst_port & 0xFF));
-
-  // TLV: transport_mode
-  payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kTransportMode));
-  payload.push_back(0x01);
-  payload.push_back(static_cast<uint8_t>(transport));
-
-  // Mode TLVs (Image channels only)
+  // Resolve resolution/fps IDs from capability table before building payload.
+  uint8_t resolution_id = 0xFF;
+  uint8_t fps_id = 0xFF;
   if (cfg && (cfg->width > 0 || cfg->height > 0)) {
-    uint8_t resolution_id = 0xFF;
-    uint8_t fps_id = 0xFF;
+    // Lazy-load: auto-query capability table if not yet fetched for this channel.
+    // BuildChannelConfigPayload is always called BEFORE mutex_ is acquired in
+    // SendStartStream, so calling GetSensorCapability here is deadlock-safe.
+    {
+      bool need_lazy_load = false;
+      {
+        std::lock_guard<std::mutex> cap_lock(capability_mutex_);
+        need_lazy_load = (capability_index_.find(channel) == capability_index_.end());
+      }
+      if (need_lazy_load) {
+        std::vector<OdinSensorCapability> caps;
+        auto result = GetSensorCapability(caps, {channel});
+        if (result != OdinResult::kOk) {
+          LOG_WARN("OdinCommand: lazy capability fetch failed for channel 0x%02x (err=%d), "
+                   "resolution_id will not be sent\n",
+                   static_cast<uint8_t>(channel), static_cast<int>(result));
+        }
+      }
+    }
     LookupStreamConfig(channel, cfg, resolution_id, fps_id);
-
-    if (resolution_id != 0xFF) {
-      payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kResolutionId));
-      payload.push_back(0x01);
-      payload.push_back(resolution_id);
-    }
-
-    if (fps_id != 0xFF) {
-      payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kFpsId));
-      payload.push_back(0x01);
-      payload.push_back(fps_id);
-    }
-
-    if (cfg->format != OdinDataFormat::kUnknown) {
-      payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kFormat));
-      payload.push_back(0x01);
-      payload.push_back(static_cast<uint8_t>(cfg->format));
-    }
+    LOG_DEBUG("OdinCommand: channel 0x%02x resolved resolution_id=%u fps_id=%u "
+              "for %ux%u@%u format=%d\n",
+              static_cast<uint8_t>(channel), resolution_id, fps_id,
+              cfg->width, cfg->height, cfg->fps, static_cast<int>(cfg->format));
   }
 
-  return payload;
+  PayloadBuilder builder;
+  builder.WriteU8(static_cast<uint8_t>(channel))
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe), uint8_t(1))
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kDstPort), dst_port)
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kTransportMode),
+                 static_cast<uint8_t>(transport))
+         .RequireTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe));
+
+  // Optional mode TLVs (only when resolved from capability table)
+  if (resolution_id != 0xFF) {
+    builder.AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kResolutionId), resolution_id);
+  }
+  if (fps_id != 0xFF) {
+    builder.AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kFpsId), fps_id);
+  }
+  if (cfg && cfg->format != OdinDataFormat::kUnknown) {
+    builder.AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kFormat),
+                   static_cast<uint8_t>(cfg->format));
+  }
+
+  return builder.Build();
+}
+
+bool OdinCommand::ProbePortBindable(const std::string& ip, uint16_t port) {
+  int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (sock < 0) return false;
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  if (ip.empty() || ip == "0.0.0.0") {
+    addr.sin_addr.s_addr = INADDR_ANY;
+  } else {
+    inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
+  }
+
+  int result = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+#ifdef _WIN32
+  closesocket(sock);
+#else
+  ::close(sock);
+#endif
+  return result == 0;
+}
+
+uint16_t OdinCommand::AllocateDstPort() {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  std::uniform_int_distribution<uint16_t> dist(10000, 60000);
+
+  std::lock_guard<std::mutex> lock(port_mutex_);
+  for (int i = 0; i < 1000; ++i) {
+    uint16_t port = dist(gen);
+    if (used_ports_.count(port) == 0 && ProbePortBindable(host_ip_, port)) {
+      used_ports_.insert(port);
+      return port;
+    }
+  }
+  return 0;
 }
 
 OdinResult OdinCommand::SendStartStream(OdinDataChannel channel, OdinTransportMode transport,
-                                         uint16_t dst_port, const OdinStreamCfg* cfg,
-                                         uint32_t timeout_ms) {
+                                         const OdinStreamCfg* cfg, uint32_t timeout_ms) {
+  uint16_t dst_port = AllocateDstPort();
+  if (dst_port == 0) {
+    LOG_ERROR("OdinCommand::SendStartStream: failed to allocate dst_port\n");
+    return OdinResult::kUnknownError;
+  }
+
   auto payload = BuildChannelConfigPayload(channel, transport, dst_port, cfg);
 
   const char* transport_name = (transport == OdinTransportMode::kTcp) ? "TCP" : "UDP";
@@ -533,18 +781,42 @@ OdinResult OdinCommand::SendStartStream(OdinDataChannel channel, OdinTransportMo
     return OdinResult::kUnknownError;
   }
 
+  // Record the local-side endpoint so capture can retrieve it via
+  // GetLocalEndpoint() without ever surfacing the port to the device layer.
+  {
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    NetworkAddress endpoint;
+    endpoint.ip = host_ip_;
+    endpoint.port = dst_port;
+    channel_endpoints_[channel] = endpoint;
+  }
   return OdinResult::kOk;
 }
 
-OdinResult OdinCommand::SendCloseStream(OdinDataChannel channel, uint32_t timeout_ms) {
-  std::vector<uint8_t> payload;
-  payload.reserve(5);
+const ITransportAddress& OdinCommand::GetLocalEndpoint(OdinDataChannel channel) const {
+  // Singleton sentinel returned when the channel is not currently streaming.
+  // The empty NetworkAddress is intentionally invalid (port 0) so that
+  // misuse fails fast at the capture layer.
+  static const NetworkAddress kInvalidEndpoint{};
 
-  payload.push_back(static_cast<uint8_t>(channel));
-  payload.push_back(static_cast<uint8_t>(ChannelConfigTlvType::kDstPort));
-  payload.push_back(0x02);
-  payload.push_back(0x00);
-  payload.push_back(0x00);
+  std::lock_guard<std::mutex> lock(port_mutex_);
+  auto it = channel_endpoints_.find(channel);
+  if (it == channel_endpoints_.end()) {
+    LOG_WARN("OdinCommand::GetLocalEndpoint: channel 0x%02x not started\n",
+             static_cast<uint8_t>(channel));
+    return kInvalidEndpoint;
+  }
+  return it->second;
+}
+
+OdinResult OdinCommand::SendCloseStream(OdinDataChannel channel, uint32_t timeout_ms) {
+  // Per protocol v0x01: unsubscribe uses subscribe=0 TLV (mandatory).
+  // dst_port is irrelevant for unsubscription.
+  PayloadBuilder builder;
+  builder.WriteU8(static_cast<uint8_t>(channel))
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe), uint8_t(0))
+         .RequireTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe));
+  auto payload = builder.Build();
 
   LOG_DEBUG("OdinCommand::SendCloseStream: channel=0x%02x\n", static_cast<uint8_t>(channel));
 
@@ -569,11 +841,1174 @@ OdinResult OdinCommand::SendCloseStream(OdinDataChannel channel, uint32_t timeou
     return OdinResult::kUnknownError;
   }
 
+  // Release the per-channel local endpoint and free its port reservation.
+  {
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    auto it = channel_endpoints_.find(channel);
+    if (it != channel_endpoints_.end()) {
+      used_ports_.erase(it->second.port);
+      channel_endpoints_.erase(it);
+    }
+  }
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::GetChannelConfig(OdinDataChannel channel, OdinChannelConfigInfo& info,
+                                            uint32_t timeout_ms) {
+  // REQ: [data_type: 1B] (per protocol v0x02, per-channel query)
+  std::vector<uint8_t> req_payload;
+  req_payload.push_back(static_cast<uint8_t>(channel));
+
+  LOG_DEBUG("OdinCommand::GetChannelConfig: channel=0x%02X\n", static_cast<uint8_t>(channel));
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kGetChannelConfig),
+                                  req_payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetChannelConfig: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  // ACK: [ret_code: 1B] [data_type: 1B] [TLV ...]
+  if (response.response.payload.size() < 2) {
+    LOG_ERROR("OdinCommand::GetChannelConfig: response too short (%zu bytes)\n",
+              response.response.payload.size());
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::GetChannelConfig: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+
+  // Parse TLV region (skip ret_code + data_type echo)
+  const uint8_t* tlv_data = response.response.payload.data() + 2;
+  size_t tlv_len = response.response.payload.size() - 2;
+  TlvParser parser = TlvParser::Parse(tlv_data, tlv_len);
+
+  info.subscribed = (parser.GetU8(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe), 0) != 0);
+  info.dst_port = parser.GetU16BE(static_cast<uint8_t>(ChannelConfigTlvType::kDstPort), 0);
+  info.transport_mode = static_cast<OdinTransportMode>(
+      parser.GetU8(static_cast<uint8_t>(ChannelConfigTlvType::kTransportMode),
+                   static_cast<uint8_t>(OdinTransportMode::kUdp)));
+  info.resolution_id = parser.GetU8(static_cast<uint8_t>(ChannelConfigTlvType::kResolutionId), 0xFF);
+  info.fps_id = parser.GetU8(static_cast<uint8_t>(ChannelConfigTlvType::kFpsId), 0xFF);
+  info.format = static_cast<OdinDataFormat>(
+      parser.GetU8(static_cast<uint8_t>(ChannelConfigTlvType::kFormat),
+                   static_cast<uint8_t>(OdinDataFormat::kUnknown)));
+
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::SetFilterParam(const OdinLidarFilterParams& params,
+                                       uint32_t timeout_ms) {
+  if (!params.has_confidence && !params.has_adaptive && !params.has_range) {
+    LOG_ERROR("OdinCommand::SetFilterParam: no filter selected\n");
+    return OdinResult::kInvalidArgument;
+  }
+
+  PayloadBuilder builder;
+
+  // Confidence filter block: outer TLV [kConfidence][len][inner sub-TLVs]
+  if (params.has_confidence) {
+    PayloadBuilder inner;
+    inner.AddTlv(0x01, params.confidence.confidence_threshold);  // uint8_t
+    auto sub = inner.Build();
+    builder.AddRawTlv(static_cast<uint8_t>(OdinLidarFilterId::kConfidence),
+                      sub.data(), sub.size());
+  }
+
+  // Adaptive filter block
+  if (params.has_adaptive) {
+    PayloadBuilder inner;
+    inner.AddTlv(0x01, params.adaptive.cdf_percentile)    // uint16_t BE
+         .AddTlv(0x02, params.adaptive.outdoor_threshold); // uint16_t BE
+    auto sub = inner.Build();
+    builder.AddRawTlv(static_cast<uint8_t>(OdinLidarFilterId::kAdaptive),
+                      sub.data(), sub.size());
+  }
+
+  // Range filter block
+  if (params.has_range) {
+    PayloadBuilder inner;
+    inner.AddTlv(0x01, params.range.min_depth);  // uint16_t BE
+    auto sub = inner.Build();
+    builder.AddRawTlv(static_cast<uint8_t>(OdinLidarFilterId::kRange),
+                      sub.data(), sub.size());
+  }
+
+  auto payload = builder.Build();
+  LOG_DEBUG("OdinCommand::SetFilterParam: confidence=%d adaptive=%d range=%d\n",
+            params.has_confidence, params.has_adaptive, params.has_range);
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kSetFilterParam),
+                                  payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::SetFilterParam: timeout\n");
+    return OdinResult::kTimeout;
+  }
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::SetFilterParam: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::SetFilterParam: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::GetFilterParam(OdinLidarFilterParams& params,
+                                       uint32_t timeout_ms) {
+  // REQ payload: empty = query all filter types
+  std::vector<uint8_t> payload;
+
+  LOG_DEBUG("OdinCommand::GetFilterParam: query all\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kGetFilterParam),
+                                  payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetFilterParam: timeout\n");
+    return OdinResult::kTimeout;
+  }
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::GetFilterParam: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::GetFilterParam: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+
+  // ACK: [ret_code:1B] [filter_id:1B][outer_len:1B][sub-TLV block:outer_len B] ...
+  params = OdinLidarFilterParams();
+  const auto& pl = response.response.payload;
+  size_t offset = 1;  // skip ret_code
+  while (offset + 2 <= pl.size()) {
+    uint8_t filter_id  = pl[offset];
+    uint8_t outer_len  = pl[offset + 1];
+    offset += 2;
+    if (offset + outer_len > pl.size()) {
+      LOG_ERROR("OdinCommand::GetFilterParam: truncated at offset %zu\n", offset);
+      return OdinResult::kCommunicationError;
+    }
+    TlvParser inner = TlvParser::Parse(pl.data() + offset, outer_len);
+    if (filter_id == static_cast<uint8_t>(OdinLidarFilterId::kConfidence)) {
+      params.has_confidence = true;
+      params.confidence.confidence_threshold =
+          inner.GetU8(0x01, params.confidence.confidence_threshold);
+    } else if (filter_id == static_cast<uint8_t>(OdinLidarFilterId::kAdaptive)) {
+      params.has_adaptive = true;
+      params.adaptive.cdf_percentile    = inner.GetU16BE(0x01, params.adaptive.cdf_percentile);
+      params.adaptive.outdoor_threshold = inner.GetU16BE(0x02, params.adaptive.outdoor_threshold);
+    } else if (filter_id == static_cast<uint8_t>(OdinLidarFilterId::kRange)) {
+      params.has_range = true;
+      params.range.min_depth = inner.GetU16BE(0x01, params.range.min_depth);
+    }
+    offset += outer_len;
+  }
+  return OdinResult::kOk;
+}
+
+// =============================================================================
+// Restore default config (cmd_id=0x09)
+// =============================================================================
+
+OdinResult OdinCommand::RestoreDefaultConfig(uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;  // no data
+
+  LOG_DEBUG("OdinCommand::RestoreDefaultConfig\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kRestoreDefaultConfig),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::RestoreDefaultConfig: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::RestoreDefaultConfig: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::RestoreDefaultConfig: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+  return OdinResult::kOk;
+}
+
+// =============================================================================
+// Time sync commands (0x20-0x2F)
+// =============================================================================
+
+OdinResult OdinCommand::SetDefaultSyncMode(OdinTimeSyncMode mode, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;
+  payload.push_back(static_cast<uint8_t>(mode));
+
+  LOG_DEBUG("OdinCommand::SetDefaultSyncMode: mode=%d\n", static_cast<int>(mode));
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kSetDefaultSyncMode),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::SetDefaultSyncMode: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::SetDefaultSyncMode: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code == 2) {
+    LOG_ERROR("OdinCommand::SetDefaultSyncMode: invalid sync mode\n");
+    return OdinResult::kInvalidArgument;
+  }
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::SetDefaultSyncMode: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::GetDefaultSyncMode(OdinTimeSyncMode& mode, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;  // no data
+
+  LOG_DEBUG("OdinCommand::GetDefaultSyncMode\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kGetDefaultSyncMode),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetDefaultSyncMode: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  // ACK: [ret_code:1B][sync_mode:1B] = 2B
+  const auto& pl = response.response.payload;
+  if (pl.size() < 2) {
+    LOG_ERROR("OdinCommand::GetDefaultSyncMode: response too short (%zu bytes)\n", pl.size());
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = pl[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::GetDefaultSyncMode: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+
+  mode = static_cast<OdinTimeSyncMode>(pl[1]);
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::GetPtpSyncStatus(OdinPtpSyncStatus& status, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;  // no data
+
+  LOG_DEBUG("OdinCommand::GetPtpSyncStatus\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kGetPtpSyncStatus),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetPtpSyncStatus: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  // ACK: [ret_code:1B][sync_state:1B][servo_state:1B][offset_ns:8B][path_delay_ns:8B][freq_ppb:4B] = 23B
+  const auto& pl = response.response.payload;
+  if (pl.size() < 23) {
+    LOG_ERROR("OdinCommand::GetPtpSyncStatus: response too short (%zu bytes)\n", pl.size());
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = pl[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::GetPtpSyncStatus: error code %d (ptp_daemon may not be running)\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+
+  status.sync_state    = pl[1];
+  status.servo_state   = pl[2];
+  // Parse int64_t BE: offset_ns
+  status.offset_ns     = static_cast<int64_t>(
+      (static_cast<uint64_t>(pl[3])  << 56) | (static_cast<uint64_t>(pl[4])  << 48) |
+      (static_cast<uint64_t>(pl[5])  << 40) | (static_cast<uint64_t>(pl[6])  << 32) |
+      (static_cast<uint64_t>(pl[7])  << 24) | (static_cast<uint64_t>(pl[8])  << 16) |
+      (static_cast<uint64_t>(pl[9])  << 8)  | (static_cast<uint64_t>(pl[10])));
+  // Parse int64_t BE: path_delay_ns
+  status.path_delay_ns = static_cast<int64_t>(
+      (static_cast<uint64_t>(pl[11]) << 56) | (static_cast<uint64_t>(pl[12]) << 48) |
+      (static_cast<uint64_t>(pl[13]) << 40) | (static_cast<uint64_t>(pl[14]) << 32) |
+      (static_cast<uint64_t>(pl[15]) << 24) | (static_cast<uint64_t>(pl[16]) << 16) |
+      (static_cast<uint64_t>(pl[17]) << 8)  | (static_cast<uint64_t>(pl[18])));
+  // Parse int32_t BE: freq_ppb
+  status.freq_ppb      = static_cast<int32_t>(
+      (static_cast<uint32_t>(pl[19]) << 24) | (static_cast<uint32_t>(pl[20]) << 16) |
+      (static_cast<uint32_t>(pl[21]) << 8)  | (static_cast<uint32_t>(pl[22])));
+
+  return OdinResult::kOk;
+}
+
+// =============================================================================
+// Standalone adaptive param commands (0x34/0x35)
+// =============================================================================
+
+OdinResult OdinCommand::SetAdaptiveParam(const OdinAdaptiveFilterParam& param,
+                                         uint32_t timeout_ms) {
+  // REQ: [cdf_percentile: 2B BE][outdoor_threshold: 2B BE]
+  PayloadBuilder builder;
+  builder.WriteU16BE(param.cdf_percentile)
+         .WriteU16BE(param.outdoor_threshold);
+  auto payload = builder.Build();
+
+  LOG_DEBUG("OdinCommand::SetAdaptiveParam: cdf=%u outdoor=%u\n",
+            param.cdf_percentile, param.outdoor_threshold);
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kSetAdaptiveParam),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::SetAdaptiveParam: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::SetAdaptiveParam: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code == 2) {
+    LOG_ERROR("OdinCommand::SetAdaptiveParam: invalid parameter\n");
+    return OdinResult::kInvalidArgument;
+  }
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::SetAdaptiveParam: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+  return OdinResult::kOk;
+}
+
+OdinResult OdinCommand::GetAdaptiveParam(OdinAdaptiveFilterParam& param, uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;  // no data
+
+  LOG_DEBUG("OdinCommand::GetAdaptiveParam\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kGetAdaptiveParam),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::GetAdaptiveParam: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  // ACK: [ret_code:1B][cdf_percentile:2B BE][outdoor_threshold:2B BE] = 5B
+  const auto& pl = response.response.payload;
+  if (pl.size() < 5) {
+    LOG_ERROR("OdinCommand::GetAdaptiveParam: response too short (%zu bytes)\n", pl.size());
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = pl[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::GetAdaptiveParam: error code %d\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
+
+  param.cdf_percentile    = (static_cast<uint16_t>(pl[1]) << 8) | static_cast<uint16_t>(pl[2]);
+  param.outdoor_threshold = (static_cast<uint16_t>(pl[3]) << 8) | static_cast<uint16_t>(pl[4]);
+  return OdinResult::kOk;
+}
+
+// =============================================================================
+// Algorithm commands (0x70-0x7F)
+// =============================================================================
+
+OdinResult OdinCommand::ResetInitialPose(uint32_t timeout_ms) {
+  std::vector<uint8_t> payload;  // no data
+
+  LOG_DEBUG("OdinCommand::ResetInitialPose\n");
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!command_channel_) return OdinResult::kNotInitialized;
+
+  OdinCommandSyncResponse response;
+  if (!command_channel_->SendSync(
+          static_cast<uint16_t>(Odin2CmdId::kResetInitialPose),
+          payload, response, timeout_ms)) {
+    LOG_ERROR("OdinCommand::ResetInitialPose: timeout\n");
+    return OdinResult::kTimeout;
+  }
+
+  if (response.response.payload.empty()) {
+    LOG_ERROR("OdinCommand::ResetInitialPose: empty response\n");
+    return OdinResult::kCommunicationError;
+  }
+
+  uint8_t ret_code = response.response.payload[0];
+  if (ret_code != 0) {
+    LOG_ERROR("OdinCommand::ResetInitialPose: error code %d (algo process may not be running)\n", ret_code);
+    return OdinResult::kUnknownError;
+  }
   return OdinResult::kOk;
 }
 
 bool OdinCommand::IsHeartbeatSupported() const {
   return heartbeat_supported_;
+}
+
+// =============================================================================
+// Device management (formerly IConfigService) - delegates to HttpConfigBackend.
+// =============================================================================
+
+OdinResult OdinCommand::GetNetworkAttribute(NetworkAttribute& attr,
+                                            uint32_t timeout_ms) {
+  if (!http_config_) return OdinResult::kNotInitialized;
+  return http_config_->GetNetworkAttribute(attr, timeout_ms);
+}
+
+OdinResult OdinCommand::SetNetworkAttribute(const NetworkAttribute& attr,
+                                            uint32_t timeout_ms) {
+  if (!http_config_) return OdinResult::kNotInitialized;
+  return http_config_->SetNetworkAttribute(attr, timeout_ms);
+}
+
+OdinResult OdinCommand::Reboot(uint32_t timeout_ms) {
+  if (!http_config_) return OdinResult::kNotInitialized;
+
+  // The device drops every existing connection on reboot, so tear our own
+  // channels down first - callers must Connect() again after reboot.
+  OdinResult r = http_config_->Reboot(timeout_ms);
+  Disconnect();
+  return r;
+}
+
+// =============================================================================
+// File transfer (formerly IFileService) - delegates to HttpFileBackend.
+// =============================================================================
+
+OdinResult OdinCommand::Upload(OdinFileType type,
+                               const std::string& local_path,
+                               CommandProgressCallback cb) {
+  if (!http_file_) return OdinResult::kNotInitialized;
+  return http_file_->Upload(type, local_path, std::move(cb));
+}
+
+OdinResult OdinCommand::Download(OdinFileType type,
+                                 const std::string& save_path,
+                                 CommandProgressCallback cb) {
+  if (!http_file_) return OdinResult::kNotInitialized;
+  return http_file_->Download(type, save_path, std::move(cb));
+}
+
+OdinResult OdinCommand::UploadFirmware(const std::string& firmware_path,
+                                       CommandProgressCallback cb,
+                                       int timeout_s) {
+  if (!http_file_) return OdinResult::kNotInitialized;
+  return http_file_->UploadFirmware(firmware_path, std::move(cb), timeout_s);
+}
+
+// =============================================================================
+// Algorithm downlink passthrough (host -> device, data_type=0x40).
+//
+// Spec source of truth: docs/protocol/PROTOCOL.md sections 1.3 (0x40
+// ChannelConfig subscription) and 2.4 (v2 data frame framing). The host is the
+// TCP server: it listens on an allocated port, subscribes the module to it via
+// ChannelConfig, and the module connects in asynchronously. SendAlgoData()
+// fragments the opaque payload into 32B-header v2 frames and writes them on the
+// accepted connection. Lifecycle is owned by Connect()/Disconnect().
+// =============================================================================
+
+namespace {
+// Per protocol §2.4: single-chunk payload <= 60000 bytes (< 64KB, leaving TCP/IP
+// header headroom); a reassembled logical message is conservatively <= 256KB.
+constexpr size_t kAlgoMaxChunkPayload = 60000;
+constexpr size_t kAlgoMaxMessageSize = 256 * 1024;
+}  // namespace
+
+std::vector<uint8_t> OdinCommand::BuildChannelConfigPayloadRaw(uint8_t data_type,
+                                                               OdinTransportMode transport,
+                                                               uint16_t dst_port) {
+  PayloadBuilder builder;
+  builder.WriteU8(data_type)
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe), uint8_t(1))
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kDstPort), dst_port)
+         .AddTlv(static_cast<uint8_t>(ChannelConfigTlvType::kTransportMode),
+                 static_cast<uint8_t>(transport))
+         .RequireTlv(static_cast<uint8_t>(ChannelConfigTlvType::kSubscribe));
+  return builder.Build();
+}
+
+void OdinCommand::StartAlgoDownlink() {
+  // Caller (Connect) holds mutex_. The command channel must already be up.
+  uint16_t port = AllocateDstPort();
+  if (port == 0) {
+    LOG_WARN("OdinCommand: algo downlink port allocation failed; 0x40 disabled\n");
+    return;
+  }
+
+  std::unique_ptr<TcpTransport> server(new TcpTransport());
+  // Server mode: bind+listen on host_ip:port. No remote target is set, so
+  // Open() falls through to OpenAsServer(); StartReceiving() spawns the accept
+  // loop that flips IsConnected() once the module connects in.
+  NetworkAddress local_addr(host_ip_, port);
+  if (!server->Open(local_addr) || !server->StartReceiving()) {
+    LOG_WARN("OdinCommand: algo downlink server open failed on port %u; "
+             "0x40 disabled\n", port);
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> algo_lock(algo_mutex_);
+    algo_downlink_ = std::move(server);
+    algo_downlink_port_ = port;
+    algo_frame_seq_ = 0;
+    algo_not_connected_warned_ = false;
+  }
+
+  // Subscribe the module to the downlink (ChannelConfig, data_type=0x40, TCP).
+  // Keep the server listening even if the device rejects/ignores it, so the
+  // module can still connect in later.
+  if (command_channel_) {
+    auto payload = BuildChannelConfigPayloadRaw(0x40, OdinTransportMode::kTcp, port);
+    OdinCommandSyncResponse response;
+    if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kChannelConfig),
+                                    payload, response, 1000)) {
+      LOG_WARN("OdinCommand: algo downlink 0x40 subscribe timed out "
+               "(firmware may not support it)\n");
+    } else if (response.response.payload.empty() || response.response.payload[0] != 0) {
+      LOG_WARN("OdinCommand: algo downlink 0x40 subscribe rejected "
+               "(firmware may not support it)\n");
+    } else {
+      LOG_INFO("OdinCommand: algo downlink 0x40 subscribed, port=%u\n", port);
+    }
+  }
+}
+
+void OdinCommand::StopAlgoDownlink() {
+  // Caller (Disconnect) holds mutex_.
+  std::unique_ptr<TcpTransport> to_close;
+  uint16_t port = 0;
+  {
+    std::lock_guard<std::mutex> algo_lock(algo_mutex_);
+    to_close = std::move(algo_downlink_);
+    port = algo_downlink_port_;
+    algo_downlink_port_ = 0;
+    algo_not_connected_warned_ = false;
+  }
+  // Close outside algo_mutex_: TcpTransport::Close() joins its accept/receive
+  // threads, which must not contend with a concurrent SendAlgoData().
+  if (to_close) to_close->Close();
+  if (port != 0) {
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+  }
+}
+
+OdinResult OdinCommand::SendAlgoData(const uint8_t* data, size_t len) {
+  if (data == nullptr || len == 0) {
+    return OdinResult::kInvalidArgument;
+  }
+  if (len > kAlgoMaxMessageSize) {
+    LOG_ERROR("OdinCommand::SendAlgoData: message too large (%zu > %zu)\n",
+              len, kAlgoMaxMessageSize);
+    return OdinResult::kInvalidArgument;
+  }
+
+  std::lock_guard<std::mutex> algo_lock(algo_mutex_);
+  if (!algo_downlink_) {
+    return OdinResult::kNotInitialized;
+  }
+  if (!algo_downlink_->IsConnected()) {
+    if (!algo_not_connected_warned_) {
+      LOG_WARN("OdinCommand::SendAlgoData: module not connected to the 0x40 "
+               "downlink server yet; data dropped until it connects\n");
+      algo_not_connected_warned_ = true;
+    }
+    return OdinResult::kNotInitialized;
+  }
+  algo_not_connected_warned_ = false;
+
+  // Write the full buffer over a possibly-partial TCP send().
+  auto send_all = [this](const uint8_t* p, size_t n) -> bool {
+    size_t off = 0;
+    while (off < n) {
+      int sent = algo_downlink_->Send(p + off, n - off);
+      if (sent <= 0) return false;
+      off += static_cast<size_t>(sent);
+    }
+    return true;
+  };
+
+  const uint32_t frame_seq = algo_frame_seq_++;
+  const uint16_t chunk_count =
+      static_cast<uint16_t>((len + kAlgoMaxChunkPayload - 1) / kAlgoMaxChunkPayload);
+  const uint64_t timestamp_ns = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+
+  size_t offset = 0;
+  for (uint16_t i = 0; i < chunk_count; ++i) {
+    const size_t chunk_len = (len - offset < kAlgoMaxChunkPayload)
+                                 ? (len - offset)
+                                 : kAlgoMaxChunkPayload;
+
+    OdinDataFrameHeader header{};
+    header.sof = OdinConst::kDataSof;
+    header.version = OdinConst::kDataVersion;
+    header.data_type = 0x40;
+    header.flags = (i + 1 == chunk_count) ? 0x01 : 0x00;
+    header.frame_seq = frame_seq;
+    header.chunk_index = i;
+    header.chunk_count = chunk_count;
+    header.element_count = static_cast<uint16_t>(chunk_len);
+    header.payload_len = static_cast<uint16_t>(chunk_len);
+    header.timestamp = timestamp_ns;
+    header.interval_ns = 0;
+    header.crc32 = 0;
+
+    if (!send_all(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) ||
+        !send_all(data + offset, chunk_len)) {
+      LOG_ERROR("OdinCommand::SendAlgoData: write failed at chunk %u/%u\n",
+                i, chunk_count);
+      return OdinResult::kSocketError;
+    }
+    offset += chunk_len;
+  }
+  return OdinResult::kOk;
+}
+
+// =============================================================================
+// Calibration file fetch (synchronous, data_type=0x41).
+//
+// Spec: docs/protocol/PROTOCOL.md section 1.3 (0x41).
+// One-shot blocking call: allocates a TCP port, starts a server, subscribes
+// the module via ChannelConfig, waits for the complete file (multi-chunk
+// reassembly handled by HandleCalibData), then unsubscribes and tears down.
+// =============================================================================
+
+OdinResult OdinCommand::FetchCalibrationFile(const std::string& save_path,
+                                             CommandProgressCallback cb,
+                                             uint32_t timeout_ms) {
+  // Ensure only one background fetch runs at a time.
+  {
+    std::lock_guard<std::mutex> lock(calib_mutex_);
+    if (calib_thread_.joinable()) {
+      if (calib_thread_done_.load()) {
+        calib_thread_.join();
+      } else {
+        LOG_WARN("OdinCommand::FetchCalibrationFile: previous fetch still running\n");
+        return OdinResult::kInvalidArgument;
+      }
+    }
+    calib_thread_done_.store(false);
+    calib_thread_cancel_.store(false);
+    calib_progress_cb_ = cb;
+  }
+
+  calib_thread_ = std::thread([this, save_path, cb, timeout_ms]() {
+    FetchCalibrationFileThread(save_path, cb, timeout_ms);
+    calib_thread_done_.store(true);
+    calib_cv_.notify_all();
+  });
+  return OdinResult::kOk;
+}
+
+void OdinCommand::FetchCalibrationFileThread(const std::string& save_path,
+                                             CommandProgressCallback cb,
+                                             uint32_t timeout_ms) {
+  auto Finalize = [&cb](bool success) {
+    if (cb) cb(success ? 100.0f : -1.0f);
+  };
+
+  // Step 1: Allocate port and start TCP server.
+  uint16_t port = AllocateDstPort();
+  if (port == 0) {
+    LOG_WARN("OdinCommand::FetchCalibrationFileThread: port allocation failed\n");
+    Finalize(false);
+    return;
+  }
+
+  std::unique_ptr<TcpTransport> server(new TcpTransport());
+  NetworkAddress local_addr(host_ip_, port);
+  if (!server->Open(local_addr) || !server->StartReceiving()) {
+    LOG_WARN("OdinCommand::FetchCalibrationFileThread: server open failed on port %u\n", port);
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+    Finalize(false);
+    return;
+  }
+
+  // Register receive callback for chunk reassembly.
+  server->SetReceiveCallback(
+      [this](const uint8_t* data, size_t length, const ITransportAddress&) {
+        HandleCalibData(data, length);
+      });
+
+  {
+    std::lock_guard<std::mutex> lock(calib_mutex_);
+    calib_server_ = std::move(server);
+    calib_server_port_ = port;
+    calib_reassembly_buf_.clear();
+    calib_expected_chunks_ = 0;
+    calib_received_chunks_ = 0;
+    calib_frame_seq_ = 0;
+    calib_file_received_ = false;
+  }
+
+  // Step 2: Subscribe the module to 0x41 (TCP).
+  {
+    auto payload = BuildChannelConfigPayloadRaw(0x41, OdinTransportMode::kTcp, port);
+    OdinCommandSyncResponse response;
+    std::lock_guard<std::mutex> cmd_lock(mutex_);
+    if (!command_channel_) {
+      LOG_WARN("OdinCommand::FetchCalibrationFileThread: not connected\n");
+      CleanupCalibServer();
+      Finalize(false);
+      return;
+    }
+    if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kChannelConfig),
+                                    payload, response, 1000)) {
+      LOG_WARN("OdinCommand::FetchCalibrationFileThread: subscribe timed out\n");
+      CleanupCalibServer();
+      Finalize(false);
+      return;
+    }
+    if (response.response.payload.empty() || response.response.payload[0] != 0) {
+      LOG_WARN("OdinCommand::FetchCalibrationFileThread: subscribe rejected (ret=%u)\n",
+               response.response.payload.empty() ? 255 : response.response.payload[0]);
+      CleanupCalibServer();
+      Finalize(false);
+      return;
+    }
+  }
+
+  // Step 3: Block until complete file arrives, timeout, or cancellation.
+  {
+    std::unique_lock<std::mutex> lock(calib_mutex_);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    constexpr uint32_t kCancelPollMs = 100;
+
+    while (!calib_file_received_) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        LOG_WARN("OdinCommand::FetchCalibrationFileThread: timeout after %u ms\n", timeout_ms);
+        lock.unlock();
+        UnsubscribeCalibChannel();
+        CleanupCalibServer();
+        Finalize(false);
+        return;
+      }
+
+      if (calib_thread_cancel_.load()) {
+        LOG_WARN("OdinCommand::FetchCalibrationFileThread: cancelled\n");
+        lock.unlock();
+        UnsubscribeCalibChannel();
+        CleanupCalibServer();
+        Finalize(false);
+        return;
+      }
+
+      auto next_deadline = now + std::chrono::milliseconds(kCancelPollMs);
+      if (next_deadline > deadline) next_deadline = deadline;
+      calib_cv_.wait_until(lock, next_deadline,
+                           [this] { return calib_file_received_; });
+    }
+  }
+
+  // Step 4: Save assembled payload to file and tear down.
+  {
+    std::vector<uint8_t> buf_copy;
+    {
+      std::lock_guard<std::mutex> lock(calib_mutex_);
+      buf_copy = calib_reassembly_buf_;  // copy under lock, release before file I/O
+    }
+    std::ofstream file(save_path, std::ios::binary);
+    if (!file.is_open()) {
+      LOG_WARN("OdinCommand::FetchCalibrationFileThread: failed to open %s\n", save_path.c_str());
+      UnsubscribeCalibChannel();
+      CleanupCalibServer();
+      Finalize(false);
+      return;
+    }
+    file.write(reinterpret_cast<const char*>(buf_copy.data()), buf_copy.size());
+    file.close();
+    LOG_DEBUG("OdinCommand::FetchCalibrationFileThread: saved %zu bytes to %s\n",
+             buf_copy.size(), save_path.c_str());
+  }
+
+  UnsubscribeCalibChannel();
+  CleanupCalibServer();
+  Finalize(true);
+}
+
+void OdinCommand::StopCalibThread() {
+  calib_thread_cancel_.store(true);
+  calib_cv_.notify_all();
+  if (calib_thread_.joinable()) {
+    calib_thread_.join();
+  }
+}
+
+void OdinCommand::UnsubscribeCalibChannel() {
+  auto payload = BuildChannelConfigPayloadRaw(0x41, OdinTransportMode::kTcp, 0);
+  OdinCommandSyncResponse response;
+  std::lock_guard<std::mutex> cmd_lock(mutex_);
+  if (command_channel_) {
+    command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kChannelConfig),
+                               payload, response, 1000);
+  }
+}
+
+void OdinCommand::CleanupCalibServer() {
+  std::unique_ptr<TcpTransport> to_close;
+  uint16_t port = 0;
+  {
+    std::lock_guard<std::mutex> lock(calib_mutex_);
+    to_close = std::move(calib_server_);
+    port = calib_server_port_;
+    calib_server_port_ = 0;
+    calib_reassembly_buf_.clear();
+    calib_expected_chunks_ = 0;
+    calib_received_chunks_ = 0;
+    calib_progress_cb_ = nullptr;  // release callback reference
+  }
+  if (to_close) to_close->Close();
+  if (port != 0) {
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+  }
+}
+
+namespace {
+// v2 data frame header size (32 bytes, per protocol §2.1)
+constexpr size_t kV2HeaderSize = sizeof(OdinDataFrameHeader);
+}  // namespace
+
+void OdinCommand::HandleCalibData(const uint8_t* data, size_t length) {
+  // TCP stream may deliver partial frames; buffer and parse incrementally.
+  // For simplicity, we accumulate and process complete v2 frames.
+  std::lock_guard<std::mutex> calib_lock(calib_mutex_);
+  // Append incoming bytes to a temporary stream buffer.
+  // We reuse calib_reassembly_buf_ for partial chunk accumulation, so we
+  // maintain a local static-ish stream buffer via a simple approach:
+  // parse header, wait for full payload, process frame.
+  //
+  // Because TcpTransport delivers data from a single TCP connection in order,
+  // and the module sends frames back-to-back, we can use a straightforward
+  // state machine. For robustness we handle partial reads.
+
+  // Static buffer is not thread-safe but HandleCalibData is only called from
+  // the single TcpTransport receive thread, so it is safe.
+  static thread_local std::vector<uint8_t> stream_buf;
+  stream_buf.insert(stream_buf.end(), data, data + length);
+
+  while (stream_buf.size() >= kV2HeaderSize) {
+    const OdinDataFrameHeader* hdr =
+        reinterpret_cast<const OdinDataFrameHeader*>(stream_buf.data());
+
+    // Same policy as PeekDataFrameHeader: a version beyond the SDK's
+    // forward-compat ceiling cannot be framed (refuse, never guess the
+    // layout); versions within the ceiling and >= kDataVersion are
+    // accepted (forward compatible).
+    if (hdr->sof != OdinConst::kDataSof ||
+        !OdinConst::IsSupportedDataFrameVersion(hdr->version)) {
+      LOG_WARN("OdinCommand::HandleCalibData: bad header (sof=0x%02X ver=0x%02X), dropping %zu bytes\n",
+               hdr->sof, hdr->version, stream_buf.size());
+      stream_buf.clear();
+      return;
+    }
+
+    size_t frame_size = kV2HeaderSize + hdr->payload_len;
+    if (stream_buf.size() < frame_size) {
+      break;  // Wait for more data
+    }
+
+    // Extract payload
+    const uint8_t* payload = stream_buf.data() + kV2HeaderSize;
+    uint16_t payload_len = hdr->payload_len;
+    bool last_chunk = (hdr->flags & 0x01) != 0;
+
+    // Reassembly logic
+    if (hdr->chunk_count == 1 && last_chunk) {
+      if (calib_received_chunks_ > 0 &&
+          calib_received_chunks_ < calib_expected_chunks_) {
+        LOG_WARN("OdinCommand::HandleCalibData: discarding incomplete frame "
+                 "seq=%u (%u/%u chunks) on new single-chunk frame\n",
+                 calib_frame_seq_, calib_received_chunks_,
+                 calib_expected_chunks_);
+      }
+      // Single-chunk frame: store payload and signal.
+      calib_reassembly_buf_.assign(payload, payload + payload_len);
+      calib_expected_chunks_ = 0;
+      calib_received_chunks_ = 0;
+      calib_file_received_ = true;
+      calib_cv_.notify_one();
+    } else {
+      // Multi-chunk reassembly
+      if (hdr->chunk_index == 0) {
+        if (calib_received_chunks_ > 0 &&
+            calib_received_chunks_ < calib_expected_chunks_) {
+          LOG_WARN("OdinCommand::HandleCalibData: discarding incomplete frame "
+                   "seq=%u (%u/%u chunks) on new frame seq=%u\n",
+                   calib_frame_seq_, calib_received_chunks_,
+                   calib_expected_chunks_, hdr->frame_seq);
+        }
+        // New frame: reset reassembly state
+        calib_reassembly_buf_.clear();
+        calib_expected_chunks_ = hdr->chunk_count;
+        calib_received_chunks_ = 0;
+        calib_frame_seq_ = hdr->frame_seq;
+      } else if (hdr->frame_seq != calib_frame_seq_ ||
+                 hdr->chunk_index != calib_received_chunks_) {
+        // TCP delivers in order, so an unexpected chunk index means a
+        // firmware-side gap or a mid-stream frame start -- the append below
+        // would silently corrupt the reassembled file, so make it visible.
+        LOG_WARN("OdinCommand::HandleCalibData: unexpected chunk seq=%u "
+                 "idx=%u (expected seq=%u idx=%u); reassembly may be corrupt\n",
+                 hdr->frame_seq, hdr->chunk_index, calib_frame_seq_,
+                 calib_received_chunks_);
+      }
+      // Append chunk payload
+      calib_reassembly_buf_.insert(calib_reassembly_buf_.end(),
+                                   payload, payload + payload_len);
+      calib_received_chunks_++;
+
+      // Report incremental progress once per complete chunk (0x41 multi-chunk path).
+      // stream_buf guarantees the full frame (header + payload) is present before
+      // this point, so progress is not counted on partial TCP deliveries.
+      if (calib_progress_cb_ && calib_expected_chunks_ > 0) {
+        float p = static_cast<float>(calib_received_chunks_) /
+                  static_cast<float>(calib_expected_chunks_) * 99.0f;
+        calib_progress_cb_(p);  // called under calib_mutex_; safe (no re-entrant lock)
+      }
+
+      if (last_chunk && calib_received_chunks_ == calib_expected_chunks_) {
+        // Complete frame assembled — signal FetchCalibrationFile.
+        calib_file_received_ = true;
+        calib_cv_.notify_one();
+        calib_expected_chunks_ = 0;
+        calib_received_chunks_ = 0;
+      }
+    }
+
+    // Remove processed frame from stream buffer
+    stream_buf.erase(stream_buf.begin(), stream_buf.begin() + frame_size);
+  }
+}
+
+// =============================================================================
+// Telemetry uplink (device -> host, data_type=0x42).
+//
+// Spec: docs/protocol/PROTOCOL.md section 1.3. Host opens a TCP server,
+// subscribes the module via ChannelConfig (data_type=0x42, TCP), the module
+// connects in and pushes JSON frames at ~1 Hz. Each frame is self-contained
+// (no chunk reassembly needed for single-chunk frames).
+// =============================================================================
+
+void OdinCommand::StartTelemetry() {
+  // Caller (Connect) holds mutex_.
+  uint16_t port = AllocateDstPort();
+  if (port == 0) {
+    LOG_WARN("OdinCommand: telemetry server port allocation failed; 0x42 disabled\n");
+    return;
+  }
+
+  std::unique_ptr<TcpTransport> server(new TcpTransport());
+  NetworkAddress local_addr(host_ip_, port);
+  if (!server->Open(local_addr) || !server->StartReceiving()) {
+    LOG_WARN("OdinCommand: telemetry server open failed on port %u; 0x42 disabled\n", port);
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+    return;
+  }
+
+  // Register TCP receive callback. Each v2 frame is self-contained.
+  server->SetReceiveCallback(
+      [this](const uint8_t* data, size_t length, const ITransportAddress&) {
+        HandleTelemetryData(data, length);
+      });
+
+  {
+    std::lock_guard<std::mutex> telem_lock(telemetry_mutex_);
+    telemetry_server_ = std::move(server);
+    telemetry_server_port_ = port;
+  }
+
+  // Subscribe the module to the telemetry uplink.
+  if (command_channel_) {
+    auto payload = BuildChannelConfigPayloadRaw(0x42, OdinTransportMode::kTcp, port);
+    // Log outgoing subscribe request payload.
+    {
+      std::string hex;
+      for (size_t i = 0; i < payload.size(); ++i) {
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%02X ", payload[i]);
+        hex += buf;
+      }
+    }
+    OdinCommandSyncResponse response;
+    if (!command_channel_->SendSync(static_cast<uint16_t>(Odin2CmdId::kChannelConfig),
+                                    payload, response, 1000)) {
+      LOG_WARN("OdinCommand: telemetry 0x42 subscribe timed out (firmware may not support it)\n");
+    } else {
+      // Log the raw response for diagnostics.
+      std::string hex;
+      for (size_t i = 0; i < response.response.payload.size(); ++i) {
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%02X ", response.response.payload[i]);
+        hex += buf;
+      }
+
+      if (response.response.payload.empty() || response.response.payload[0] != 0) {
+        LOG_WARN("OdinCommand: telemetry 0x42 subscribe rejected (firmware may not support it)\n");
+      } else {
+        LOG_DEBUG("OdinCommand: telemetry 0x42 subscribed, port=%u\n", port);
+      }
+    }
+  }
+}
+
+void OdinCommand::StopTelemetryServer() {
+  // Caller (Disconnect) holds mutex_.
+  std::unique_ptr<TcpTransport> to_close;
+  uint16_t port = 0;
+  {
+    std::lock_guard<std::mutex> telem_lock(telemetry_mutex_);
+    to_close = std::move(telemetry_server_);
+    port = telemetry_server_port_;
+    telemetry_server_port_ = 0;
+  }
+  if (to_close) to_close->Close();
+  if (port != 0) {
+    std::lock_guard<std::mutex> port_lock(port_mutex_);
+    used_ports_.erase(port);
+  }
+}
+
+void OdinCommand::RegisterTelemetryCallback(OdinTelemetryCallback cb, void* user_data) {
+  std::lock_guard<std::mutex> telem_lock(telemetry_mutex_);
+  telemetry_cb_ = cb;
+  telemetry_user_data_ = user_data;
+}
+
+void OdinCommand::HandleTelemetryData(const uint8_t* data, size_t length) {
+  // TCP stream parser: buffer and extract complete v2 frames.
+  // Called from the single TcpTransport receive thread.
+  static thread_local std::vector<uint8_t> stream_buf;
+  stream_buf.insert(stream_buf.end(), data, data + length);
+
+  while (stream_buf.size() >= kV2HeaderSize) {
+    const OdinDataFrameHeader* hdr =
+        reinterpret_cast<const OdinDataFrameHeader*>(stream_buf.data());
+
+    // Same policy as PeekDataFrameHeader: a version beyond the SDK's
+    // forward-compat ceiling cannot be framed (refuse, never guess the
+    // layout); versions within the ceiling and >= kDataVersion are
+    // accepted (forward compatible).
+    if (hdr->sof != OdinConst::kDataSof ||
+        !OdinConst::IsSupportedDataFrameVersion(hdr->version)) {
+      LOG_WARN("OdinCommand::HandleTelemetryData: bad header (sof=0x%02X ver=0x%02X), dropping %zu bytes\n",
+               hdr->sof, hdr->version, stream_buf.size());
+      stream_buf.clear();
+      return;
+    }
+
+    size_t frame_size = kV2HeaderSize + hdr->payload_len;
+    if (stream_buf.size() < frame_size) {
+      break;  // Wait for more data
+    }
+
+    // Extract payload and deliver
+    const uint8_t* payload = stream_buf.data() + kV2HeaderSize;
+    uint16_t payload_len = hdr->payload_len;
+
+    // Parse JSON into structured OdinTelemetryData.
+    // The device sends a null-terminated JSON string; ensure null-termination
+    // for cJSON even if the TCP stream delivers it without the trailing '\0'.
+    std::string json_str(reinterpret_cast<const char*>(payload), payload_len);
+    OdinTelemetryData telem;
+    cJSON* root = cJSON_Parse(json_str.c_str());
+    if (root) {
+      cJSON* item;
+      // Top-level
+      if ((item = cJSON_GetObjectItem(root, "uptime_sec")) && cJSON_IsNumber(item))
+        telem.uptime_s = static_cast<uint32_t>(item->valueint);
+
+      // Nested: "cpu"."total"
+      cJSON* cpu = cJSON_GetObjectItem(root, "cpu");
+      if (cpu) {
+        if ((item = cJSON_GetObjectItem(cpu, "total")) && cJSON_IsNumber(item))
+          telem.cpu_pct = static_cast<uint32_t>(item->valueint);
+      }
+
+      // Nested: "memory"
+      cJSON* mem = cJSON_GetObjectItem(root, "memory");
+      if (mem) {
+        if ((item = cJSON_GetObjectItem(mem, "used_kb"))  && cJSON_IsNumber(item))
+          telem.mem_used_kb = static_cast<uint32_t>(item->valueint);
+        if ((item = cJSON_GetObjectItem(mem, "total_kb")) && cJSON_IsNumber(item))
+          telem.mem_total_kb = static_cast<uint32_t>(item->valueint);
+        if ((item = cJSON_GetObjectItem(mem, "use_rate")) && cJSON_IsNumber(item))
+          telem.mem_use_rate = static_cast<uint32_t>(item->valueint);
+      }
+
+      // Nested: "load_avg"
+      cJSON* load = cJSON_GetObjectItem(root, "load_avg");
+      if (load) {
+        if ((item = cJSON_GetObjectItem(load, "1min"))  && cJSON_IsNumber(item))
+          telem.load_1 = static_cast<float>(item->valuedouble);
+        if ((item = cJSON_GetObjectItem(load, "5min"))  && cJSON_IsNumber(item))
+          telem.load_5 = static_cast<float>(item->valuedouble);
+        if ((item = cJSON_GetObjectItem(load, "15min")) && cJSON_IsNumber(item))
+          telem.load_15 = static_cast<float>(item->valuedouble);
+      }
+
+      cJSON_Delete(root);
+    } else {
+      LOG_WARN("OdinCommand::HandleTelemetryData: JSON parse failed (%u bytes)\n", payload_len);
+    }
+
+    std::lock_guard<std::mutex> telem_lock(telemetry_mutex_);
+    OdinTelemetryCallback cb = telemetry_cb_;
+    void* ud = telemetry_user_data_;
+    if (cb) {
+      OdinTelemetryPacket pkt;
+      pkt.frame_count = hdr->frame_seq;
+      pkt.timestamp = hdr->timestamp;
+      pkt.data = telem;
+      cb(pkt, ud);
+    }
+
+    stream_buf.erase(stream_buf.begin(), stream_buf.begin() + frame_size);
+  }
 }
 
 bool OdinCommand::SendHeartbeat(uint32_t interval_ms, uint32_t timeout_ms) {

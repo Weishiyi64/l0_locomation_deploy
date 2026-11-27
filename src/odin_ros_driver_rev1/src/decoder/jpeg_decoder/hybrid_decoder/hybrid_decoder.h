@@ -25,6 +25,7 @@ class HybridDecoder : public JpegDecoder {
   bool useHardware_ = false;
   int hwFailCount_ = 0;
   int invalidJpegCount_ = 0;
+  bool swFallbackWarned_ = false;
 };
 
 }  // namespace odin_decoder

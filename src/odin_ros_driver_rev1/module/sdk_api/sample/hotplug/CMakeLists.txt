@@ -14,7 +14,7 @@ add_executable(odin_hotplug main.cpp)
 target_include_directories(odin_hotplug
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/logger
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../include/logger
         ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/hotplugListener/IHotplugListener
         ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty)
@@ -27,11 +27,13 @@ target_link_libraries(odin_hotplug
 
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type")
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(MSVC)
+    # Defaults per config are fine (/Od /Zi, /O2 /DNDEBUG).
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(odin_hotplug PRIVATE
         -g -O0 -funwind-tables -rdynamic -fno-inline -fno-omit-frame-pointer)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_options(odin_hotplug PRIVATE -O2 -DNDEBUG)
 endif()
 
-install(TARGETS odin_hotplug RUNTIME DESTINATION odin_hotplug/)
+install(TARGETS odin_hotplug RUNTIME DESTINATION bin/)

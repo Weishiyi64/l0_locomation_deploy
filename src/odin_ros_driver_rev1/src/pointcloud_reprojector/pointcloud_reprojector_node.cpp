@@ -8,14 +8,15 @@
  * Features:
  * - Auto-discovery via device_online topic
  * - Auto-fetch calibration via get_calibration service
- * - Raw mode: cloud/raw + camera0/raw -> depth/overlay
- * - Slam mode: cloud/slam + camera0/raw + odometry -> depth/overlay (interface ready)
+ * - Raw mode:  cloud/raw + camera0/undistort -> reprojection/overlay
+ * - Slam mode: cloud/slam + camera0/undistort + odometry_hf -> reprojection/overlay (interface ready)
  * 
  * Usage:
  *   ros2 run odin_ros_driver_rev1 pointcloud_reprojector_node
  *   ros2 run odin_ros_driver_rev1 pointcloud_reprojector_node --ros-args -p mode:=slam
  */
 
+#include "odin_app_version.hpp"
 #include "pointcloud_reprojector.hpp"
 #include "yaml_config_loader.hpp"
 
@@ -25,12 +26,6 @@
 #include <atomic>
 #include <sstream>
 #include <iostream>
-
-#if defined(ODIN_ROS2)
-#include <ament_index_cpp/get_package_share_directory.hpp>
-#else
-#include <ros/package.h>
-#endif
 
 // cv_bridge header compatibility
 #if __has_include(<cv_bridge/cv_bridge.hpp>)
@@ -96,7 +91,7 @@ static int ParseJsonIntField(const std::string& json, const std::string& key) {
   return std::atoi(json.c_str() + start);
 }
 
-// Parse device info JSON: {"sn":"xxx","prefix":"manifold/odin/xxx/","ip":"192.168.1.251"}
+// Parse device info JSON: {"sn":"xxx","model":"Odin2Special","prefix":"/manifold/device0/","ip":"192.168.1.251"}
 static bool ParseDeviceInfoJson(const std::string& json, std::string& prefix_out,
                                  std::string& sn_out) {
   ParseJsonStringField(json, "sn", sn_out);
@@ -172,7 +167,7 @@ class PointCloudReprojectorNode {
   }
 
   // Helper to build driver topic name: "/{prefix}/driver/{suffix}" or "/driver/{suffix}" if prefix is empty
-  // Unified with device topic format: /{prefix}/{model}/device{N}/...
+  // Unified with device topic format: /{prefix}/device{N}/...
   std::string buildDriverTopicName(const std::string &suffix) const {
     if (topic_prefix_base_.empty()) {
       return "/driver/" + suffix;
@@ -475,7 +470,7 @@ class PointCloudReprojectorNode {
     // Sync mode for SLAM: synchronize cloud, RGB, and odom
     std::string cloud_topic = topic_prefix_ + "cloud/slam";
     std::string image_topic = topic_prefix_ + "camera0/undistort";
-    std::string odom_topic = topic_prefix_ + "odometry";
+    std::string odom_topic = topic_prefix_ + "odometry_lf";
 
     RCLCPP_INFO(node_->get_logger(), "Slam mode (sync): subscribing to %s, %s, %s",
                 cloud_topic.c_str(), image_topic.c_str(), odom_topic.c_str());
@@ -596,7 +591,7 @@ class PointCloudReprojectorNode {
   void setupSlamModeSyncROS1() {
     std::string cloud_topic = topic_prefix_ + "cloud/slam";
     std::string image_topic = topic_prefix_ + "camera0/undistort";
-    std::string odom_topic = topic_prefix_ + "odometry";
+    std::string odom_topic = topic_prefix_ + "odometry_lf";
 
     ROS_INFO("Slam mode: subscribing to %s, %s, %s", 
              cloud_topic.c_str(), image_topic.c_str(), odom_topic.c_str());
@@ -749,71 +744,19 @@ class PointCloudReprojectorNode {
 
 }  // namespace odin
 
-// Helper: locate package share directory. Used to load installed config/control_command.yaml.
-// ROS2: use ament_index_cpp package share directory.
-// ROS1: use ros::package::getPath.
-static std::string getPackageSourceDirectory() {
-#if defined(ODIN_ROS2)
-  try {
-    return ament_index_cpp::get_package_share_directory(ODIN_ROS_PACKAGE_NAME);
-  } catch (const std::exception& e) {
-    return "";
-  }
-#else
-  return ros::package::getPath(ODIN_ROS_PACKAGE_NAME);
-#endif
-}
-
-// Load reprojection options from config/control_command.yaml.
-// Returns true if reprojection should be enabled; sets mode_out to "raw" or "slam".
-static bool loadReprojectionConfig(std::string& mode_out) {
-  mode_out = "raw";
-  std::string pkg_path = getPackageSourceDirectory();
-  if (pkg_path.empty()) {
-    std::cout << "[reprojector] package dir not found, using defaults (enable=1, mode=raw)"
-              << std::endl;
-    return true;
-  }
-  std::string config_file = pkg_path + "/config/control_command.yaml";
-  try {
-    YAML::Node config = YAML::LoadFile(config_file);
-    if (!config["register_keys"]) {
-      std::cout << "[reprojector] register_keys missing, using defaults" << std::endl;
-      return true;
-    }
-    YAML::Node keys = config["register_keys"];
-    int enable = keys["enable_reprojection"] ? keys["enable_reprojection"].as<int>() : 1;
-    if (keys["reprojection_mode"]) {
-      mode_out = keys["reprojection_mode"].as<std::string>();
-    }
-    std::cout << "[reprojector] enable_reprojection=" << enable
-              << ", reprojection_mode=" << mode_out << std::endl;
-    return enable != 0;
-  } catch (const std::exception& e) {
-    std::cerr << "[reprojector] Failed to load " << config_file << ": " << e.what()
-              << ", using defaults" << std::endl;
-    return true;
-  }
-}
-
 #if defined(ODIN_ROS2)
 int main(int argc, char** argv) {
+  odin::print_app_version("pointcloud_reprojector_node");
   rclcpp::init(argc, argv);
 
-  // Load reprojection config from yaml
-  std::string yaml_mode;
-  bool enable = loadReprojectionConfig(yaml_mode);
+  auto node = std::make_shared<rclcpp::Node>("pointcloud_reprojector_node");
+  bool enable = node->declare_parameter<bool>("enable_reprojection", false);
   if (!enable) {
-    std::cout << "[reprojector] reprojection disabled by config, exiting" << std::endl;
+    std::cout << "[reprojector] disabled by param, exiting" << std::endl;
     rclcpp::shutdown();
     return 0;
   }
 
-  // Pass yaml_mode as parameter override so it is applied before declare_parameter
-  // inside the node's constructor (default value will be ignored in favor of override).
-  rclcpp::NodeOptions options;
-  options.parameter_overrides({rclcpp::Parameter("mode", yaml_mode)});
-  auto node = std::make_shared<rclcpp::Node>("pointcloud_reprojector_node", options);
   odin::PointCloudReprojectorNode reprojector_node(node);
   rclcpp::spin(node);
   rclcpp::shutdown();
@@ -821,22 +764,18 @@ int main(int argc, char** argv) {
 }
 #else
 int main(int argc, char** argv) {
+  odin::print_app_version("pointcloud_reprojector_node");
   ros::init(argc, argv, "pointcloud_reprojector_node");
-
-  // Load reprojection config from yaml
-  std::string yaml_mode;
-  bool enable = loadReprojectionConfig(yaml_mode);
-  if (!enable) {
-    ROS_INFO("[reprojector] reprojection disabled by config, exiting");
-    return 0;
-  }
 
   ros::NodeHandle nh;
   ros::NodeHandle pnh("~");
-  // Inject yaml mode as private parameter default; can still be overridden via cmd-line
-  if (!pnh.hasParam("mode")) {
-    pnh.setParam("mode", yaml_mode);
+  bool enable = false;
+  pnh.param("enable_reprojection", enable, false);
+  if (!enable) {
+    ROS_INFO("[reprojector] disabled by param, exiting");
+    return 0;
   }
+
   odin::PointCloudReprojectorNode reprojector_node(nh, pnh);
   ros::spin();
   return 0;

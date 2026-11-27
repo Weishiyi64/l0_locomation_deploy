@@ -24,21 +24,24 @@
 #include "sim_interface/physics_loop.h"
 #include "sim_interface/plugin_loader.h"
 #include "simulate.h"
+#include "AppVersion.h"
 // #include <ros/ros.h>
 
 // Global variable definitions
 mjModel* m = nullptr;
 mjData* d = nullptr;
 
+std::vector<SimJointAddress> simJointAddresses;
 std::vector<SimJointCommand> recvCmd;
 std::vector<bool> motorEnabled;
+std::vector<bool> motorCommandFault;
 std::unique_ptr<system_command_arbiter::MotorMapping> motorMapping;
-int64_t commandValidUntilNs = 0;
 int64_t commandReceivedSteadyNs = 0;
 int64_t watchdogNs = 100000000LL;
-uint64_t lastSequenceId = 0;
+uint32_t lastSequenceId = 0;
 bool commandReceived = false;
-uint64_t stateSequenceId = 0;
+bool commandWatchdogArmed = false;
+uint32_t stateSequenceId = 0;
 pthread_mutex_t recvMutex_;
 pthread_mutex_t sendMutex_;
 
@@ -86,6 +89,7 @@ const int kErrorLength = 1024;
 // 注意：这是 MuJoCo 内部使用的缓冲区，不影响仿真性能
 
 int main(int argc, char** argv) {
+  l0::printAppVersion("mujoco_simulate");
   // ros::init(argc, argv, "mujoco_simulate");
   rclcpp::init(argc, argv);
 

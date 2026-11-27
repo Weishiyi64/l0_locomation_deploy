@@ -22,6 +22,7 @@
 // header-only and free of PCL/Eigen/OpenCV/ROS so it can be lifted into the
 // device-side SDK as a pure C/C++ module without modification.
 
+#include "odin_app_version.hpp"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -77,13 +78,6 @@ using ImageMsg       = sensor_msgs::Image;
 using PointCloud2Msg = sensor_msgs::PointCloud2;
 #endif
 
-#if defined(ODIN_ROS2)
-#include <ament_index_cpp/get_package_share_directory.hpp>
-#else
-#include <ros/package.h>
-#endif
-#include <yaml-cpp/yaml.h>
-
 #include "depth_to_pointcloud_node.hpp"
 #include "yaml_config_loader.hpp"
 
@@ -116,11 +110,13 @@ static int ParseJsonIntField(const std::string& json, const std::string& key) {
 // ---------------------------------------------------------------------------
 struct DeviceInfo {
   std::string sn;
+  std::string model;   // device model name reported by firmware
   std::string prefix;  // already includes leading + trailing '/'
 };
 
 static bool ParseDeviceInfoJson(const std::string& json, DeviceInfo& info) {
   ParseJsonStringField(json, "sn", info.sn);
+  ParseJsonStringField(json, "model", info.model);
   ParseJsonStringField(json, "prefix", info.prefix);
   return !info.sn.empty() && !info.prefix.empty();
 }
@@ -672,7 +668,7 @@ class DepthToPointCloudNode {
       if (it != workers_.end()) return;
       workers_[info.sn] = nullptr;
     }
-    logInfo("New device online: sn=" + info.sn + " prefix=" + info.prefix);
+    logInfo("New device online: sn=" + info.sn + " model=" + info.model + " prefix=" + info.prefix);
 
     std::thread([this, info]() {
 #if defined(ODIN_ROS2)
@@ -687,7 +683,12 @@ class DepthToPointCloudNode {
     }).detach();
   }
 
-  void onDeviceOffline(const std::string& sn) {
+  void onDeviceOffline(const std::string& payload) {
+    // device_offline carries JSON {"sn":"...","model":"..."}; fall back to a
+    // plain SN string for compatibility with older driver versions.
+    std::string sn;
+    ParseJsonStringField(payload, "sn", sn);
+    if (sn.empty()) sn = payload;
     std::unique_ptr<DeviceWorker> dying;
     {
       std::lock_guard<std::mutex> lock(workers_mutex_);
@@ -749,70 +750,33 @@ class DepthToPointCloudNode {
 
 }  // namespace odin
 
-// Locate package share directory to load installed config/control_command.yaml.
-static std::string getPackageSourceDirectory() {
-#if defined(ODIN_ROS2)
-  try {
-    return ament_index_cpp::get_package_share_directory(ODIN_ROS_PACKAGE_NAME);
-  } catch (const std::exception& e) {
-    return "";
-  }
-#else
-  return ros::package::getPath(ODIN_ROS_PACKAGE_NAME);
-#endif
-}
-
-// Read enable_depth_to_pointcloud from config/control_command.yaml.
-// Returns true (enabled) by default when the config cannot be read.
-static bool loadDepthToPointCloudEnabled() {
-  std::string pkg_path = getPackageSourceDirectory();
-  if (pkg_path.empty()) {
-    std::cout << "[depth2cloud] package dir not found, using default (enable=1)" << std::endl;
-    return true;
-  }
-  std::string config_file = pkg_path + "/config/control_command.yaml";
-  try {
-    YAML::Node config = YAML::LoadFile(config_file);
-    if (!config["register_keys"]) {
-      std::cout << "[depth2cloud] register_keys missing, using default (enable=1)" << std::endl;
-      return true;
-    }
-    YAML::Node keys = config["register_keys"];
-    int enable = keys["enable_depth_to_pointcloud"]
-                     ? keys["enable_depth_to_pointcloud"].as<int>()
-                     : 1;
-    std::cout << "[depth2cloud] enable_depth_to_pointcloud=" << enable << std::endl;
-    return enable != 0;
-  } catch (const std::exception& e) {
-    std::cerr << "[depth2cloud] Failed to load " << config_file << ": " << e.what()
-              << ", using default (enable=1)" << std::endl;
-    return true;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
+  odin::print_app_version("depth_to_pointcloud_node");
 #if defined(ODIN_ROS2)
   rclcpp::init(argc, argv);
-  if (!loadDepthToPointCloudEnabled()) {
-    std::cout << "[depth2cloud] disabled by config, exiting" << std::endl;
+  auto node = std::make_shared<rclcpp::Node>("depth_to_pointcloud_node");
+  bool enable = node->declare_parameter<bool>("enable_depth_to_pointcloud", false);
+  if (!enable) {
+    std::cout << "[depth2cloud] disabled by param, exiting" << std::endl;
     rclcpp::shutdown();
     return 0;
   }
-  auto node = std::make_shared<rclcpp::Node>("depth_to_pointcloud_node");
   odin::DepthToPointCloudNode manager(node);
   rclcpp::spin(node);
   rclcpp::shutdown();
 #else
   ros::init(argc, argv, "depth_to_pointcloud_node");
-  if (!loadDepthToPointCloudEnabled()) {
-    ROS_INFO("[depth2cloud] disabled by config, exiting");
-    return 0;
-  }
   ros::NodeHandle nh;
   ros::NodeHandle pnh("~");
+  bool enable = false;
+  pnh.param("enable_depth_to_pointcloud", enable, false);
+  if (!enable) {
+    ROS_INFO("[depth2cloud] disabled by param, exiting");
+    return 0;
+  }
   odin::DepthToPointCloudNode manager(nh, pnh);
   ros::spin();
 #endif

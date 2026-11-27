@@ -1,0 +1,16 @@
+# Absolute percentage [0, 100]. -1 leaves volume unchanged. With relative=true,
+# a positive value maps to amixer's N%+ form and a negative value maps to N%-.
+int32 volume -1
+bool relative false
+# Set set_mute=true to change mute state; otherwise mute state is unchanged.
+bool set_mute false
+bool mute false
+---
+# False also covers persistence failure; the volume may already have changed.
+bool success
+# Actual percentage reported by amixer; -1 if unavailable.
+int32 volume
+bool muted
+bool mute_known
+bool saved
+string message

@@ -10,17 +10,14 @@
 #include <set>
 #include <thread>
 
-#include <Eigen/Core>
-#include <Eigen/Geometry>
-
-#include "odin2.h"
 #include "ITransport.hpp"
 #include "OdinProtocol.hpp"
 #include "logger.h"
 #include "network_utils.h"
 
 #ifdef _WIN32
-#include <sys/select.h>
+// select()/fd_set come in via winsock2.h, pulled in by network_utils.h
+// on Windows; no extra include needed.
 #else
 #include <sys/select.h>
 #endif
@@ -57,20 +54,20 @@ void OdinSdkImpl::RegisterSlamCallback(OdinDeviceHandle handle, OdinSlamCallback
   if (device) device->RegisterSlamCallback(cb, user_data);
 }
 
-void OdinSdkImpl::RegisterImageCallback(OdinDeviceHandle handle, OdinImageCallback cb,
+void OdinSdkImpl::RegisterCameraCallback(OdinDeviceHandle handle, OdinCameraCallback cb,
                                         void *user_data) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   OdinDeviceHandle resolved = ResolveHandleLocked(handle);
   IDevice *device = GetDeviceLocked(resolved);
-  if (device) device->RegisterImageCallback(cb, user_data);
+  if (device) device->RegisterCameraCallback(cb, user_data);
 }
 
-void OdinSdkImpl::RegisterImageCallback2(OdinDeviceHandle handle, OdinImageCallback2 cb,
+void OdinSdkImpl::RegisterCameraCallback2(OdinDeviceHandle handle, OdinCameraCallback cb,
                                          void *user_data) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   OdinDeviceHandle resolved = ResolveHandleLocked(handle);
   IDevice *device = GetDeviceLocked(resolved);
-  if (device) device->RegisterImageCallback2(cb, user_data);
+  if (device) device->RegisterCameraCallback2(cb, user_data);
 }
 
 void OdinSdkImpl::RegisterImuCallback(OdinDeviceHandle handle, OdinImuCallback cb,
@@ -87,6 +84,62 @@ void OdinSdkImpl::RegisterOdomCallback(OdinDeviceHandle handle, OdinOdomCallback
   OdinDeviceHandle resolved = ResolveHandleLocked(handle);
   IDevice *device = GetDeviceLocked(resolved);
   if (device) device->RegisterOdomCallback(cb, user_data);
+}
+
+void OdinSdkImpl::RegisterTelemetryCallback(OdinDeviceHandle handle, OdinTelemetryCallback cb,
+                                            void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterTelemetryCallback(cb, user_data);
+}
+
+OdinResult OdinSdkImpl::StartTelemetry(OdinDeviceHandle handle) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device == nullptr) return OdinResult::kNotInitialized;
+  return device->StartTelemetry();
+}
+
+void OdinSdkImpl::RegisterTfCallback(OdinDeviceHandle handle, OdinTfCallback cb,
+                                     void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterTfCallback(cb, user_data);
+}
+
+void OdinSdkImpl::RegisterLcOptimizationStatusCallback(
+    OdinDeviceHandle handle, OdinLcOptimizationStatusCallback cb, void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterLcOptimizationStatusCallback(cb, user_data);
+}
+
+void OdinSdkImpl::RegisterLcFrameCallback(OdinDeviceHandle handle, OdinLcFrameCallback cb,
+                                          void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterLcFrameCallback(cb, user_data);
+}
+
+void OdinSdkImpl::RegisterLcOptimizationResultCallback(
+    OdinDeviceHandle handle, OdinLcOptimizationResultCallback cb, void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterLcOptimizationResultCallback(cb, user_data);
+}
+
+void OdinSdkImpl::RegisterLcMapCloudCallback(OdinDeviceHandle handle, OdinLcMapCloudCallback cb,
+                                             void *user_data) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice *device = GetDeviceLocked(resolved);
+  if (device) device->RegisterLcMapCloudCallback(cb, user_data);
 }
 
 void OdinSdkImpl::EnableSlamOdomSyncForDevice(OdinDeviceHandle handle, bool enabled,
@@ -110,13 +163,13 @@ OdinResult OdinSdkImpl::GetFirmwareVersion(OdinDeviceHandle handle, std::string 
   return device->GetFirmwareVersion(version, timeout_ms);
 }
 
-OdinResult OdinSdkImpl::SetOperatingMode(OdinDeviceHandle handle, OdinOperatingMode mode,
+OdinResult OdinSdkImpl::SetDeviceMode(OdinDeviceHandle handle, OdinDeviceMode mode,
                                          uint32_t timeout_ms) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   OdinDeviceHandle resolved = ResolveHandleLocked(handle);
   IDevice *device = GetDeviceLocked(resolved);
   if (device == nullptr) return OdinResult::kNotInitialized;
-  return device->SetOperatingMode(mode, timeout_ms);
+  return device->SetDeviceMode(mode, timeout_ms);
 }
 
 bool OdinSdkImpl::IsInitialized() const {
@@ -180,25 +233,31 @@ OdinDeviceHandle OdinSdkImpl::ConnectDevice(const DiscoveredDevice &discovered_d
   LOG_INFO("ConnectDevice: ip=%s, model=%s, sn=%s\n", discovered_device.network.ip_address.c_str(),
            discovered_device.model.c_str(), discovered_device.sn.c_str());
 
-  // Step 1: Create device instance based on model
+  // Step 1: Create device instance via DeviceLoader
   OdinDeviceHandle handle = next_handle_.fetch_add(1);
   std::unique_ptr<IDevice> device;
 
-  if (discovered_device.model == "ODIN2" || discovered_device.model.empty()) {
-    device.reset(new Odin2Device(handle));
-  } else {
-    LOG_ERROR("Unknown device model: %s\n", discovered_device.model.c_str());
+  DeviceLoader::DeviceLoadRequest req;
+  req.name = discovered_device.model.empty() ? "Odin1Lite" : discovered_device.model;
+  std::string error;
+  device = DeviceLoader::Instance().Load(req, handle, &error);
+  if (!device) {
+    LOG_ERROR("Failed to load device '%s': %s\n", req.name.c_str(), error.c_str());
     return kInvalidDeviceHandle;
   }
 
-  // Step 2: Configure heartbeat interval/timeout and register failure callback
-  auto* odin2_device = dynamic_cast<Odin2Device*>(device.get());
-  if (odin2_device) {
-    odin2_device->SetHeartbeatInterval(heartbeat_interval_ms_);
-    odin2_device->SetHeartbeatTimeout(heartbeat_timeout_ms_);
-  }
-  device->SetHeartbeatFailedCallback([this](OdinDeviceHandle h) {
-    OnDeviceHeartbeatFailed(h);
+  // Step 2: Configure heartbeat interval/timeout and register success keep-alive callback
+  device->SetHeartbeatInterval(heartbeat_interval_ms_);
+  device->SetHeartbeatTimeout(heartbeat_timeout_ms_);
+  // Keep-alive bridge: forward the descriptor carried by the heartbeat
+  // straight to the notify callback. Intentionally no state_mutex_ here:
+  // blocking commands (GetDeviceFile / SendFileToDevice / SaveMap / ...)
+  // hold it for seconds, and waiting on it would stall last_seen refreshes
+  // in the hotplug listener, timing out a perfectly healthy device.
+  device->SetHeartbeatSuccessCallback([this](OdinDeviceHandle, const DiscoveredDevice& dev) {
+    if (heartbeat_success_notify_cb_) {
+      heartbeat_success_notify_cb_(dev);
+    }
   });
 
   // Step 3: Device handles connection internally (command channel only)
@@ -267,14 +326,15 @@ void OdinSdkImpl::DisconnectAllDevices() {
 // =============================================================================
 
 OdinResult OdinSdkImpl::GetDeviceFile(OdinDeviceHandle device, OdinUpgradeProgressCallback cb,
-                                      OdinFileType type, std::string save_path) {
+                                      OdinFileType type, std::string save_path,
+                                      uint32_t timeout_ms) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   OdinDeviceHandle resolved = ResolveHandleLocked(device);
   IDevice *dev = GetDeviceLocked(resolved);
   if (dev == nullptr) return OdinResult::kInvalidArgument;
 
-  // Delegate to device
-  return dev->GetFile(type, save_path, cb);
+  // Delegate to device (prefers 0x41 channel for kCalibrationFile, HTTP fallback).
+  return dev->GetFile(type, save_path, cb, timeout_ms);
 }
 
 OdinResult OdinSdkImpl::SendFileToDevice(OdinDeviceHandle device, OdinUpgradeProgressCallback cb,
@@ -284,17 +344,43 @@ OdinResult OdinSdkImpl::SendFileToDevice(OdinDeviceHandle device, OdinUpgradePro
   IDevice *dev = GetDeviceLocked(resolved);
   if (dev == nullptr) return OdinResult::kInvalidArgument;
 
-  // Delegate to device
   return dev->SendFile(type, file_path, cb);
 }
 
-OdinResult OdinSdkImpl::SetSensorMode(OdinDeviceHandle device, uint8_t mode,
+OdinResult OdinSdkImpl::SetSensorMode(OdinDeviceHandle device, OdinSensorMode mode,
                                       uint32_t timeout_ms) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   OdinDeviceHandle resolved = ResolveHandleLocked(device);
   IDevice *dev = GetDeviceLocked(resolved);
   if (dev == nullptr) return OdinResult::kNotInitialized;
   return dev->SetSensorMode(mode, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::SendAlgoData(OdinDeviceHandle device, const uint8_t* data,
+                                     size_t len) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->SendAlgoData(data, len);
+}
+
+OdinResult OdinSdkImpl::GetSensorMode(OdinDeviceHandle device, OdinSensorMode& mode,
+                                     uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetSensorMode(mode, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::GetDeviceMode(OdinDeviceHandle device, OdinDeviceMode& mode,
+                                      uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetDeviceMode(mode, timeout_ms);
 }
 
 OdinResult OdinSdkImpl::StartStream(OdinDeviceHandle device, OdinDataChannel channel,
@@ -327,52 +413,158 @@ OdinResult OdinSdkImpl::CloseStream(OdinDeviceHandle device, OdinDataChannel cha
   return dev->CloseStream(channel, timeout_ms);
 }
 
-void OdinSdkImpl::SetHeartbeatFailedNotifyCallback(HeartbeatFailedNotifyCallback cb) {
-  heartbeat_failed_notify_cb_ = cb;
+OdinResult OdinSdkImpl::GetChannelConfig(OdinDeviceHandle device, OdinDataChannel channel,
+                                         OdinChannelConfigInfo& info, uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetChannelConfig(channel, info, timeout_ms);
 }
 
-void OdinSdkImpl::OnDeviceHeartbeatFailed(OdinDeviceHandle handle) {
-  DiscoveredDevice device;
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    auto it = devices_.find(handle);
-    if (it != devices_.end() && it->second) {
-      device = it->second->GetDiscoveredDevice();
-    }
-  }
-  
-  LOG_INFO("OdinSdkImpl: Device heartbeat failed, handle=%u, sn=%s, ip=%s\n", 
-           handle, device.sn.c_str(), device.network.ip_address.c_str());
-  
-  if (heartbeat_failed_notify_cb_) {
-    LOG_INFO("OdinSdkImpl: Calling heartbeat_failed_notify_cb_ (on_detach)\n");
-    heartbeat_failed_notify_cb_(device);
-  } else {
-    LOG_WARN("OdinSdkImpl: heartbeat_failed_notify_cb_ is not set, on_detach will not be called\n");
-  }
+OdinResult OdinSdkImpl::SetFilterParam(OdinDeviceHandle device,
+                                       const OdinLidarFilterParams& params,
+                                       uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->SetFilterParam(params, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::GetFilterParam(OdinDeviceHandle device,
+                                       OdinLidarFilterParams& params,
+                                       uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetFilterParam(params, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::RestoreDefaultConfig(OdinDeviceHandle device, uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->RestoreDefaultConfig(timeout_ms);
+}
+
+OdinResult OdinSdkImpl::SetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode mode,
+                                           uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->SetDefaultSyncMode(mode, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::GetDefaultSyncMode(OdinDeviceHandle device, OdinTimeSyncMode& mode,
+                                           uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetDefaultSyncMode(mode, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::GetPtpSyncStatus(OdinDeviceHandle device, OdinPtpSyncStatus& status,
+                                         uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetPtpSyncStatus(status, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::SetAdaptiveParam(OdinDeviceHandle device,
+                                         const OdinAdaptiveFilterParam& param,
+                                         uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->SetAdaptiveParam(param, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::GetAdaptiveParam(OdinDeviceHandle device,
+                                         OdinAdaptiveFilterParam& param,
+                                         uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->GetAdaptiveParam(param, timeout_ms);
+}
+
+OdinResult OdinSdkImpl::ResetInitialPose(OdinDeviceHandle device, uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(device);
+  IDevice *dev = GetDeviceLocked(resolved);
+  if (dev == nullptr) return OdinResult::kNotInitialized;
+  return dev->ResetInitialPose(timeout_ms);
+}
+
+// =============================================================================
+// Host-side loop-closure / relocalization
+// =============================================================================
+
+OdinResult OdinSdkImpl::SaveMap(OdinDeviceHandle handle, const std::string& path) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice* device = GetDeviceLocked(resolved);
+  if (device == nullptr) return OdinResult::kNotInitialized;
+  return device->SaveMap(path);
+}
+
+OdinResult OdinSdkImpl::LoadMap(OdinDeviceHandle handle, const std::string& path) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  IDevice* device = GetDeviceLocked(resolved);
+  if (device == nullptr) return OdinResult::kNotInitialized;
+  return device->LoadMap(path);
+}
+
+OdinResult OdinSdkImpl::ExployMap(OdinDeviceHandle handle, const std::string& path) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  IDevice* device = nullptr;
+  OdinDeviceHandle resolved = ResolveHandleLocked(handle);
+  device = GetDeviceLocked(resolved);
+  if (device == nullptr) return OdinResult::kNotInitialized;
+  return device->ExployMap(path);
+}
+
+void OdinSdkImpl::SetHeartbeatSuccessNotifyCallback(HeartbeatSuccessNotifyCallback cb) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  heartbeat_success_notify_cb_ = cb;
 }
 
 void OdinSdkImpl::SetHeartbeatInterval(uint32_t interval_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   heartbeat_interval_ms_ = interval_ms;
   LOG_INFO("OdinSdkImpl: Heartbeat interval set to %u ms\n", interval_ms);
 }
 
 uint32_t OdinSdkImpl::GetHeartbeatInterval() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   return heartbeat_interval_ms_;
 }
 
 void OdinSdkImpl::SetHeartbeatTimeout(uint32_t timeout_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   heartbeat_timeout_ms_ = timeout_ms;
   LOG_INFO("OdinSdkImpl: Heartbeat timeout set to %u ms\n", timeout_ms);
 }
 
 uint32_t OdinSdkImpl::GetHeartbeatTimeout() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   return heartbeat_timeout_ms_;
 }
 
 OdinResult OdinSdkImpl::GetNetworkAttribute(OdinDeviceHandle device, NetworkAttribute& attr,
                                             uint32_t timeout_ms) {
-  IDevice* dev = GetDevice(device);
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  IDevice* dev = GetDeviceLocked(ResolveHandleLocked(device));
   if (!dev) {
     return OdinResult::kNotInitialized;
   }
@@ -381,7 +573,8 @@ OdinResult OdinSdkImpl::GetNetworkAttribute(OdinDeviceHandle device, NetworkAttr
 
 OdinResult OdinSdkImpl::SetNetworkAttribute(OdinDeviceHandle device, const NetworkAttribute& attr,
                                             uint32_t timeout_ms) {
-  IDevice* dev = GetDevice(device);
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  IDevice* dev = GetDeviceLocked(ResolveHandleLocked(device));
   if (!dev) {
     return OdinResult::kNotInitialized;
   }
@@ -389,7 +582,8 @@ OdinResult OdinSdkImpl::SetNetworkAttribute(OdinDeviceHandle device, const Netwo
 }
 
 OdinResult OdinSdkImpl::Reboot(OdinDeviceHandle device, uint32_t timeout_ms) {
-  IDevice* dev = GetDevice(device);
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  IDevice* dev = GetDeviceLocked(ResolveHandleLocked(device));
   if (!dev) {
     return OdinResult::kNotInitialized;
   }

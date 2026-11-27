@@ -1,0 +1,23 @@
+# One workflow step for a server-generated map ID and numeric index.
+uint8 ACTION_MAPPING=1
+uint8 ACTION_RELOCATION=2
+uint8 ACTION_NOMAP=3
+uint8 ACTION_RECORY=4
+uint8 ACTION_DELETE_MAP=5
+uint8 ACTION_OTHER=6
+uint8 MAP_INDEX_1=1
+uint8 MAP_INDEX_2=2
+uint8 action
+# Server mapId, passed unchanged to the mapping producer for filenames and payload.mapId.
+string map_id
+# Numeric value of the server's mapIndex. Stored in payload.mapIndex.
+uint8 index
+---
+uint16 ERROR_NONE=0
+uint16 ERROR_INVALID_REQUEST=1
+uint16 ERROR_SERVICE_DOWN=2
+uint16 ERROR_STEP_FAILED=3
+# True only after this server's requested step succeeds; not whole-task completion.
+bool accepted
+uint16 error_code
+string message

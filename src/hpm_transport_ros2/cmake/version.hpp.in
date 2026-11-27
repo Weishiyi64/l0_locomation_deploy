@@ -1,0 +1,11 @@
+/*
+ * Copyright (c) 2026 HPMicro
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#pragma once
+
+namespace @PROJECT_NAME@ {
+constexpr char APP_VERSION[] = "@APP_VERSION@";
+}

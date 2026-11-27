@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>l0_v5_description</name>
-  <version>1.0.0</version>
+  <version>0.1.0</version>
   <description>URDF and MJCF models, meshes, and ROS 2 display resources for L0 V5.</description>
   <maintainer email="starimpact@126.com">luvbot</maintainer>
   <license>TODO</license>

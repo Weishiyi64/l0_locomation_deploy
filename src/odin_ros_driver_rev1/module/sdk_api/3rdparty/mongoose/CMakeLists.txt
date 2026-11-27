@@ -6,10 +6,12 @@ project(mongoose LANGUAGES C)
 
 include(GNUInstallDirs)
 
-# Static library
-add_library(mongoose_obj OBJECT mongoose.c)
-set_target_properties(mongoose_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_library(mongoose STATIC $<TARGET_OBJECTS:mongoose_obj>)
+# OBJECT library: only compiles mongoose.c into .o files (no .a/.so archive).
+# The objects are merged into libodin_sdk.so via $<TARGET_OBJECTS:mongoose> in
+# sdk/CMakeLists.txt, so mongoose is not built/shipped as a standalone library.
+# PIC is required because the objects end up inside a SHARED library.
+add_library(mongoose OBJECT mongoose.c)
+set_target_properties(mongoose PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Include directories (use generator expressions for build/install paths)
 target_include_directories(mongoose
@@ -33,21 +35,17 @@ target_link_libraries(mongoose PUBLIC Threads::Threads)
 # Optional: Enable TLS
 option(MG_ENABLE_OPENSSL "Enable OpenSSL TLS support" ON)
 if(MG_ENABLE_OPENSSL)
-    find_package(OpenSSL REQUIRED)
+    # Only find OpenSSL if a parent project hasn't already done it.  Use the
+    # legacy variables for linking because the imported OpenSSL::SSL target
+    # is scoped by directory and can fail to resolve through OBJECT libraries
+    # on CMake 3.16 (Ubuntu 20.04).
+    if(NOT OPENSSL_FOUND)
+        find_package(OpenSSL REQUIRED)
+    endif()
     target_compile_definitions(mongoose PUBLIC MG_TLS=MG_TLS_OPENSSL)
-    target_link_libraries(mongoose PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    target_include_directories(mongoose PUBLIC ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(mongoose PUBLIC ${OPENSSL_LIBRARIES})
 endif()
 
-# Install targets
-install(TARGETS mongoose
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-
-install(FILES mongoose.h
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mongoose)
-
-# Compile the reusable objects with the same feature flags as the public library.
-target_compile_definitions(mongoose_obj PRIVATE $<TARGET_PROPERTY:mongoose,INTERFACE_COMPILE_DEFINITIONS>)
-if(MG_ENABLE_OPENSSL)
-    target_link_libraries(mongoose_obj PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-endif()
+# No install rules: mongoose is an internal OBJECT library embedded into
+# libodin_sdk.so; it is neither a standalone library nor a public header.

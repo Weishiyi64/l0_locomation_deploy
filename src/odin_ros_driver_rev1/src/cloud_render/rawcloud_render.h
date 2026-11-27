@@ -25,7 +25,6 @@ class rawCloudRender {
   bool initFromStringWithKey(const std::string& yamlContent, const std::string& cam_key);
 
   std::string model_type_;
-  std::string camera_name_;
   int image_width_;
   int image_height_;
   int frame_size_;
